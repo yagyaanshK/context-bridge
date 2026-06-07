@@ -1,0 +1,125 @@
+{
+  "name": "context-bridge-vscode",
+  "displayName": "Context Bridge",
+  "description": "Continue developer agent sessions across Claude, Codex, and other tools from VS Code.",
+  "version": "0.1.0",
+  "publisher": "yagyaanshK",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:contextBridge.discoverClaude",
+    "onCommand:contextBridge.discoverCodex",
+    "onCommand:contextBridge.importLatestClaude",
+    "onCommand:contextBridge.importLatestCodex",
+    "onCommand:contextBridge.handoffToClaudeExisting",
+    "onCommand:contextBridge.handoffToClaudeNew",
+    "onCommand:contextBridge.handoffToCodexExisting",
+    "onCommand:contextBridge.handoffToCodexNew",
+    "onCommand:contextBridge.openLatestHandoff",
+    "onCommand:contextBridge.copyLatestHandoffPrompt"
+  ],
+  "main": "./src/extension.cjs",
+  "contributes": {
+    "commands": [
+      {
+        "command": "contextBridge.discoverClaude",
+        "title": "Context Bridge: Discover Claude Sessions"
+      },
+      {
+        "command": "contextBridge.discoverCodex",
+        "title": "Context Bridge: Discover Codex Sessions"
+      },
+      {
+        "command": "contextBridge.importLatestClaude",
+        "title": "Context Bridge: Import Latest Claude Session"
+      },
+      {
+        "command": "contextBridge.importLatestCodex",
+        "title": "Context Bridge: Import Latest Codex Session"
+      },
+      {
+        "command": "contextBridge.handoffToClaudeExisting",
+        "title": "Context Bridge: Handoff to Existing Claude Session"
+      },
+      {
+        "command": "contextBridge.handoffToClaudeNew",
+        "title": "Context Bridge: Handoff to New Claude Session"
+      },
+      {
+        "command": "contextBridge.handoffToCodexExisting",
+        "title": "Context Bridge: Handoff to Existing Codex Session"
+      },
+      {
+        "command": "contextBridge.handoffToCodexNew",
+        "title": "Context Bridge: Handoff to New Codex Session"
+      },
+      {
+        "command": "contextBridge.openLatestHandoff",
+        "title": "Context Bridge: Open Latest Handoff"
+      },
+      {
+        "command": "contextBridge.copyLatestHandoffPrompt",
+        "title": "Context Bridge: Copy Latest Handoff Prompt"
+      }
+    ],
+    "configuration": {
+      "title": "Context Bridge",
+      "properties": {
+        "contextBridge.maxExportChars": {
+          "type": "number",
+          "default": 0,
+          "description": "Optional maximum characters to embed in generated handoffs. 0 means no deterministic clipping."
+        },
+        "contextBridge.openHandoffDocument": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the generated handoff markdown document after export."
+        },
+        "contextBridge.claudeUri": {
+          "type": "string",
+          "default": "vscode://anthropic.claude-code/open",
+          "description": "URI used to open or focus Claude Code."
+        },
+        "contextBridge.codexOpenCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Optional VS Code command id used to open or focus Codex. If empty, Context Bridge tries to find a command containing 'codex'."
+        }
+      }
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "contextBridge.handoffToClaudeExisting"
+        },
+        {
+          "command": "contextBridge.handoffToClaudeNew"
+        },
+        {
+          "command": "contextBridge.handoffToCodexExisting"
+        },
+        {
+          "command": "contextBridge.handoffToCodexNew"
+        },
+        {
+          "command": "contextBridge.discoverClaude"
+        },
+        {
+          "command": "contextBridge.discoverCodex"
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "@context-bridge/core": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.95.0"
+  }
+}

@@ -29,6 +29,7 @@ This repository is in the first implementation pass. The current MVP supports:
 - capturing a deterministic workspace snapshot
 - generating handoff markdown for Codex, Claude, or another agent
 - checking ledger status
+- VS Code commands for extension-based Claude/Codex handoffs
 
 ## Install From Source
 
@@ -102,7 +103,7 @@ When transcripts exceed the target context budget, Context Bridge does determini
 
 - richer CLI session wrappers with PTY terminal capture
 - native transcript store adapters for more agent tools
-- VS Code extension using the same core package
+- package and publish the VS Code extension
 - browser or desktop helpers for web/desktop UIs
 - MCP server exposing the ledger to agent tools
 - privacy scanner for secrets before export

@@ -5,7 +5,8 @@ import { spawn } from 'node:child_process';
 const roots = [
   'packages/core/src',
   'packages/cli/src',
-  'packages/cli/bin'
+  'packages/cli/bin',
+  'packages/vscode/src'
 ];
 
 const files = [];
@@ -32,7 +33,7 @@ async function collect(root, files) {
     const fullPath = path.join(root, entry.name);
     if (entry.isDirectory()) {
       await collect(fullPath, files);
-    } else if (entry.isFile() && entry.name.endsWith('.js')) {
+    } else if (entry.isFile() && (entry.name.endsWith('.js') || entry.name.endsWith('.cjs'))) {
       files.push(fullPath);
     }
   }
