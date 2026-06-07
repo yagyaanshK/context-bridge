@@ -1,0 +1,19 @@
+{
+  "name": "context-bridge-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Vendor-neutral handoff layer for continuing developer agent sessions across Codex, Claude, and other tools.",
+  "type": "module",
+  "workspaces": [
+    "packages/core",
+    "packages/cli"
+  ],
+  "scripts": {
+    "test": "node --test packages/core/test/*.test.js packages/cli/test/*.test.js",
+    "lint": "node scripts/check-syntax.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,3 @@
+{"role":"user","content":"We need to add OAuth login to this app.","timestamp":"2026-06-08T10:00:00.000Z"}
+{"role":"assistant","content":"I inspected the auth module and found an existing session helper.","timestamp":"2026-06-08T10:01:00.000Z"}
+{"role":"tool","content":"git status --short\n M src/auth.ts","timestamp":"2026-06-08T10:02:00.000Z"}
