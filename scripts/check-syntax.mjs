@@ -10,11 +10,7 @@ const roots = [
 
 const files = [];
 for (const root of roots) {
-  for (const entry of await fs.readdir(root, { withFileTypes: true })) {
-    if (entry.isFile() && entry.name.endsWith('.js')) {
-      files.push(path.join(root, entry.name));
-    }
-  }
+  await collect(root, files);
 }
 
 for (const file of files) {
@@ -29,4 +25,15 @@ function check(file) {
       else reject(new Error(`Syntax check failed for ${file}`));
     });
   });
+}
+
+async function collect(root, files) {
+  for (const entry of await fs.readdir(root, { withFileTypes: true })) {
+    const fullPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      await collect(fullPath, files);
+    } else if (entry.isFile() && entry.name.endsWith('.js')) {
+      files.push(fullPath);
+    }
+  }
 }

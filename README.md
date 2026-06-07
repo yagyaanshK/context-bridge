@@ -22,6 +22,9 @@ This repository is in the first implementation pass. The current MVP supports:
 
 - initializing a `.context-bridge/` ledger
 - importing JSON, JSONL, Markdown, or plain text transcripts
+- discovering native Claude Code and Codex transcript files
+- importing native Claude Code and Codex JSONL sessions
+- launching Claude or Codex and importing the transcript changed during that run
 - normalizing turns into a shared schema
 - capturing a deterministic workspace snapshot
 - generating handoff markdown for Codex, Claude, or another agent
@@ -49,6 +52,8 @@ Inside any coding project:
 ```bash
 context-bridge init
 context-bridge import --provider claude --surface cli ./claude-transcript.jsonl
+context-bridge discover --provider claude
+context-bridge import-native --provider claude --last
 context-bridge snapshot
 context-bridge export --to codex
 ```
@@ -83,6 +88,8 @@ The folder is ignored by default because it can contain private transcripts, com
 
 Context Bridge does not try to merge native vendor chats. That would be brittle and dependent on private product internals. Instead, it creates a shared conversation ledger that tools can consume.
 
+Native transcript support is read-only. Context Bridge copies and normalizes Claude/Codex transcript data into `.context-bridge/`; it does not edit files under `~/.claude` or `~/.codex`.
+
 When transcripts exceed the target context budget, Context Bridge does deterministic packaging:
 
 - preserve all user messages first
@@ -93,8 +100,8 @@ When transcripts exceed the target context budget, Context Bridge does determini
 
 ## Roadmap
 
-- CLI session wrappers: `context-bridge run claude` and `context-bridge run codex`
-- native transcript store adapters where stable local stores exist
+- richer CLI session wrappers with PTY terminal capture
+- native transcript store adapters for more agent tools
 - VS Code extension using the same core package
 - browser or desktop helpers for web/desktop UIs
 - MCP server exposing the ledger to agent tools

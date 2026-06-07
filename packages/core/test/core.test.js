@@ -3,7 +3,15 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { exportHandoff, importTranscript, initStore, readAllTurns, selectTurns } from '../src/index.js';
+import {
+  discoverNativeSessions,
+  exportHandoff,
+  importNativeSession,
+  importTranscript,
+  initStore,
+  readAllTurns,
+  selectTurns
+} from '../src/index.js';
 
 test('imports jsonl transcripts and exports deterministic handoff', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-core-'));
@@ -40,4 +48,45 @@ test('budgeted turn selection keeps user turns first', () => {
   assert.equal(selected.turns.length, 1);
   assert.equal(selected.turns[0].role, 'user');
   assert.equal(selected.omittedTurns, 2);
+});
+
+test('imports synthetic Claude Code native transcript', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-claude-'));
+  const projectsDir = path.join(root, 'native-claude');
+  await fs.mkdir(path.join(projectsDir, 'project'), { recursive: true });
+  const transcript = path.join(projectsDir, 'project', 'abc.jsonl');
+  await fs.writeFile(
+    transcript,
+    [
+      JSON.stringify({ type: 'user', uuid: 'u1', timestamp: '2026-01-01T00:00:00.000Z', cwd: root, message: { role: 'user', content: 'Start here' } }),
+      JSON.stringify({ type: 'assistant', uuid: 'a1', timestamp: '2026-01-01T00:00:01.000Z', cwd: root, message: { role: 'assistant', content: [{ type: 'text', text: 'Done' }] } })
+    ].join('\n'),
+    'utf8'
+  );
+
+  const sessions = await discoverNativeSessions('claude', { root, projectsDir });
+  assert.equal(sessions.length, 1);
+  const imported = await importNativeSession(root, 'claude', { root, projectsDir, last: true });
+  assert.equal(imported.turnCount, 2);
+});
+
+test('imports synthetic Codex native transcript', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-codex-'));
+  const sessionsDir = path.join(root, 'native-codex');
+  await fs.mkdir(path.join(sessionsDir, '2026', '01', '01'), { recursive: true });
+  const transcript = path.join(sessionsDir, '2026', '01', '01', 'rollout-test.jsonl');
+  await fs.writeFile(
+    transcript,
+    [
+      JSON.stringify({ timestamp: '2026-01-01T00:00:00.000Z', type: 'session_meta', payload: { id: 'codex1', cwd: root, source: 'cli' } }),
+      JSON.stringify({ timestamp: '2026-01-01T00:00:01.000Z', type: 'event_msg', payload: { type: 'user_message', message: 'Continue this task' } }),
+      JSON.stringify({ timestamp: '2026-01-01T00:00:02.000Z', type: 'event_msg', payload: { type: 'agent_message', message: 'Working on it' } })
+    ].join('\n'),
+    'utf8'
+  );
+
+  const sessions = await discoverNativeSessions('codex', { root, sessionsDir });
+  assert.equal(sessions.length, 1);
+  const imported = await importNativeSession(root, 'codex', { root, sessionsDir, last: true });
+  assert.equal(imported.turnCount, 2);
 });

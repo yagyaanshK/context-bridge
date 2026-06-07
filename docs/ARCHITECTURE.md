@@ -7,6 +7,7 @@ Context Bridge has one durable idea: the continuity layer should live in the pro
 ```text
 packages/core
   schema normalization
+  native transcript adapters
   context store filesystem layout
   importers
   workspace snapshots
@@ -56,6 +57,31 @@ Each normalized turn is written as one JSON object per line:
   }
 }
 ```
+
+## Native Adapters
+
+Native adapters are read-only scanners for local agent transcript stores.
+
+Claude Code:
+
+```text
+~/.claude/projects/<encoded-project-path>/<session-id>.jsonl
+```
+
+Codex:
+
+```text
+~/.codex/sessions/<year>/<month>/<day>/rollout-*.jsonl
+~/.codex/archived_sessions/rollout-*.jsonl
+```
+
+Adapters should:
+
+- parse JSONL line by line
+- preserve original content exactly where practical
+- filter by recorded `cwd` when available
+- never rewrite native session files
+- store source path and line number in metadata
 
 ## Deterministic Packaging
 
