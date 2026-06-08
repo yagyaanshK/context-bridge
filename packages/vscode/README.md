@@ -38,3 +38,13 @@ Codex to Claude:
 ## Development
 
 Open this repository in VS Code, then press `F5` and choose `Extension Development Host`.
+
+## Install Locally
+
+From the repository root:
+
+```bash
+npm run package:vscode
+```
+
+Then install `dist/context-bridge-0.1.0.vsix` using the editor's `Install from VSIX...` command. This should work in VS Code-compatible forks such as Cursor, Windsurf, and Google Antigravity when they support VSIX installation.

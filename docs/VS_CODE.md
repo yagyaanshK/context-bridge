@@ -62,4 +62,33 @@ npm install
 npm run lint
 ```
 
-Then open the repository in VS Code and press `F5` to launch an Extension Development Host.
+Then open the repository in VS Code and press `F5` to launch an Extension Development Host. The repository includes `.vscode/launch.json`, so VS Code should open the Extension Development Host directly instead of asking you to select a debugger.
+
+## Local VSIX Install
+
+For normal use, package a VSIX:
+
+```bash
+npm run package:vscode
+```
+
+This writes:
+
+```text
+dist/context-bridge-0.1.0.vsix
+```
+
+Install it from the Extensions view:
+
+1. Open Extensions.
+2. Click the `...` menu.
+3. Choose `Install from VSIX...`.
+4. Select `dist/context-bridge-0.1.0.vsix`.
+
+This is the best path before marketplace publication because it works like a normal extension install.
+
+## VS Code Forks
+
+Context Bridge uses the standard VSIX extension format and the public VS Code extension API. The local VSIX should install in VS Code-compatible editors that support VSIX extensions, including Cursor, Windsurf, and Google Antigravity.
+
+If a fork does not expose the same Claude/Codex extension commands, Context Bridge still generates the handoff file and copies the prompt. The user can paste the prompt into the target agent manually.

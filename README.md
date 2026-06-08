@@ -46,6 +46,14 @@ Run the CLI locally:
 node packages/cli/bin/context-bridge.js --help
 ```
 
+Package the VS Code extension locally:
+
+```bash
+npm run package:vscode
+```
+
+Then install `dist/context-bridge-0.1.0.vsix` via `Install from VSIX...` in VS Code or a compatible fork such as Cursor, Windsurf, or Google Antigravity.
+
 ## Quick Start
 
 Inside any coding project:

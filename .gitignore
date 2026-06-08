@@ -7,3 +7,4 @@ npm-debug.log*
 
 # Test scratch space.
 .tmp/
+dist/stage-vscode/

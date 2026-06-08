@@ -11,10 +11,14 @@
   ],
   "scripts": {
     "test": "node --test packages/core/test/*.test.js packages/cli/test/*.test.js",
-    "lint": "node scripts/check-syntax.mjs"
+    "lint": "node scripts/check-syntax.mjs",
+    "package:vscode": "node scripts/package-vscode.mjs"
   },
   "engines": {
     "node": ">=20"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@vscode/vsce": "^3.9.2"
+  }
 }
