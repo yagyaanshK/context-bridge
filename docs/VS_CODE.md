@@ -41,17 +41,23 @@ Use a new session when the old native chat is long, stale, noisy, or confused. T
 
 ## Claude
 
-For new Claude sessions, Context Bridge opens the Claude Code URI:
+For new Claude sessions, Context Bridge first tries to find and execute an installed Claude/Anthropic command in the current editor.
+
+You can set `contextBridge.claudeOpenCommand` to the exact command id if your editor exposes one.
+
+Context Bridge no longer opens the Claude Code URI by default because VS Code forks may hand `vscode://...` links to Microsoft VS Code instead of the current editor. If you want that external behavior, enable `contextBridge.allowExternalClaudeUri`.
+
+The optional URI setting is:
 
 ```text
 vscode://anthropic.claude-code/open
 ```
 
-You can override this with `contextBridge.claudeUri`.
+You can override it with `contextBridge.claudeUri`.
 
 ## Codex
 
-Codex does not currently have a documented URI equivalent in this project. Context Bridge tries to find an installed VS Code command containing `codex`; if that fails, it leaves the prompt on the clipboard and opens the handoff document.
+Codex does not currently have a documented URI equivalent in this project. Context Bridge tries to find an installed VS Code command containing `codex` or `openai`; if that fails, it leaves the prompt on the clipboard and opens the handoff document.
 
 You can set `contextBridge.codexOpenCommand` to the exact Codex command id if your installation exposes one.
 

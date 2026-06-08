@@ -146,32 +146,35 @@ async function copyLatestHandoffPrompt() {
 }
 
 async function openTarget(target) {
-  if (target === 'claude') {
-    const settings = vscode.workspace.getConfiguration('contextBridge');
-    const uri = settings.get('claudeUri') || 'vscode://anthropic.claude-code/open';
-    await vscode.env.openExternal(vscode.Uri.parse(uri));
+  const command = await findAgentCommand(target);
+  if (command) {
+    await vscode.commands.executeCommand(command);
     return;
   }
 
-  const codexCommand = await findCodexCommand();
-  if (codexCommand) {
-    await vscode.commands.executeCommand(codexCommand);
-    return;
+  if (target === 'claude') {
+    const settings = vscode.workspace.getConfiguration('contextBridge');
+    if (settings.get('allowExternalClaudeUri')) {
+      const uri = settings.get('claudeUri') || 'vscode://anthropic.claude-code/open';
+      await vscode.env.openExternal(vscode.Uri.parse(uri));
+      return;
+    }
   }
 
   vscode.window.showInformationMessage(
-    'Context Bridge: no Codex open command was found. Paste the copied prompt into your Codex extension session.'
+    `Context Bridge: no ${target} open command was found. The prompt is copied; paste it into your ${target} extension session.`
   );
 }
 
-async function findCodexCommand() {
+async function findAgentCommand(target) {
   const settings = vscode.workspace.getConfiguration('contextBridge');
-  const configured = settings.get('codexOpenCommand');
+  const configured = settings.get(`${target}OpenCommand`);
   if (configured) return configured;
 
   const commands = await vscode.commands.getCommands(true);
-  return commands.find((item) => /codex/i.test(item) && /open|focus|chat|new/i.test(item)) ||
-    commands.find((item) => /codex/i.test(item));
+  const namePattern = target === 'claude' ? /claude|anthropic/i : /codex|openai/i;
+  return commands.find((item) => namePattern.test(item) && /open|focus|chat|new|agent/i.test(item)) ||
+    commands.find((item) => namePattern.test(item));
 }
 
 function handoffPrompt(target, mode, handoffPath) {

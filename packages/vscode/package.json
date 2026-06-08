@@ -84,7 +84,17 @@
         "contextBridge.claudeUri": {
           "type": "string",
           "default": "vscode://anthropic.claude-code/open",
-          "description": "URI used to open or focus Claude Code."
+          "description": "Optional URI used to open or focus Claude Code when contextBridge.allowExternalClaudeUri is enabled."
+        },
+        "contextBridge.allowExternalClaudeUri": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow Context Bridge to open contextBridge.claudeUri. Keep false in VS Code forks so handoff stays in the current editor."
+        },
+        "contextBridge.claudeOpenCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Optional VS Code command id used to open or focus Claude. If empty, Context Bridge tries to find a command containing 'claude' or 'anthropic'."
         },
         "contextBridge.codexOpenCommand": {
           "type": "string",

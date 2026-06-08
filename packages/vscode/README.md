@@ -48,3 +48,5 @@ npm run package:vscode
 ```
 
 Then install `dist/context-bridge-0.1.0.vsix` using the editor's `Install from VSIX...` command. This should work in VS Code-compatible forks such as Cursor, Windsurf, and Google Antigravity when they support VSIX installation.
+
+In VS Code forks, Context Bridge avoids opening `vscode://...` links by default because those links may launch Microsoft VS Code. It tries editor commands first and otherwise leaves the handoff prompt copied for manual paste.
