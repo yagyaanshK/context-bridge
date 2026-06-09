@@ -20,8 +20,15 @@ Usage:
   context-bridge import-native --provider claude|codex [--last|--session <id>] [--all] [--cwd <path>]
   context-bridge run claude|codex [-- <native args>] [--cwd <path>]
   context-bridge snapshot [--cwd <path>]
-  context-bridge export --to <target> [--max-chars <n>] [--cwd <path>]
+  context-bridge export --to <target> [--max-chars <n>] [--no-dedupe]
+                        [--tool-max-chars <n>] [--system-max-chars <n>] [--cwd <path>]
   context-bridge status [--cwd <path>]
+
+Export options:
+  --max-chars <n>         Hard character budget for the handoff (0 = no clipping).
+  --no-dedupe             Keep consecutive duplicate turns instead of collapsing them.
+  --tool-max-chars <n>    Truncate tool-output turns over n chars (default 2000, 0 = off).
+  --system-max-chars <n>  Truncate system turns over n chars (default 800, 0 = off).
 
 Examples:
   context-bridge init
@@ -148,9 +155,9 @@ export function parseArgs(argv) {
       const key = token.slice(2);
       const next = rest[i + 1];
       if (!next || next.startsWith('--')) {
-        flags[key] = true;
+        setFlag(flags, key, true);
       } else {
-        flags[key] = next;
+        setFlag(flags, key, next);
         i++;
       }
     } else {
@@ -159,6 +166,14 @@ export function parseArgs(argv) {
   }
 
   return { command, args, flags };
+}
+
+// Store each flag under its raw (kebab-case) key and a camelCase alias so that
+// `--max-chars` and `--maxChars` are equivalent.
+function setFlag(flags, key, value) {
+  flags[key] = value;
+  const camel = key.replace(/-([a-z0-9])/g, (_, char) => char.toUpperCase());
+  if (camel !== key) flags[camel] = value;
 }
 
 export async function runNativeCli(cwd, provider, nativeArgs = [], io = process) {
