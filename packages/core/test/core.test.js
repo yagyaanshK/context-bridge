@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  dedupeAdjacentTurns,
   discoverNativeSessions,
   exportHandoff,
   importNativeSession,
@@ -11,7 +12,9 @@ import {
   initStore,
   readAllTurns,
   sanitizeContentForHandoff,
-  selectTurns
+  selectTurns,
+  truncateTurnContent,
+  writeSession
 } from '../src/index.js';
 
 test('imports jsonl transcripts and exports deterministic handoff', async () => {
@@ -49,6 +52,78 @@ test('budgeted turn selection keeps user turns first', () => {
   assert.equal(selected.turns.length, 1);
   assert.equal(selected.turns[0].role, 'user');
   assert.equal(selected.omittedTurns, 2);
+});
+
+test('dedupeAdjacentTurns collapses only consecutive identical turns', () => {
+  const turns = [
+    { role: 'assistant', content: 'Working on it', timestamp: '1' },
+    { role: 'assistant', content: 'Working on it', timestamp: '1' },
+    { role: 'assistant', content: 'Working on it', timestamp: '2' },
+    { role: 'tool', content: '', timestamp: '3' },
+    { role: 'assistant', content: 'Different', timestamp: '4' },
+    { role: 'tool', content: '', timestamp: '5' }
+  ];
+  const { turns: deduped, removed } = dedupeAdjacentTurns(turns);
+  assert.equal(removed, 2);
+  assert.equal(deduped.length, 4);
+  // The two non-adjacent empty tool turns are distinct events and must survive.
+  assert.equal(deduped.filter((t) => t.role === 'tool').length, 2);
+});
+
+test('truncateTurnContent keeps head and tail and reports removed chars', () => {
+  const text = 'HEAD'.repeat(50) + 'MIDDLE'.repeat(200) + 'TAIL'.repeat(50);
+  const result = truncateTurnContent(text, 400);
+  assert.ok(result.removed > 0);
+  assert.ok(result.content.length < text.length);
+  assert.match(result.content, /^HEAD/);
+  assert.match(result.content, /TAIL$/);
+  assert.match(result.content, /Context Bridge truncated \d+ chars/);
+});
+
+test('truncateTurnContent leaves short content and disabled caps untouched', () => {
+  assert.equal(truncateTurnContent('short', 400).removed, 0);
+  assert.equal(truncateTurnContent('x'.repeat(5000), 0).removed, 0);
+});
+
+test('export collapses duplicate turns and truncates tool output', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-dedupe-'));
+  await initStore(root);
+  await writeSession(
+    root,
+    [
+      { role: 'user', content: 'do the thing', provider: 'openai', surface: 'cli', timestamp: '1' },
+      { role: 'assistant', content: 'on it', provider: 'openai', surface: 'cli', timestamp: '2' },
+      { role: 'assistant', content: 'on it', provider: 'openai', surface: 'cli', timestamp: '2' },
+      { role: 'tool', content: 'OUT' + 'x'.repeat(5000), provider: 'openai', surface: 'cli', timestamp: '3' }
+    ],
+    { provider: 'openai', surface: 'cli', sessionId: 'dedupe-test' }
+  );
+
+  const exported = await exportHandoff(root, { target: 'claude' });
+  const handoff = await fs.readFile(exported.path, 'utf8');
+  assert.match(handoff, /Collapsed duplicate turns: 1/);
+  assert.match(handoff, /Truncated oversized turns: 1/);
+  assert.match(handoff, /Context Bridge truncated \d+ chars/);
+  // The duplicate assistant line should appear exactly once.
+  assert.equal(handoff.split('\non it\n').length - 1, 1);
+  // Truncated tool turn must be far smaller than the raw 5 KB.
+  assert.ok(handoff.length < 4000);
+});
+
+test('export with dedupe disabled keeps duplicate turns', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-nodedupe-'));
+  await initStore(root);
+  await writeSession(
+    root,
+    [
+      { role: 'assistant', content: 'twice', provider: 'openai', surface: 'cli', timestamp: '1' },
+      { role: 'assistant', content: 'twice', provider: 'openai', surface: 'cli', timestamp: '1' }
+    ],
+    { provider: 'openai', surface: 'cli', sessionId: 'nodedupe-test' }
+  );
+  const exported = await exportHandoff(root, { target: 'claude', dedupe: false });
+  const handoff = await fs.readFile(exported.path, 'utf8');
+  assert.equal(handoff.split('\ntwice\n').length - 1, 2);
 });
 
 test('imports synthetic Claude Code native transcript', async () => {

@@ -2,7 +2,7 @@
   "name": "context-bridge-vscode",
   "displayName": "Context Bridge",
   "description": "Continue developer agent sessions across Claude, Codex, and other tools from VS Code.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "yagyaanshK",
   "license": "MIT",
   "type": "commonjs",
@@ -76,6 +76,21 @@
           "default": 0,
           "description": "Optional maximum characters to embed in generated handoffs. 0 means no deterministic clipping."
         },
+        "contextBridge.dedupeTurns": {
+          "type": "boolean",
+          "default": true,
+          "description": "Collapse consecutive duplicate turns. Native logs (e.g. Codex) record each message under several event types, producing 2-3 identical copies; this removes the repeats."
+        },
+        "contextBridge.toolMaxChars": {
+          "type": "number",
+          "default": 2000,
+          "description": "Truncate tool-output turns longer than this many characters (keeping head and tail). 0 disables truncation. Tool outputs like git diffs and directory listings dominate handoff size."
+        },
+        "contextBridge.systemMaxChars": {
+          "type": "number",
+          "default": 800,
+          "description": "Truncate system turns (e.g. repeated turn-context blobs) longer than this many characters. 0 disables truncation."
+        },
         "contextBridge.openHandoffDocument": {
           "type": "boolean",
           "default": true,
@@ -127,7 +142,7 @@
     }
   },
   "dependencies": {
-    "@context-bridge/core": "0.1.1"
+    "@context-bridge/core": "0.1.2"
   },
   "devDependencies": {
     "@types/vscode": "^1.95.0"

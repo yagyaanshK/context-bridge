@@ -1,21 +1,82 @@
 import { latestSnapshot, readAllTurns, readManifest, writeExport } from './store.js';
 import { mediaReferencesFromMetadata, sanitizeContentForHandoff } from './media.js';
 
+// Default caps for high-volume, low-signal roles. Tool outputs (git diffs, dir
+// listings) and system turn-context blobs dominate handoff size while the
+// receiving agent is told to re-verify state against the live workspace anyway.
+export const DEFAULT_TOOL_MAX_CHARS = 2000;
+export const DEFAULT_SYSTEM_MAX_CHARS = 800;
+
 export async function exportHandoff(root, options = {}) {
   const target = normalizeTarget(options.target || 'unknown');
   const manifest = await readManifest(root);
   const turns = await readAllTurns(root);
   const snapshot = await latestSnapshot(root);
-  const selectedTurns = selectTurns(turns, options.maxChars);
+  const dedupe = options.dedupe !== false;
+  const deduped = dedupe ? dedupeAdjacentTurns(turns) : { turns, removed: 0 };
+  const selectedTurns = selectTurns(deduped.turns, options.maxChars);
   const content = renderHandoff({
     target,
     manifest,
     snapshot,
     turns: selectedTurns.turns,
     omittedTurns: selectedTurns.omittedTurns,
-    maxChars: options.maxChars
+    collapsedDuplicates: deduped.removed,
+    maxChars: options.maxChars,
+    truncation: resolveTruncation(options)
   });
   return writeExport(root, target, content);
+}
+
+// Collapse runs of identical role+content turns. Native logs (notably Codex)
+// emit the same logical message under several event types (agent_message +
+// response_item/message + task_complete), producing 2-3 adjacent copies. We
+// only collapse *consecutive* duplicates so that legitimately-repeated output
+// at different points in the session (e.g. an empty `git status`) is preserved.
+export function dedupeAdjacentTurns(turns) {
+  const result = [];
+  let removed = 0;
+  for (const turn of turns) {
+    const prev = result[result.length - 1];
+    if (prev && prev.role === turn.role && prev.content === turn.content) {
+      removed++;
+      continue;
+    }
+    result.push(turn);
+  }
+  return { turns: result, removed };
+}
+
+// Middle-truncate oversized content, keeping the head (e.g. the command and the
+// start of its output) and the tail (e.g. the result and exit code), which carry
+// the most signal for a reader skimming a tool turn.
+export function truncateTurnContent(content, maxChars) {
+  const text = String(content || '');
+  if (!maxChars || maxChars <= 0 || text.length <= maxChars) {
+    return { content: text, removed: 0 };
+  }
+  const head = Math.max(0, Math.floor(maxChars * 0.7));
+  const tail = Math.max(0, maxChars - head);
+  const removed = text.length - head - tail;
+  const headPart = text.slice(0, head).replace(/\s+$/, '');
+  const tailPart = tail > 0 ? text.slice(text.length - tail).replace(/^\s+/, '') : '';
+  const marker = `\n... [Context Bridge truncated ${removed} chars] ...\n`;
+  return { content: `${headPart}${marker}${tailPart}`, removed };
+}
+
+function resolveTruncation(options = {}) {
+  return {
+    tool: pickCap(options.toolMaxChars, DEFAULT_TOOL_MAX_CHARS),
+    system: pickCap(options.systemMaxChars, DEFAULT_SYSTEM_MAX_CHARS)
+  };
+}
+
+// A cap of 0 (or false) disables truncation for that role; undefined/null uses
+// the default; a positive number overrides it.
+function pickCap(value, fallback) {
+  if (value === 0 || value === false) return 0;
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  return fallback;
 }
 
 export function selectTurns(turns, maxChars) {
@@ -47,7 +108,49 @@ export function selectTurns(turns, maxChars) {
   return { turns: selected, omittedTurns: turns.length - selected.length };
 }
 
-export function renderHandoff({ target, manifest, snapshot, turns, omittedTurns = 0, maxChars }) {
+export function renderHandoff({
+  target,
+  manifest,
+  snapshot,
+  turns,
+  omittedTurns = 0,
+  collapsedDuplicates = 0,
+  maxChars,
+  truncation = {}
+}) {
+  // Render the transcript first so the ledger header can report truncation stats.
+  const transcriptLines = [];
+  let truncatedTurns = 0;
+  let truncatedChars = 0;
+  if (turns.length === 0) {
+    transcriptLines.push('No transcript turns were included.');
+  }
+  for (const turn of turns) {
+    transcriptLines.push(`### ${turn.role} | ${turn.provider}/${turn.surface} | ${turn.timestamp || 'no timestamp'}`);
+    transcriptLines.push('');
+    const mediaRefs = mediaReferencesFromMetadata(turn.metadata);
+    if (mediaRefs.length > 0) {
+      transcriptLines.push('Media references:');
+      transcriptLines.push('');
+      transcriptLines.push(...mediaRefs);
+      transcriptLines.push('');
+    }
+    const sanitized = sanitizeContentForHandoff(turn.content);
+    if (sanitized.omitted > 0) {
+      transcriptLines.push(`Context Bridge omitted ${sanitized.omitted} inline media/base64 payload(s) from this turn.`);
+      transcriptLines.push('');
+    }
+    const truncated = truncateTurnContent(sanitized.content, truncation[turn.role]);
+    if (truncated.removed > 0) {
+      truncatedTurns++;
+      truncatedChars += truncated.removed;
+    }
+    transcriptLines.push('```text');
+    transcriptLines.push(truncated.content.replaceAll('```', '` ` `'));
+    transcriptLines.push('```');
+    transcriptLines.push('');
+  }
+
   const lines = [];
   lines.push(`# Context Bridge Handoff: ${target}`);
   lines.push('');
@@ -70,6 +173,8 @@ export function renderHandoff({ target, manifest, snapshot, turns, omittedTurns 
   lines.push(`- Exports: ${(manifest.exports || []).length}`);
   if (maxChars) lines.push(`- Export max chars: ${maxChars}`);
   if (omittedTurns > 0) lines.push(`- Omitted turns due to budget: ${omittedTurns}`);
+  if (collapsedDuplicates > 0) lines.push(`- Collapsed duplicate turns: ${collapsedDuplicates}`);
+  if (truncatedTurns > 0) lines.push(`- Truncated oversized turns: ${truncatedTurns} (~${truncatedChars} chars removed)`);
   lines.push('');
   lines.push('## Latest Workspace Snapshot');
   lines.push('');
@@ -91,29 +196,7 @@ export function renderHandoff({ target, manifest, snapshot, turns, omittedTurns 
   lines.push('');
   lines.push('## Transcript Turns');
   lines.push('');
-  if (turns.length === 0) {
-    lines.push('No transcript turns were included.');
-  }
-  for (const turn of turns) {
-    lines.push(`### ${turn.role} | ${turn.provider}/${turn.surface} | ${turn.timestamp || 'no timestamp'}`);
-    lines.push('');
-    const mediaRefs = mediaReferencesFromMetadata(turn.metadata);
-    if (mediaRefs.length > 0) {
-      lines.push('Media references:');
-      lines.push('');
-      lines.push(...mediaRefs);
-      lines.push('');
-    }
-    const sanitized = sanitizeContentForHandoff(turn.content);
-    if (sanitized.omitted > 0) {
-      lines.push(`Context Bridge omitted ${sanitized.omitted} inline media/base64 payload(s) from this turn.`);
-      lines.push('');
-    }
-    lines.push('```text');
-    lines.push(sanitized.content.replaceAll('```', '` ` `'));
-    lines.push('```');
-    lines.push('');
-  }
+  lines.push(...transcriptLines);
   lines.push('## Raw Session Files');
   lines.push('');
   for (const session of manifest.sessions || []) {

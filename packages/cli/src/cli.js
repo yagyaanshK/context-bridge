@@ -107,7 +107,10 @@ export async function runCli(argv, io = process) {
     if (!flags.to) throw new Error('export requires --to <target>');
     const result = await exportHandoff(cwd, {
       target: flags.to,
-      maxChars: flags.maxChars ? Number(flags.maxChars) : undefined
+      maxChars: flags.maxChars ? Number(flags.maxChars) : undefined,
+      dedupe: flags['no-dedupe'] ? false : undefined,
+      toolMaxChars: flags.toolMaxChars !== undefined ? Number(flags.toolMaxChars) : undefined,
+      systemMaxChars: flags.systemMaxChars !== undefined ? Number(flags.systemMaxChars) : undefined
     });
     io.stdout.write(`Wrote handoff to ${result.relativePath}\n`);
     return;

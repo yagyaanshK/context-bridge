@@ -1,13 +1,13 @@
 {
   "name": "context-bridge",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "CLI for Context Bridge, a local handoff layer for agentic coding sessions.",
   "type": "module",
   "bin": {
     "context-bridge": "bin/context-bridge.js"
   },
   "dependencies": {
-    "@context-bridge/core": "0.1.1"
+    "@context-bridge/core": "0.1.2"
   },
   "license": "MIT",
   "engines": {

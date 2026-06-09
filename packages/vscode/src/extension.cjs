@@ -18,6 +18,11 @@ async function activateExtension(context) {
 
 function deactivate() {}
 
+function numberSetting(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : undefined;
+}
+
 function command(name, handler) {
   return vscode.commands.registerCommand(name, async () => {
     try {
@@ -98,6 +103,9 @@ async function handoff(target, mode) {
   const source = target === 'claude' ? 'codex' : 'claude';
   const settings = vscode.workspace.getConfiguration('contextBridge');
   const maxChars = Number(settings.get('maxExportChars') || 0) || undefined;
+  const dedupe = settings.get('dedupeTurns') !== false;
+  const toolMaxChars = numberSetting(settings.get('toolMaxChars'));
+  const systemMaxChars = numberSetting(settings.get('systemMaxChars'));
   const openDocument = Boolean(settings.get('openHandoffDocument'));
   const { initStore, importNativeSession, captureSnapshot, exportHandoff } = await core();
 
@@ -114,7 +122,7 @@ async function handoff(target, mode) {
       if (choice !== 'Continue Without Import') throw error;
     }
     await captureSnapshot(root);
-    return exportHandoff(root, { target, maxChars });
+    return exportHandoff(root, { target, maxChars, dedupe, toolMaxChars, systemMaxChars });
   });
 
   const prompt = handoffPrompt(target, mode, result.path);
