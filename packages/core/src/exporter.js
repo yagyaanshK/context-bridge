@@ -1,4 +1,5 @@
 import { latestSnapshot, readAllTurns, readManifest, writeExport } from './store.js';
+import { mediaReferencesFromMetadata, sanitizeContentForHandoff } from './media.js';
 
 export async function exportHandoff(root, options = {}) {
   const target = normalizeTarget(options.target || 'unknown');
@@ -96,8 +97,20 @@ export function renderHandoff({ target, manifest, snapshot, turns, omittedTurns 
   for (const turn of turns) {
     lines.push(`### ${turn.role} | ${turn.provider}/${turn.surface} | ${turn.timestamp || 'no timestamp'}`);
     lines.push('');
+    const mediaRefs = mediaReferencesFromMetadata(turn.metadata);
+    if (mediaRefs.length > 0) {
+      lines.push('Media references:');
+      lines.push('');
+      lines.push(...mediaRefs);
+      lines.push('');
+    }
+    const sanitized = sanitizeContentForHandoff(turn.content);
+    if (sanitized.omitted > 0) {
+      lines.push(`Context Bridge omitted ${sanitized.omitted} inline media/base64 payload(s) from this turn.`);
+      lines.push('');
+    }
     lines.push('```text');
-    lines.push(turn.content.replaceAll('```', '` ` `'));
+    lines.push(sanitized.content.replaceAll('```', '` ` `'));
     lines.push('```');
     lines.push('');
   }
@@ -118,5 +131,5 @@ function normalizeTarget(target) {
 }
 
 function turnSize(turn) {
-  return JSON.stringify(turn).length + 32;
+  return sanitizeContentForHandoff(JSON.stringify(turn)).content.length + 32;
 }

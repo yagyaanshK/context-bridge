@@ -67,7 +67,8 @@ export function codexEventToTurn(event, session, lineNumber) {
         nativeSessionId: session.sessionId,
         nativePath: session.path,
         lineNumber,
-        cwd: event.payload?.cwd || session.cwd
+        cwd: event.payload?.cwd || session.cwd,
+        ...(mapped.media ? { media: mapped.media } : {})
       }
     },
     {
@@ -82,7 +83,7 @@ function codexEventContent(event) {
   const payload = event.payload || {};
 
   if (event.type === 'event_msg' && payload.type === 'user_message') {
-    return { role: 'user', content: contentToText(payload.message || payload.text_elements || payload) };
+    return codexUserMessage(payload);
   }
 
   if (event.type === 'event_msg' && payload.type === 'agent_message') {
@@ -114,6 +115,65 @@ function codexEventContent(event) {
   }
 
   return null;
+}
+
+function codexUserMessage(payload) {
+  const media = mediaFromPayload(payload);
+  const parts = [];
+  const messageText = contentToText(payload.message || payload.text_elements || '');
+  if (messageText.trim()) parts.push(messageText);
+  if (media.localImages.length > 0) {
+    parts.push([
+      'Attached local images:',
+      ...media.localImages.map((item) => `- ${item}`)
+    ].join('\n'));
+  }
+  if (media.inlineImageCount > 0) {
+    parts.push(`Inline image payloads omitted from imported text: ${media.inlineImageCount}`);
+  }
+  const content = parts.join('\n\n');
+  return {
+    role: 'user',
+    content,
+    media
+  };
+}
+
+function mediaFromPayload(payload) {
+  const localImages = [];
+  const localFiles = [];
+  let inlineImageCount = 0;
+
+  for (const item of payload.local_images || payload.localImages || []) {
+    const text = mediaItemPath(item);
+    if (text) localImages.push(text);
+  }
+
+  for (const item of payload.local_files || payload.localFiles || []) {
+    const text = mediaItemPath(item);
+    if (text) localFiles.push(text);
+  }
+
+  for (const item of payload.images || []) {
+    const text = mediaItemPath(item);
+    if (text) localImages.push(text);
+    else inlineImageCount++;
+  }
+
+  return {
+    localImages: [...new Set(localImages)],
+    localFiles: [...new Set(localFiles)],
+    inlineImageCount
+  };
+}
+
+function mediaItemPath(item) {
+  if (typeof item === 'string') {
+    if (/^data:image\//i.test(item)) return '';
+    return item;
+  }
+  if (!item || typeof item !== 'object') return '';
+  return item.path || item.filePath || item.localPath || item.uri || item.url || '';
 }
 
 function contentToText(value) {

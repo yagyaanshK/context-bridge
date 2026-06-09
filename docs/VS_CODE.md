@@ -33,6 +33,8 @@ Continue in this existing session using this Context Bridge handoff:
 Read the handoff before acting...
 ```
 
+Screenshot payloads embedded in native transcripts are not pasted into the handoff. Context Bridge keeps local image paths when available and replaces inline base64 image blobs with compact omission markers.
+
 ## Existing vs New Session
 
 Use an existing session for short round trips where the original conversation is still coherent.

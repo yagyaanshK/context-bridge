@@ -28,6 +28,7 @@ This repository is in the first implementation pass. The current MVP supports:
 - normalizing turns into a shared schema
 - capturing a deterministic workspace snapshot
 - generating handoff markdown for Codex, Claude, or another agent
+- replacing inline screenshot/base64 payloads with compact references during export
 - checking ledger status
 - VS Code commands for extension-based Claude/Codex handoffs
 
@@ -104,6 +105,8 @@ When transcripts exceed the target context budget, Context Bridge does determini
 - preserve all user messages first
 - preserve recent turns verbatim
 - preserve workspace snapshots and changed-file metadata
+- preserve local image/file paths when native transcripts provide them
+- omit inline base64 screenshot payloads from handoff markdown
 - keep older raw transcripts on disk as referenced attachments
 - never rewrite old messages as an AI-generated summary
 

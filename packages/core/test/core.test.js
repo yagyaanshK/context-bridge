@@ -10,6 +10,7 @@ import {
   importTranscript,
   initStore,
   readAllTurns,
+  sanitizeContentForHandoff,
   selectTurns
 } from '../src/index.js';
 
@@ -89,4 +90,43 @@ test('imports synthetic Codex native transcript', async () => {
   assert.equal(sessions.length, 1);
   const imported = await importNativeSession(root, 'codex', { root, sessionsDir, last: true });
   assert.equal(imported.turnCount, 2);
+});
+
+test('sanitizes inline base64 media during handoff rendering', () => {
+  const blob = `${'A'.repeat(1200)}+/${'B'.repeat(1200)}==`;
+  const result = sanitizeContentForHandoff(`screenshot:\n${blob}`);
+  assert.equal(result.omitted, 1);
+  assert.match(result.content, /omitted base64 blob/);
+  assert.ok(result.content.length < 200);
+});
+
+test('Codex native import preserves local image paths instead of inline media payloads', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-codex-media-'));
+  const sessionsDir = path.join(root, 'native-codex');
+  await fs.mkdir(path.join(sessionsDir, '2026', '01', '01'), { recursive: true });
+  const transcript = path.join(sessionsDir, '2026', '01', '01', 'rollout-media.jsonl');
+  await fs.writeFile(
+    transcript,
+    [
+      JSON.stringify({ timestamp: '2026-01-01T00:00:00.000Z', type: 'session_meta', payload: { id: 'codex-media', cwd: root, source: 'ide' } }),
+      JSON.stringify({
+        timestamp: '2026-01-01T00:00:01.000Z',
+        type: 'event_msg',
+        payload: {
+          type: 'user_message',
+          message: 'Look at this screenshot.',
+          local_images: [path.join(root, 'screenshots', 'one.png')],
+          images: ['data:image/png;base64,AAAA']
+        }
+      })
+    ].join('\n'),
+    'utf8'
+  );
+
+  await importNativeSession(root, 'codex', { root, sessionsDir, last: true });
+  const turns = await readAllTurns(root);
+  assert.match(turns[0].content, /Look at this screenshot/);
+  assert.match(turns[0].content, /Attached local images/);
+  assert.match(turns[0].content, /one\.png/);
+  assert.equal(turns[0].metadata.media.inlineImageCount, 1);
 });

@@ -79,6 +79,7 @@ Adapters should:
 
 - parse JSONL line by line
 - preserve original content exactly where practical
+- preserve local image paths instead of embedding base64 images
 - filter by recorded `cwd` when available
 - never rewrite native session files
 - store source path and line number in metadata
@@ -99,6 +100,13 @@ If a budget is provided, the exporter includes turns by a deterministic priority
 3. older assistant/tool/system turns while budget remains
 
 Raw sessions remain available on disk even when not fully embedded.
+
+Inline media handling:
+
+- local image paths are shown as references when available
+- inline `data:image/...;base64` payloads are replaced with compact omission markers
+- long bare base64 blobs are replaced with compact omission markers
+- raw native transcript files remain referenced for auditability
 
 ## Privacy Model
 
