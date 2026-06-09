@@ -1,6 +1,6 @@
 {
   "name": "@context-bridge/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Core ledger, transcript, snapshot, and handoff logic for Context Bridge.",
   "type": "module",
   "main": "src/index.js",

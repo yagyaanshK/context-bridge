@@ -1,4 +1,5 @@
 const INLINE_DATA_IMAGE_RE = /data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+/g;
+const QUOTED_DATA_IMAGE_RE = /data:image\/[a-zA-Z0-9.+-]+;base64,[^"`'\r\n]+/g;
 const JSON_BASE64_FIELD_RE = /"((?:image|screenshot|data|bytes|base64)[^"]*)"\s*:\s*"([A-Za-z0-9+/=]{800,})"/gi;
 const LONG_BASE64_TOKEN_RE = /(^|[^A-Za-z0-9+/=])([A-Za-z0-9+/=]{1200,})(?=$|[^A-Za-z0-9+/=])/g;
 
@@ -10,6 +11,10 @@ export function sanitizeContentForHandoff(content) {
   };
 
   let text = String(content || '');
+  text = text.replace(QUOTED_DATA_IMAGE_RE, (match) => {
+    stats.inlineImages++;
+    return `[Context Bridge omitted inline base64 image: ${match.length} chars]`;
+  });
   text = text.replace(INLINE_DATA_IMAGE_RE, (match) => {
     stats.inlineImages++;
     return `[Context Bridge omitted inline base64 image: ${match.length} chars]`;

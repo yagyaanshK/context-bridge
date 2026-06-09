@@ -5,10 +5,13 @@ import { spawn } from 'node:child_process';
 const root = process.cwd();
 const vscodePackage = path.join(root, 'packages', 'vscode');
 const corePackage = path.join(root, 'packages', 'core');
+const sourceExtensionPkg = JSON.parse(await fs.readFile(path.join(vscodePackage, 'package.json'), 'utf8'));
+const sourceCorePkg = JSON.parse(await fs.readFile(path.join(corePackage, 'package.json'), 'utf8'));
 const dist = path.join(root, 'dist');
 const stage = path.join(dist, 'stage-vscode');
-const vsixOut = path.join(dist, 'context-bridge-0.1.0.vsix');
-const stagedVsix = path.join(stage, 'context-bridge-0.1.0.vsix');
+const vsixName = `context-bridge-${sourceExtensionPkg.version}.vsix`;
+const vsixOut = path.join(dist, vsixName);
+const stagedVsix = path.join(stage, vsixName);
 
 await fs.rm(stage, { recursive: true, force: true });
 await fs.mkdir(path.join(stage, 'src'), { recursive: true });
@@ -20,10 +23,10 @@ await copyFile(path.join(root, 'LICENSE'), path.join(stage, 'LICENSE'));
 await copyFile(path.join(vscodePackage, 'src', 'extension.cjs'), path.join(stage, 'src', 'extension.cjs'));
 await copyDir(path.join(corePackage, 'src'), path.join(stage, 'node_modules', '@context-bridge', 'core', 'src'));
 
-const extensionPkg = JSON.parse(await fs.readFile(path.join(vscodePackage, 'package.json'), 'utf8'));
+const extensionPkg = sourceExtensionPkg;
 delete extensionPkg.devDependencies;
 extensionPkg.dependencies = {
-  '@context-bridge/core': '0.1.0'
+  '@context-bridge/core': sourceCorePkg.version
 };
 extensionPkg.repository = {
   type: 'git',
@@ -37,7 +40,7 @@ extensionPkg.files = [
 ];
 await writeJson(path.join(stage, 'package.json'), extensionPkg);
 
-const corePkg = JSON.parse(await fs.readFile(path.join(corePackage, 'package.json'), 'utf8'));
+const corePkg = sourceCorePkg;
 delete corePkg.devDependencies;
 await writeJson(path.join(stage, 'node_modules', '@context-bridge', 'core', 'package.json'), corePkg);
 
@@ -45,7 +48,7 @@ await run(process.execPath, [
   path.join(root, 'node_modules', '@vscode', 'vsce', 'vsce'),
   'package',
   '--out',
-  'context-bridge-0.1.0.vsix'
+  vsixName
 ], stage);
 
 await fs.copyFile(stagedVsix, vsixOut);
