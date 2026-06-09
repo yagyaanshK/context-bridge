@@ -142,12 +142,21 @@ async function handoff(target, mode) {
   if (openDocument) await openDocumentAt(result.path);
   if (mode === 'new') await openTarget(target);
 
+  const targetLabel = target === 'claude' ? 'Claude' : target === 'codex' ? 'Codex' : target;
+  const wordCount = countWords(prompt);
   vscode.window.showInformationMessage(
-    `Context Bridge: handoff to ${target} created and prompt copied.`,
+    `Context Bridge: ${wordCount}-word handoff prompt copied to clipboard — paste it into ${targetLabel} to continue.`,
+    'Copy Prompt Again',
     'Open Handoff'
   ).then((choice) => {
     if (choice === 'Open Handoff') openDocumentAt(result.path);
+    else if (choice === 'Copy Prompt Again') vscode.env.clipboard.writeText(prompt);
   });
+}
+
+function countWords(text) {
+  const matches = String(text || '').trim().match(/\S+/g);
+  return matches ? matches.length : 0;
 }
 
 async function openLatestHandoff() {
@@ -160,7 +169,9 @@ async function copyLatestHandoffPrompt() {
   const latest = await latestState();
   if (!latest?.prompt) throw new Error('No latest handoff prompt recorded in this VS Code window.');
   await vscode.env.clipboard.writeText(latest.prompt);
-  vscode.window.showInformationMessage('Context Bridge: latest handoff prompt copied.');
+  vscode.window.showInformationMessage(
+    `Context Bridge: ${countWords(latest.prompt)}-word handoff prompt copied to clipboard.`
+  );
 }
 
 async function openTarget(target) {
