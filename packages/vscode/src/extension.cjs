@@ -85,7 +85,7 @@ async function importLatest(provider) {
     await initStore(root);
     return importNativeSession(root, provider, { root, last: true });
   });
-  vscode.window.showInformationMessage(`Context Bridge: imported ${result.turnCount} turns from ${provider}.`);
+  await reportImport(provider, result);
 }
 
 async function importSession(provider, session) {
@@ -95,7 +95,17 @@ async function importSession(provider, session) {
     await initStore(root);
     return importNativeSession(root, provider, { path: session.path, includeArchived: true });
   });
-  vscode.window.showInformationMessage(`Context Bridge: imported ${result.turnCount} turns from ${provider}.`);
+  await reportImport(provider, result);
+}
+
+// Import only ingests into the ledger (it opens nothing), so confirm it
+// modally — a transient toast was easy to miss and felt like "nothing happened".
+async function reportImport(provider, result) {
+  await vscode.window.showInformationMessage(
+    `Context Bridge: imported ${result.turnCount} turns from ${provider} into the ledger. Use "Handoff to Claude/Codex" to generate a handoff.`,
+    { modal: true },
+    'OK'
+  );
 }
 
 async function handoff(target, mode) {

@@ -37,10 +37,20 @@ export async function writeManifest(root, manifest) {
   await writeJson(path.join(resolveLedger(root), 'manifest.json'), manifest);
 }
 
-export async function addManifestEntry(root, key, entry) {
+export async function addManifestEntry(root, key, entry, options = {}) {
   const manifest = await readManifest(root);
   manifest[key] = Array.isArray(manifest[key]) ? manifest[key] : [];
-  manifest[key].push(entry);
+  // Upsert by a matching field (e.g. session id) so re-importing the same
+  // source replaces its entry instead of accumulating stale duplicates.
+  const matchField = options.upsertBy;
+  const existingIndex = matchField
+    ? manifest[key].findIndex((item) => item && item[matchField] === entry[matchField])
+    : -1;
+  if (existingIndex >= 0) {
+    manifest[key][existingIndex] = entry;
+  } else {
+    manifest[key].push(entry);
+  }
   manifest.updatedAt = new Date().toISOString();
   await writeManifest(root, manifest);
   return manifest;
@@ -64,7 +74,7 @@ export async function writeSession(root, turns, options = {}) {
     turnCount: turns.length,
     importedAt: new Date().toISOString(),
     sourcePath: options.sourcePath
-  });
+  }, { upsertBy: 'id' });
   return { id: sessionId, path: absolutePath, relativePath, turnCount: turns.length };
 }
 

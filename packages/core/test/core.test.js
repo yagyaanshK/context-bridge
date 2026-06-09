@@ -11,6 +11,7 @@ import {
   importTranscript,
   initStore,
   readAllTurns,
+  readManifest,
   sanitizeContentForHandoff,
   selectTurns,
   truncateTurnContent,
@@ -52,6 +53,23 @@ test('budgeted turn selection keeps user turns first', () => {
   assert.equal(selected.turns.length, 1);
   assert.equal(selected.turns[0].role, 'user');
   assert.equal(selected.omittedTurns, 2);
+});
+
+test('re-importing the same session upserts its manifest entry', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-upsert-'));
+  await initStore(root);
+  const turns = [{ role: 'user', content: 'hello', provider: 'openai', surface: 'cli', timestamp: '1' }];
+  await writeSession(root, turns, { provider: 'openai', surface: 'cli', sessionId: 'same-id' });
+  await writeSession(root, turns, { provider: 'openai', surface: 'cli', sessionId: 'same-id' });
+  await writeSession(root, turns, { provider: 'openai', surface: 'cli', sessionId: 'same-id' });
+
+  const manifest = await readManifest(root);
+  assert.equal(manifest.sessions.length, 1);
+  assert.equal(manifest.sessions[0].id, 'same-id');
+  // A different session id still creates a separate entry.
+  await writeSession(root, turns, { provider: 'openai', surface: 'cli', sessionId: 'other-id' });
+  const after = await readManifest(root);
+  assert.equal(after.sessions.length, 2);
 });
 
 test('dedupeAdjacentTurns collapses only consecutive identical turns', () => {
