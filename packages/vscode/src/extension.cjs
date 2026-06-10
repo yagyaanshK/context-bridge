@@ -46,26 +46,74 @@ async function workspaceRoot() {
   return picked.uri.fsPath;
 }
 
+// Pick the native session to use as a source. A native session records the
+// folder it was started in; agents (e.g. Codex in a VS Code fork) often run
+// from a sibling folder of the open workspace, so a strict cwd match can find
+// nothing even when a chat is clearly open. Prefer a workspace-matched session;
+// if there is none, say so explicitly and offer the most recent session from
+// another folder, showing its cwd so the choice is informed.
+async function resolveSourceSession(provider, root) {
+  const { discoverNativeSessions } = await core();
+  const sessions = await withProgress(`Discovering ${provider} sessions`, () =>
+    discoverNativeSessions(provider, { root, all: true, includeArchived: true })
+  );
+  if (sessions.length === 0) return { status: 'none' };
+
+  const matched = sessions.filter((session) => session.matchesProject);
+  if (matched.length > 0) return { status: 'matched', session: matched[0] };
+
+  const recent = sessions[0];
+  const choice = await vscode.window.showWarningMessage(
+    `Context Bridge: no ${provider} session was started in this workspace.`,
+    {
+      modal: true,
+      detail:
+        `Workspace:\n${root}\n\n` +
+        `Use the most recent ${provider} session instead? It was started in:\n` +
+        `${recent.cwd || '(unknown folder)'}\n\nLast active: ${recent.modifiedAt}`
+    },
+    'Use Most Recent'
+  );
+  if (choice === 'Use Most Recent') return { status: 'fallback', session: recent };
+  return { status: 'cancelled' };
+}
+
 async function discover(provider) {
   const root = await workspaceRoot();
   const { discoverNativeSessions } = await core();
   const sessions = await withProgress(`Discovering ${provider} sessions`, () =>
-    discoverNativeSessions(provider, { root })
+    discoverNativeSessions(provider, { root, all: true, includeArchived: true })
   );
 
   if (sessions.length === 0) {
-    vscode.window.showInformationMessage(`Context Bridge: no ${provider} sessions found for this workspace.`);
+    vscode.window.showInformationMessage(`Context Bridge: no ${provider} sessions found on this machine.`);
     return;
   }
 
+  const matched = sessions.filter((session) => session.matchesProject);
+  let pool = matched;
+  if (matched.length === 0) {
+    const choice = await vscode.window.showWarningMessage(
+      `Context Bridge: no ${provider} session was started in this workspace. Browse all ${sessions.length} session(s) from other folders?`,
+      'Browse All Sessions'
+    );
+    if (choice !== 'Browse All Sessions') return;
+    pool = sessions;
+  }
+
   const selected = await vscode.window.showQuickPick(
-    sessions.map((session) => ({
+    pool.map((session) => ({
       label: session.title || session.sessionId,
-      description: `${session.modifiedAt} - ${session.surface}`,
+      description: `${session.modifiedAt} - ${session.surface}${session.matchesProject ? '' : ' - other folder'}`,
       detail: `${session.cwd || '(no cwd)'}\n${session.path}`,
       session
     })),
-    { placeHolder: `Found ${sessions.length} ${provider} session(s)` }
+    {
+      placeHolder:
+        matched.length === 0
+          ? `All ${provider} sessions (${sessions.length}) - none started in this workspace`
+          : `${matched.length} ${provider} session(s) for this workspace`
+    }
   );
 
   if (selected) {
@@ -81,9 +129,15 @@ async function discover(provider) {
 async function importLatest(provider) {
   const root = await workspaceRoot();
   const { initStore, importNativeSession } = await core();
-  const result = await withProgress(`Importing latest ${provider} session`, async () => {
+  const resolved = await resolveSourceSession(provider, root);
+  if (resolved.status === 'cancelled') return;
+  if (resolved.status === 'none') {
+    vscode.window.showWarningMessage(`Context Bridge: no ${provider} sessions were found anywhere on this machine.`);
+    return;
+  }
+  const result = await withProgress(`Importing ${provider} session`, async () => {
     await initStore(root);
-    return importNativeSession(root, provider, { root, last: true });
+    return importNativeSession(root, provider, { path: resolved.session.path, includeArchived: true });
   });
   await reportImport(provider, result);
 }
@@ -119,17 +173,21 @@ async function handoff(target, mode) {
   const openDocument = Boolean(settings.get('openHandoffDocument'));
   const { initStore, importNativeSession, captureSnapshot, exportHandoff } = await core();
 
+  const resolved = await resolveSourceSession(source, root);
+  if (resolved.status === 'cancelled') return;
+  if (resolved.status === 'none') {
+    const choice = await vscode.window.showWarningMessage(
+      `Context Bridge: no ${source} sessions were found anywhere on this machine. Create a handoff from the existing ledger only?`,
+      'Continue Without Import',
+      'Cancel'
+    );
+    if (choice !== 'Continue Without Import') return;
+  }
+
   const result = await withProgress(`Creating handoff to ${target}`, async () => {
     await initStore(root);
-    try {
-      await importNativeSession(root, source, { root, last: true });
-    } catch (error) {
-      const choice = await vscode.window.showWarningMessage(
-        `Could not import latest ${source} session: ${error.message}`,
-        'Continue Without Import',
-        'Cancel'
-      );
-      if (choice !== 'Continue Without Import') throw error;
+    if (resolved.session) {
+      await importNativeSession(root, source, { path: resolved.session.path, includeArchived: true });
     }
     await captureSnapshot(root);
     return exportHandoff(root, { target, maxChars, dedupe, toolMaxChars, systemMaxChars });
