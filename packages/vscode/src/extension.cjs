@@ -1,4 +1,5 @@
 const path = require('node:path');
+const fs = require('node:fs');
 const vscode = require('vscode');
 
 async function activateExtension(context) {
@@ -70,7 +71,7 @@ async function resolveSourceSession(provider, root) {
       detail:
         `Workspace:\n${root}\n\n` +
         `Use the most recent ${provider} session instead? It was started in:\n` +
-        `${recent.cwd || '(unknown folder)'}\n\nLast active: ${recent.modifiedAt}`
+        `${formatSessionFolder(recent.cwd)}\n\nLast active: ${recent.modifiedAt}`
     },
     'Use Most Recent'
   );
@@ -94,7 +95,7 @@ async function discover(provider) {
   let pool = matched;
   if (matched.length === 0) {
     const choice = await vscode.window.showWarningMessage(
-      `Context Bridge: no ${provider} session was started in this workspace. Browse all ${sessions.length} session(s) from other folders?`,
+      `Context Bridge: no ${provider} session was started in this workspace. Browse ${sessions.length} importable session(s) from other folders? This will not create a handoff.`,
       'Browse All Sessions'
     );
     if (choice !== 'Browse All Sessions') return;
@@ -105,7 +106,7 @@ async function discover(provider) {
     pool.map((session) => ({
       label: session.title || session.sessionId,
       description: `${session.modifiedAt} - ${session.surface}${session.matchesProject ? '' : ' - other folder'}`,
-      detail: `${session.cwd || '(no cwd)'}\n${session.path}`,
+      detail: `${formatSessionFolder(session.cwd)}\n${session.path}`,
       session
     })),
     {
@@ -156,10 +157,15 @@ async function importSession(provider, session) {
 // modally — a transient toast was easy to miss and felt like "nothing happened".
 async function reportImport(provider, result) {
   await vscode.window.showInformationMessage(
-    `Context Bridge: imported ${result.turnCount} turns from ${provider} into the ledger. Use "Handoff to Claude/Codex" to generate a handoff.`,
+    `Context Bridge: imported ${result.turnCount} turns from ${provider} into the ledger. This only updated local Context Bridge data; no handoff was created. Run "Context Bridge: Handoff to Claude/Codex" separately when you want one.`,
     { modal: true },
     'OK'
   );
+}
+
+function formatSessionFolder(cwd) {
+  if (!cwd) return '(unknown folder)';
+  return fs.existsSync(cwd) ? cwd : `${cwd} (folder not found; it may have been renamed or moved)`;
 }
 
 async function handoff(target, mode) {
