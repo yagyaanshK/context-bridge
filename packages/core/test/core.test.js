@@ -193,6 +193,14 @@ test('sanitizes inline base64 media during handoff rendering', () => {
   assert.ok(result.content.length < 200);
 });
 
+test('sanitizes large JSON base64 fields without regex stack overflow', () => {
+  const value = `${'A'.repeat(200000)}+/==`;
+  const result = sanitizeContentForHandoff(`{"image_url":"${value}"}`);
+  assert.equal(result.omitted, 1);
+  assert.match(result.content, /omitted base64 payload/);
+  assert.ok(result.content.length < 200);
+});
+
 test('Codex native import preserves local image paths instead of inline media payloads', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-codex-media-'));
   const sessionsDir = path.join(root, 'native-codex');

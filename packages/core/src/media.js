@@ -1,7 +1,6 @@
 const INLINE_DATA_IMAGE_RE = /data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+/g;
 const QUOTED_DATA_IMAGE_RE = /data:image\/[a-zA-Z0-9.+-]+;base64,[^"`'\r\n]+/g;
-const JSON_BASE64_FIELD_RE = /"((?:image|screenshot|data|bytes|base64)[^"]*)"\s*:\s*"([A-Za-z0-9+/=]{800,})"/gi;
-const LONG_BASE64_TOKEN_RE = /(^|[^A-Za-z0-9+/=])([A-Za-z0-9+/=]{1200,})(?=$|[^A-Za-z0-9+/=])/g;
+const JSON_BASE64_FIELD_RE = /(?:image|screenshot|data|bytes|base64)/i;
 
 export function sanitizeContentForHandoff(content) {
   const stats = {
@@ -19,15 +18,8 @@ export function sanitizeContentForHandoff(content) {
     stats.inlineImages++;
     return `[Context Bridge omitted inline base64 image: ${match.length} chars]`;
   });
-  text = text.replace(JSON_BASE64_FIELD_RE, (_match, field, value) => {
-    stats.jsonFields++;
-    return `"${field}": "[Context Bridge omitted base64 payload: ${value.length} chars]"`;
-  });
-  text = text.replace(LONG_BASE64_TOKEN_RE, (match, prefix, token) => {
-    if (!looksLikeBase64(token)) return match;
-    stats.base64Tokens++;
-    return `${prefix}[Context Bridge omitted base64 blob: ${token.length} chars]`;
-  });
+  text = replaceJsonBase64Fields(text, stats);
+  text = replaceLongBase64Tokens(text, stats);
 
   return {
     content: text,
@@ -56,4 +48,102 @@ function looksLikeBase64(value) {
   const slashOrPlus = (value.match(/[+/]/g) || []).length;
   const equals = (value.match(/=/g) || []).length;
   return slashOrPlus > 1 || equals > 1;
+}
+
+function replaceJsonBase64Fields(text, stats) {
+  let output = '';
+  let last = 0;
+  let i = 0;
+
+  while (i < text.length) {
+    if (text[i] !== '"') {
+      i++;
+      continue;
+    }
+
+    const fieldEnd = findJsonStringEnd(text, i + 1);
+    if (fieldEnd === -1) break;
+    const field = text.slice(i + 1, fieldEnd);
+    let cursor = fieldEnd + 1;
+    while (/\s/.test(text[cursor] || '')) cursor++;
+    if (text[cursor] !== ':') {
+      i = fieldEnd + 1;
+      continue;
+    }
+    cursor++;
+    while (/\s/.test(text[cursor] || '')) cursor++;
+    if (text[cursor] !== '"') {
+      i = cursor;
+      continue;
+    }
+
+    const valueStart = cursor + 1;
+    const valueEnd = findJsonStringEnd(text, valueStart);
+    if (valueEnd === -1) break;
+    const value = text.slice(valueStart, valueEnd);
+    if (JSON_BASE64_FIELD_RE.test(field) && value.length >= 800 && isBase64Token(value)) {
+      stats.jsonFields++;
+      output += text.slice(last, cursor);
+      output += `"[Context Bridge omitted base64 payload: ${value.length} chars]"`;
+      last = valueEnd + 1;
+    }
+    i = valueEnd + 1;
+  }
+
+  return output ? output + text.slice(last) : text;
+}
+
+function replaceLongBase64Tokens(text, stats) {
+  let output = '';
+  let last = 0;
+  let i = 0;
+
+  while (i < text.length) {
+    if (!isBase64Char(text[i])) {
+      i++;
+      continue;
+    }
+
+    const start = i;
+    while (i < text.length && isBase64Char(text[i])) i++;
+    const token = text.slice(start, i);
+    if (token.length >= 1200 && looksLikeBase64(token)) {
+      stats.base64Tokens++;
+      output += text.slice(last, start);
+      output += `[Context Bridge omitted base64 blob: ${token.length} chars]`;
+      last = i;
+    }
+  }
+
+  return output ? output + text.slice(last) : text;
+}
+
+function findJsonStringEnd(text, start) {
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === '\\') {
+      i++;
+      continue;
+    }
+    if (text[i] === '"') return i;
+  }
+  return -1;
+}
+
+function isBase64Token(value) {
+  if (!value || value.length % 4 === 1) return false;
+  for (let i = 0; i < value.length; i++) {
+    if (!isBase64Char(value[i])) return false;
+  }
+  return true;
+}
+
+function isBase64Char(char) {
+  return (
+    (char >= 'A' && char <= 'Z') ||
+    (char >= 'a' && char <= 'z') ||
+    (char >= '0' && char <= '9') ||
+    char === '+' ||
+    char === '/' ||
+    char === '='
+  );
 }
