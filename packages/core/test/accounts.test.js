@@ -22,6 +22,7 @@ import {
   normalizeCodexUsage,
   readCodexAuth,
   removeAccount,
+  updateAccount,
   CODEX_USAGE_URL
 } from '../src/index.js';
 
@@ -88,6 +89,41 @@ test('a new account has a CODEX_HOME that exists before anything is launched', a
   // Safe to call again on an account that is already set up.
   await ensureCodexHome(account.id, options);
   assert.ok((await fs.stat(home)).isDirectory());
+});
+
+test('renaming changes the label and leaves the credential where it is', async () => {
+  const { options } = await sandbox();
+  const account = await createAccount({ label: 'tk', provider: 'codex' }, options);
+  await signIn(account.id, options, { accessToken: 'keep-me' });
+  const homeBefore = codexHome(account.id, options);
+
+  const renamed = await updateAccount(account.id, { label: 'Work laptop' }, options);
+
+  assert.equal(renamed.label, 'Work laptop');
+  // The id forms the directory path, so it must survive a rename untouched -
+  // otherwise renaming would strand or invalidate the login.
+  assert.equal(renamed.id, account.id);
+  assert.equal(codexHome(account.id, options), homeBefore);
+  assert.equal((await readCodexAuth(homeBefore)).accessToken, 'keep-me');
+  assert.equal(await isSignedIn(account.id, options), true);
+
+  const listed = await listAccounts(options);
+  assert.equal(listed.length, 1, 'renaming must not create a second account');
+  assert.equal(listed[0].label, 'Work laptop');
+});
+
+test('renaming to a label that collides with another account is allowed', async () => {
+  // Labels are for humans and need not be unique; ids are what must not collide.
+  const { options } = await sandbox();
+  const first = await createAccount({ label: 'One', provider: 'codex' }, options);
+  const second = await createAccount({ label: 'Two', provider: 'codex' }, options);
+  await updateAccount(second.id, { label: 'One' }, options);
+
+  const listed = await listAccounts(options);
+  assert.equal(listed.length, 2);
+  assert.notEqual(listed[0].id, listed[1].id);
+  assert.equal(first.id, 'one');
+  assert.equal(second.id, 'two');
 });
 
 test('listAccounts can filter by provider', async () => {

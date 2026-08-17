@@ -32,6 +32,7 @@ async function activateExtension(context) {
     command('contextBridge.signInAccount', (item) => signInAccount(item)),
     command('contextBridge.refreshAccountQuota', () => refreshAccountQuota()),
     command('contextBridge.openAccountTerminal', (item) => openAccountTerminal(item)),
+    command('contextBridge.renameAccount', (item) => renameAccount(item)),
     command('contextBridge.forgetAccount', (item) => forgetAccount(item)),
     command('contextBridge.discoverClaude', () => discover('claude')),
     command('contextBridge.discoverCodex', () => discover('codex')),
@@ -221,6 +222,32 @@ async function openAccountTerminal(item) {
   });
   terminal.show();
   terminal.sendText('codex');
+}
+
+// Rename changes only the display label. The account id forms the path to its
+// credential directory and is deliberately left alone, so renaming can never
+// invalidate a login or require signing in again.
+async function renameAccount(item) {
+  const account = await resolveAccount(item);
+  if (!account) return;
+  const { updateAccount } = await core();
+
+  let label = typeof item?.label === 'string' ? item.label.trim() : '';
+  if (!label) {
+    // The panel edits inline; the palette has to ask.
+    label = (
+      await vscode.window.showInputBox({
+        title: 'Rename subscription',
+        value: account.label,
+        prompt: 'This changes the display name only, not the stored login.',
+        validateInput: (value) => (value.trim() ? undefined : 'Enter a name.')
+      })
+    )?.trim();
+  }
+  if (!label || label === account.label) return;
+
+  await updateAccount(account.id, { label });
+  await accountsProvider.reloadUsage({ offline: true });
 }
 
 // The panel confirms in the card before calling this, so an invocation carrying

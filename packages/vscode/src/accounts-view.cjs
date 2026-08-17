@@ -93,10 +93,14 @@ class AccountsStore {
     });
 
     const values = rows.map((row) => row.remaining).filter((value) => typeof value === 'number');
+    const stamps = rows.map((row) => Date.parse(row.fetchedAt || '')).filter((value) => Number.isFinite(value));
     return {
       rows,
       pooled: {
         count: rows.length,
+        // Age of the oldest reading on screen, so the panel can say how current
+        // it is rather than leaving the user to wonder.
+        updatedAt: stamps.length > 0 ? new Date(Math.min(...stamps)).toISOString() : undefined,
         total: values.length > 0 ? values.reduce((sum, value) => sum + value, 0) : undefined,
         // The pooled bar is an average so it stays on a 0-100 scale even as
         // subscriptions are added; the headline number stays the sum, which is
@@ -135,6 +139,7 @@ class AccountsWebview {
         raw: 'contextBridge.showRawUsage',
         forget: 'contextBridge.forgetAccount',
         purge: 'contextBridge.forgetAccount',
+        rename: 'contextBridge.renameAccount',
         add: 'contextBridge.addCodexAccount',
         import: 'contextBridge.importCodexAccount',
         refresh: 'contextBridge.refreshAccountQuota'
@@ -145,12 +150,17 @@ class AccountsWebview {
       // it must not raise a dialog of its own.
       vscode.commands.executeCommand(
         command,
-        message.id ? { accountId: message.id, confirmed: true, purge: Boolean(message.purge) } : undefined
+        message.id
+          ? { accountId: message.id, confirmed: true, purge: Boolean(message.purge), label: message.label }
+          : undefined
       );
     });
 
+    // Reading quota when the panel is shown keeps the numbers current without a
+    // background timer. This is not a forced refresh, so the cache TTL still
+    // applies and repeatedly toggling the panel costs nothing.
     view.onDidChangeVisibility(() => {
-      if (view.visible) this.store.refresh();
+      if (view.visible) this.store.reloadUsage().catch(() => this.store.refresh());
     });
     this.post(await this.store.viewModel());
   }
@@ -237,6 +247,25 @@ function html(webview) {
   .ident { min-width: 0; flex: 1; }
   .name { display: flex; align-items: center; gap: 6px; }
   .name b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pencil {
+    flex: none; padding: 1px 4px; line-height: 1; border-radius: 3px;
+    border: none; background: transparent; color: var(--dim);
+    cursor: pointer; opacity: 0; transition: opacity 120ms ease;
+  }
+  .item:hover .pencil, .pencil:focus-visible { opacity: 1; }
+  .pencil:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground, transparent); }
+  .rename { display: flex; gap: 6px; align-items: center; }
+  .rename input {
+    flex: 1; min-width: 0; font-family: inherit; font-size: 0.95em; padding: 3px 7px; border-radius: 4px;
+    background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-focusBorder);
+  }
+  .pool-refresh {
+    margin-left: auto; padding: 2px 8px; border-radius: 4px; font-size: 0.8em;
+    border: 1px solid var(--hairline); background: transparent; color: var(--dim); cursor: pointer;
+  }
+  .pool-refresh:hover { color: var(--vscode-foreground); background: var(--vscode-list-hoverBackground); }
+  .pool-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--dim); font-size: 0.82em; }
   .plan {
     flex: none;
     font-size: 0.75em; letter-spacing: 0.02em;
@@ -331,6 +360,15 @@ function maskEmail(email) {
   const [name, domain] = email.split('@');
   return name.slice(0, 1) + '•••@' + domain;
 }
+function ago(iso) {
+  const at = Date.parse(iso || '');
+  if (!isFinite(at)) return 'never';
+  const minutes = Math.round((Date.now() - at) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return minutes + 'm ago';
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? hours + 'h ago' : Math.round(hours / 24) + 'd ago';
+}
 function until(iso) {
   const at = Date.parse(iso || '');
   if (!isFinite(at)) return '';
@@ -377,8 +415,14 @@ function renderRow(row) {
     '<div class="head">' +
       '<span class="avatar" style="--tint:' + tint(row.id) + '">' + esc((row.label || '?').slice(0, 1).toUpperCase()) + '</span>' +
       '<span class="ident">' +
-        '<span class="name"><b>' + esc(row.label) + '</b>' +
+        '<span class="name" data-name="' + esc(row.id) + '"><b>' + esc(row.label) + '</b>' +
           (row.plan ? '<span class="plan">' + esc(row.plan) + '</span>' : '') +
+          '<button class="pencil" data-rename="' + esc(row.id) + '" title="Rename" aria-label="Rename subscription">✎</button>' +
+        '</span>' +
+        '<span class="rename" data-editor="' + esc(row.id) + '" hidden>' +
+          '<input type="text" value="' + esc(row.label) + '" aria-label="Subscription name">' +
+          '<button data-save="' + esc(row.id) + '">Save</button>' +
+          '<button data-discard="' + esc(row.id) + '">Cancel</button>' +
         '</span>' +
         '<span class="email">' + esc(maskEmail(row.email)) + '</span>' +
       '</span>' +
@@ -423,6 +467,8 @@ function render(model) {
         '<span class="pool-total">' + (pooled.total === undefined ? '—' : pct(pooled.total)) + '</span></div>' +
       '<div class="pool-sub">' + pooled.count + ' connected subscription' + (pooled.count === 1 ? '' : 's') + '</div>' +
       '<div class="bar"><i style="width:' + (pooled.average || 0) + '%;--fill:var(--vscode-charts-blue)"></i></div>' +
+      '<div class="pool-foot"><span>' + (pooled.updatedAt ? 'Updated ' + ago(pooled.updatedAt) : 'Not read yet') + '</span>' +
+        '<button class="pool-refresh" data-act="refresh">Refresh now</button></div>' +
     '</div>' +
     '<ul class="list">' + model.rows.map(renderRow).join('') + '</ul>' +
     '<button class="add" data-act="add">+ Add another subscription</button>';
@@ -430,7 +476,45 @@ function render(model) {
 
 // Confirmation for a destructive action happens here, in the card, so acting on
 // something in this panel never hands the user off to a dialog or a picker.
+// Renaming edits the label in place. The account id, and therefore the
+// directory holding its credential, never changes - so a rename cannot
+// invalidate a login or require signing in again.
+function editing(id, on) {
+  const name = document.querySelector('[data-name="' + CSS.escape(id) + '"]');
+  const editor = document.querySelector('[data-editor="' + CSS.escape(id) + '"]');
+  if (!name || !editor) return;
+  name.hidden = on;
+  editor.hidden = !on;
+  if (on) {
+    const input = editor.querySelector('input');
+    input.focus();
+    input.select();
+  }
+}
+
+function commitRename(id) {
+  const editor = document.querySelector('[data-editor="' + CSS.escape(id) + '"]');
+  const label = editor.querySelector('input').value.trim();
+  if (!label) { editor.querySelector('input').focus(); return; }
+  vscode.postMessage({ type: 'rename', id, label });
+  editing(id, false);
+}
+
+document.addEventListener('keydown', (event) => {
+  const editor = event.target.closest('[data-editor]');
+  if (!editor) return;
+  if (event.key === 'Enter') commitRename(editor.dataset.editor);
+  if (event.key === 'Escape') editing(editor.dataset.editor, false);
+});
+
 document.addEventListener('click', (event) => {
+  const rename = event.target.closest('[data-rename]');
+  if (rename) { editing(rename.dataset.rename, true); return; }
+  const save = event.target.closest('[data-save]');
+  if (save) { commitRename(save.dataset.save); return; }
+  const discard = event.target.closest('[data-discard]');
+  if (discard) { editing(discard.dataset.discard, false); return; }
+
   const ask = event.target.closest('[data-ask]');
   if (ask) {
     const panel = document.getElementById('confirm-' + ask.dataset.ask);
