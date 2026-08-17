@@ -36,7 +36,14 @@ export async function getCodexUsage(accountId, options = {}) {
   const ttl = Number.isFinite(options.ttlMs) ? options.ttlMs : DEFAULT_QUOTA_TTL_MS;
   const cached = await readQuotaCache(accountId, options);
 
-  if (cached && !options.force) {
+  // A cached reading with no windows in it is a parse miss, not a fact about
+  // the subscription, so it never satisfies a read. Otherwise a bad parse -
+  // or a payload shape we did not understand at the time it was cached -
+  // would keep serving "unavailable" for the whole TTL and survive the upgrade
+  // that fixed it.
+  const usable = (cached?.windows || []).length > 0;
+
+  if (cached && usable && !options.force) {
     const age = Date.now() - Date.parse(cached.fetchedAt || 0);
     if (Number.isFinite(age) && age >= 0 && age < ttl) return { ...cached, fromCache: true };
   }
@@ -129,7 +136,41 @@ export function normalizeCodexUsage(payload) {
   // to each other rather than producing NaN from Infinity - Infinity.
   const rank = (window) => window.windowSeconds ?? Number.MAX_SAFE_INTEGER;
   windows.sort((a, b) => rank(a) - rank(b));
-  return { fetchedAt: new Date().toISOString(), windows, plan };
+
+  return {
+    fetchedAt: new Date().toISOString(),
+    windows,
+    plan,
+    email: typeof payload?.email === 'string' ? payload.email : undefined,
+    ...readLimitState(payload),
+    credits: readCredits(payload)
+  };
+}
+
+// The provider states outright whether the subscription is currently blocked.
+// Trust that over inferring it from a percentage: the two can disagree at the
+// boundary, and being told "you may not send" is the useful fact.
+function readLimitState(payload) {
+  const limit = payload?.rate_limit || payload?.rateLimit;
+  if (!limit || typeof limit !== 'object') return {};
+  const reached = limit.limit_reached ?? limit.limitReached;
+  const allowed = limit.allowed;
+  if (typeof reached !== 'boolean' && typeof allowed !== 'boolean') return {};
+  return { limitReached: typeof reached === 'boolean' ? reached : allowed === false };
+}
+
+// Credits are a second axis: a subscription can be out of quota but still able
+// to send if it holds credits, so the panel must not present quota alone as the
+// whole picture.
+function readCredits(payload) {
+  const credits = payload?.credits;
+  if (!credits || typeof credits !== 'object') return undefined;
+  const balance = Number(credits.balance);
+  return {
+    hasCredits: Boolean(credits.has_credits ?? credits.hasCredits),
+    unlimited: Boolean(credits.unlimited),
+    balance: Number.isFinite(balance) ? balance : undefined
+  };
 }
 
 function readWindow(node, key) {

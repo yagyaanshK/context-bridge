@@ -134,25 +134,51 @@ function accountItem(account, usage, isActive) {
 
 function describeAccount(account, usage, remaining, isActive) {
   const parts = [];
-  if (usage?.error === 'not-signed-in') parts.push('not signed in');
-  else if (usage?.error) parts.push(`unavailable — ${usage.error}`);
-  else if (remaining !== undefined) parts.push(formatPercent(remaining));
-  else if (usage) parts.push('quota unavailable');
 
+  if (usage?.error === 'not-signed-in') {
+    parts.push('not signed in');
+  } else if (usage?.error) {
+    parts.push(`unavailable — ${usage.error}`);
+  } else if (usage?.limitReached) {
+    // At the ceiling, when it lifts is the only number that helps.
+    const soonest = nextReset(usage.windows);
+    parts.push(`limit reached${soonest ? `, back${resetSuffix(soonest).replace(' · resets', '')}` : ''}`);
+  } else if (remaining !== undefined) {
+    parts.push(`${formatPercent(remaining)} left`);
+  } else if (usage) {
+    parts.push('quota unavailable');
+  }
+
+  if (usage?.credits?.hasCredits) {
+    parts.push(usage.credits.unlimited ? 'unlimited credits' : `${usage.credits.balance} credits`);
+  }
   if (account.plan) parts.push(planLabel(account.plan));
   if (isActive) parts.push('in use');
   return parts.join(' · ');
+}
+
+function nextReset(windows) {
+  const times = (windows || [])
+    .map((window) => Date.parse(window.resetsAt || ''))
+    .filter((value) => Number.isFinite(value));
+  return times.length > 0 ? new Date(Math.min(...times)).toISOString() : undefined;
 }
 
 // Encode state in form as well as number, so the account in use and an
 // exhausted account both read without parsing text.
 function accountIcon(usage, remaining, isActive) {
   const color = (name) => new vscode.ThemeColor(name);
+  const exhausted = usage?.limitReached || (typeof remaining === 'number' && remaining <= 5);
+
+  // Being out is worth seeing even on the subscription in use - arguably
+  // especially then, since that is the one about to stop working.
+  if (exhausted && !usage?.credits?.hasCredits) {
+    return new vscode.ThemeIcon(isActive ? 'error' : 'circle-slash', color('problemsErrorIcon.foreground'));
+  }
   if (isActive) return new vscode.ThemeIcon('check', color('testing.iconPassed'));
   if (usage?.error === 'not-signed-in') return new vscode.ThemeIcon('circle-outline');
   if (usage?.error) return new vscode.ThemeIcon('warning', color('problemsWarningIcon.foreground'));
   if (remaining === undefined) return new vscode.ThemeIcon('account');
-  if (remaining <= 5) return new vscode.ThemeIcon('circle-slash', color('problemsErrorIcon.foreground'));
   if (remaining <= 20) return new vscode.ThemeIcon('circle-filled', color('problemsWarningIcon.foreground'));
   return new vscode.ThemeIcon('circle-filled', color('charts.blue'));
 }
@@ -169,9 +195,22 @@ function accountTooltip(account, usage, remaining, isActive) {
   } else if (usage?.error) {
     lines.push(`Quota unavailable: ${usage.error}`);
   } else if ((usage?.windows || []).length > 0) {
-    lines.push(`Remaining, tightest window: **${formatPercent(remaining)}**`, '');
+    lines.push(
+      usage.limitReached
+        ? '**Limit reached.** This subscription cannot send until it resets.'
+        : `Remaining, tightest window: **${formatPercent(remaining)}**`,
+      ''
+    );
     for (const window of usage.windows) {
       lines.push(`- ${window.label}: ${formatPercent(window.remainingPercent)} left${resetSuffix(window.resetsAt)}`);
+    }
+    if (usage.credits) {
+      lines.push(
+        '',
+        usage.credits.unlimited
+          ? 'Credits: unlimited'
+          : `Credits: ${usage.credits.balance ?? 0}${usage.credits.hasCredits ? '' : ' (none available)'}`
+      );
     }
     lines.push('', `_Read ${age(usage.fetchedAt)}${usage.staleReason ? ` · refresh failed: ${usage.staleReason}` : ''}_`);
   } else if (usage) {

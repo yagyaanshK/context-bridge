@@ -270,6 +270,73 @@ test('usage normalization finds windows regardless of how they are nested', () =
   }
 });
 
+// Captured verbatim from a live response, trimmed of the upsell/referral blocks
+// that carry no quota. Keeping a real payload in the suite is what stops the
+// next parser change from silently regressing on the shape that actually ships.
+const LIVE_CODEX_PAYLOAD = {
+  user_id: 'user-redacted',
+  account_id: 'account-redacted',
+  email: 'dev@example.com',
+  plan_type: 'plus',
+  rate_limit: {
+    allowed: false,
+    limit_reached: true,
+    primary_window: {
+      used_percent: 100,
+      limit_window_seconds: 604800,
+      reset_after_seconds: 227369,
+      reset_at: 1787220169
+    },
+    secondary_window: null
+  },
+  code_review_rate_limit: null,
+  additional_rate_limits: null,
+  credits: { has_credits: false, unlimited: false, balance: '0', approx_local_messages: [0, 0] },
+  spend_control: { reached: false, individual_limit: null },
+  rate_limit_reset_credits: { available_count: 0, applicable_available_count: 0 }
+};
+
+test('usage normalization handles the live Codex payload', () => {
+  const usage = normalizeCodexUsage(LIVE_CODEX_PAYLOAD);
+
+  assert.equal(usage.windows.length, 1, 'a null secondary_window must not become a window');
+  assert.equal(usage.windows[0].label, 'weekly');
+  assert.equal(usage.windows[0].usedPercent, 100);
+  assert.equal(usage.windows[0].remainingPercent, 0);
+  assert.equal(usage.windows[0].resetsAt, new Date(1787220169 * 1000).toISOString());
+
+  assert.equal(usage.plan, 'plus');
+  assert.equal(usage.email, 'dev@example.com');
+  // Stated by the provider, not inferred from the percentage.
+  assert.equal(usage.limitReached, true);
+  assert.equal(usage.credits.hasCredits, false);
+  assert.equal(usage.credits.balance, 0);
+  assert.equal(headlineRemaining(usage), 0);
+});
+
+test('usage normalization ignores unrelated counters in the payload', () => {
+  // The live response carries referral and spend-control blocks full of numbers.
+  // None of them are quota windows and none may leak into the panel.
+  const usage = normalizeCodexUsage({
+    ...LIVE_CODEX_PAYLOAD,
+    rate_limit_upsell: {
+      referral: {
+        remaining_send_capacity: 10,
+        remaining_reward_capacity: 3,
+        time_frame_rules: [{ invites_sent: 0, invites_total: 10, time_frame: 'month' }]
+      }
+    }
+  });
+  assert.equal(usage.windows.length, 1);
+  assert.equal(usage.windows[0].key, 'primary_window');
+});
+
+test('a limit-reached reading is a fact, not an error state', () => {
+  const usage = normalizeCodexUsage(LIVE_CODEX_PAYLOAD);
+  assert.equal(usage.error, undefined, 'being out of quota is not a failure to read quota');
+  assert.ok(usage.windows.length > 0);
+});
+
 test('usage normalization reads 0-1 utilization as well as percentages', () => {
   const usage = normalizeCodexUsage({
     five_hour: { utilization: 0.42, limit_window_seconds: 18000, resets_at: '2099-01-01T00:00:00.000Z' },
@@ -306,6 +373,35 @@ test('usage normalization clamps out-of-range percentages', () => {
   const usage = normalizeCodexUsage({ rate_limits: { a: { used_percent: 140 }, b: { used_percent: -5 } } });
   assert.equal(usage.windows[0].remainingPercent, 0);
   assert.equal(usage.windows[1].remainingPercent, 100);
+});
+
+test('a cached reading with no windows never satisfies a read', async () => {
+  const { options } = await sandbox();
+  const account = await createAccount({ label: 'Stale', provider: 'codex' }, options);
+  await signIn(account.id, options);
+
+  // Stand in for a cache written by an older parser that understood nothing.
+  let calls = 0;
+  const empty = async () => {
+    calls++;
+    return { ok: true, json: async () => ({ unrecognized: 'shape' }) };
+  };
+  await getCodexUsage(account.id, { ...options, fetch: empty });
+  assert.equal(calls, 1);
+
+  // Without force, and well inside the TTL: an empty cache is a parse miss, not
+  // a fact, so it must retry rather than serve "unavailable" for five minutes.
+  const good = async () => {
+    calls++;
+    return { ok: true, json: async () => ({ rate_limits: { p: { used_percent: 20, limit_window_seconds: 18000 } } }) };
+  };
+  const usage = await getCodexUsage(account.id, { ...options, fetch: good });
+  assert.equal(calls, 2, 'the empty cache entry must not have been served');
+  assert.equal(usage.windows[0].remainingPercent, 80);
+
+  // Now that a real reading is cached, the TTL applies normally.
+  await getCodexUsage(account.id, { ...options, fetch: good });
+  assert.equal(calls, 2);
 });
 
 test('quota reads come from cache until the TTL expires', async () => {
