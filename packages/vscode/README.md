@@ -46,8 +46,10 @@ Every handoff opens with **Where This Left Off**: the last real request and the 
 
 ## Codex subscriptions
 
-A **Context Bridge** panel in the activity bar lists your Codex subscriptions with the remaining
-percentage of whichever window is tightest, broken down per window when you expand a row.
+A **Context Bridge** panel in the activity bar lists your Codex subscriptions as cards: plan, masked
+email, a usage bar, the remaining percentage of whichever window is tightest, and when it resets.
+A pooled bar at the top totals what you have across all of them. Buttons appear on hover, so nothing
+needs the command palette.
 
 Each subscription gets its own `CODEX_HOME` under `~/.context-bridge/accounts/`, so they all stay
 signed in simultaneously — there is nothing to swap. Sign-in runs the official `codex login` in a

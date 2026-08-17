@@ -2,7 +2,7 @@
   "name": "context-bridge-vscode",
   "displayName": "Context Bridge",
   "description": "Continue developer agent sessions across Claude, Codex, and other tools from VS Code.",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "publisher": "yagyaanshK",
   "license": "MIT",
   "type": "commonjs",
@@ -45,7 +45,8 @@
         {
           "id": "contextBridgeAccounts",
           "name": "Codex Subscriptions",
-          "contextualTitle": "Context Bridge"
+          "contextualTitle": "Context Bridge",
+          "type": "webview"
         }
       ]
     },
@@ -217,38 +218,6 @@
           "group": "1_add"
         }
       ],
-      "view/item/context": [
-        {
-          "command": "contextBridge.switchAccount",
-          "when": "view == contextBridgeAccounts && viewItem == contextBridgeCodexAccount",
-          "group": "inline@1"
-        },
-        {
-          "command": "contextBridge.openAccountTerminal",
-          "when": "view == contextBridgeAccounts && viewItem =~ /contextBridgeCodexAccount/",
-          "group": "inline@2"
-        },
-        {
-          "command": "contextBridge.signInAccount",
-          "when": "view == contextBridgeAccounts && viewItem =~ /contextBridgeCodexAccount/",
-          "group": "1_use@1"
-        },
-        {
-          "command": "contextBridge.showRawUsage",
-          "when": "view == contextBridgeAccounts && viewItem =~ /contextBridgeCodexAccount/",
-          "group": "2_debug"
-        },
-        {
-          "command": "contextBridge.forgetAccount",
-          "when": "view == contextBridgeAccounts && viewItem =~ /contextBridgeCodexAccount/",
-          "group": "9_danger"
-        },
-        {
-          "command": "contextBridge.refreshAccountQuota",
-          "when": "view == contextBridgeAccounts && viewItem == contextBridgePooled",
-          "group": "inline@1"
-        }
-      ],
       "commandPalette": [
         {
           "command": "contextBridge.handoffToClaudeExisting"
@@ -272,7 +241,7 @@
     }
   },
   "dependencies": {
-    "@context-bridge/core": "0.2.2"
+    "@context-bridge/core": "0.3.0"
   },
   "devDependencies": {
     "@types/vscode": "^1.95.0"

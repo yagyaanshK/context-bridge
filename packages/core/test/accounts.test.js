@@ -11,6 +11,7 @@ import {
   codexHome,
   createAccount,
   decodeJwtClaims,
+  ensureCodexHome,
   fetchCodexUsage,
   getAccount,
   getCodexUsage,
@@ -71,6 +72,22 @@ test('accounts are created with stable ids and isolated homes', async () => {
   assert.equal(accounts.length, 2);
   // Isolation is the whole mechanism: one env var per account, pointing at its own tree.
   assert.equal(codexEnv(first.id, options).CODEX_HOME, codexHome(first.id, options));
+});
+
+test('a new account has a CODEX_HOME that exists before anything is launched', async () => {
+  const { options } = await sandbox();
+  const account = await createAccount({ label: 'Fresh', provider: 'codex' }, options);
+  const home = codexHome(account.id, options);
+
+  // `codex` will not create CODEX_HOME; it exits with "that path does not
+  // exist", so `codex login` could never complete for a new subscription.
+  await ensureCodexHome(account.id, options);
+  const stat = await fs.stat(home);
+  assert.ok(stat.isDirectory(), 'CODEX_HOME must exist before codex is spawned against it');
+
+  // Safe to call again on an account that is already set up.
+  await ensureCodexHome(account.id, options);
+  assert.ok((await fs.stat(home)).isDirectory());
 });
 
 test('listAccounts can filter by provider', async () => {

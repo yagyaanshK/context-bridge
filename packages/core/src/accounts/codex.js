@@ -23,6 +23,15 @@ export function codexAuthPath(home) {
   return path.join(home, 'auth.json');
 }
 
+// `codex` refuses to start when CODEX_HOME names a directory that does not
+// exist - it will not create one - so the directory has to be in place before
+// any process is launched against it, including the login itself.
+export async function ensureCodexHome(accountId, options = {}) {
+  const home = codexHome(accountId, options);
+  await ensureDir(home);
+  return home;
+}
+
 // The environment a spawned `codex` process needs to act as this account.
 export function codexEnv(accountId, options = {}) {
   return { CODEX_HOME: codexHome(accountId, options) };

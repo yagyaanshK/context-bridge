@@ -46,6 +46,7 @@ export {
   codexHome,
   decodeJwtClaims,
   defaultCodexHome,
+  ensureCodexHome,
   importCodexAuth,
   isSignedIn,
   readCodexAuth,

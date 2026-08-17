@@ -1,23 +1,20 @@
+const crypto = require('node:crypto');
 const vscode = require('vscode');
 
-// Codex subscriptions, shaped for switching rather than for reading.
+// Codex subscriptions.
 //
-// The list mirrors what the official client cannot offer: every subscription
-// you hold, what each has left, and which one the official Codex UI is using
-// right now. Clicking a row switches to it - the primary action is the whole
-// point of the panel, so it is a single click rather than a context menu.
-class AccountsProvider {
+// Split into a store (what we know) and a webview (how it looks). The panel is
+// a webview rather than a tree because the useful presentation here is a
+// meter: a percentage is much easier to judge against a filled bar than as a
+// number, and a TreeItem cannot render one.
+
+class AccountsStore {
   constructor(core) {
     this.core = core;
-    this.emitter = new vscode.EventEmitter();
-    this.onDidChangeTreeData = this.emitter.event;
     this.usage = new Map();
     this.activeId = undefined;
-    this.onDidChangeActive = new vscode.EventEmitter();
-  }
-
-  refresh() {
-    this.emitter.fire();
+    this.emitter = new vscode.EventEmitter();
+    this.onDidChange = this.emitter.event;
   }
 
   async accounts() {
@@ -29,7 +26,6 @@ class AccountsProvider {
     const { activeCodexAccountId } = await this.core();
     const list = accounts || (await this.accounts());
     this.activeId = await activeCodexAccountId(list);
-    this.onDidChangeActive.fire(this.summary(list));
     return this.activeId;
   }
 
@@ -46,115 +42,113 @@ class AccountsProvider {
       })
     );
     await this.reloadActive(accounts);
-    this.refresh();
+    this.emitter.fire(await this.viewModel(accounts));
     return accounts;
   }
 
-  // What the status bar shows: the account in use and how much it has left.
-  summary(accounts) {
-    const active = (accounts || []).find((account) => account.id === this.activeId);
+  async refresh() {
+    this.emitter.fire(await this.viewModel());
+  }
+
+  // Everything the panel and the status bar draw, resolved in one place so the
+  // two can never disagree about which subscription is in use.
+  async viewModel(known) {
+    const accounts = known || (await this.accounts());
+    if (this.activeId === undefined && accounts.length > 0) await this.reloadActive(accounts);
+
+    const rows = accounts.map((account) => {
+      const usage = this.usage.get(account.id);
+      const windows = usage?.windows || [];
+      const remaining = remainingOf(usage);
+      return {
+        id: account.id,
+        label: account.label,
+        plan: account.plan ? planLabel(account.plan) : undefined,
+        email: usage?.email || account.email,
+        active: account.id === this.activeId,
+        signedIn: usage?.error !== 'not-signed-in',
+        error: usage?.error === 'not-signed-in' ? undefined : usage?.error,
+        limitReached: Boolean(usage?.limitReached),
+        credits: usage?.credits,
+        remaining,
+        resetsAt: nextReset(windows),
+        fetchedAt: usage?.fetchedAt,
+        staleReason: usage?.staleReason,
+        loaded: Boolean(usage),
+        windows: windows.map((window) => ({
+          label: window.label,
+          remaining: window.remainingPercent,
+          resetsAt: window.resetsAt
+        }))
+      };
+    });
+
+    const values = rows.map((row) => row.remaining).filter((value) => typeof value === 'number');
+    return {
+      rows,
+      pooled: {
+        count: rows.length,
+        total: values.length > 0 ? values.reduce((sum, value) => sum + value, 0) : undefined,
+        // The pooled bar is an average so it stays on a 0-100 scale even as
+        // subscriptions are added; the headline number stays the sum, which is
+        // what "how much do I have across everything" actually means.
+        average: values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : undefined
+      }
+    };
+  }
+
+  async summary() {
+    const accounts = await this.accounts();
+    const active = accounts.find((account) => account.id === this.activeId);
     if (!active) return { label: undefined };
     const usage = this.usage.get(active.id);
-    return { label: active.label, remaining: usage ? headline(usage) : undefined };
-  }
-
-  getTreeItem(element) {
-    return element;
-  }
-
-  async getChildren(element) {
-    if (element?.windows) return element.windows.map((window) => windowItem(window));
-    if (element) return [];
-
-    const accounts = await this.accounts();
-    if (accounts.length === 0) return [addItem('Add a subscription')];
-
-    if (this.activeId === undefined) await this.reloadActive(accounts);
-
-    const rows = accounts.map((account) =>
-      accountItem(account, this.usage.get(account.id), account.id === this.activeId)
-    );
-    return [pooledItem(accounts, this.usage), ...rows, addItem('Add another subscription')];
+    return { label: active.label, remaining: remainingOf(usage), limitReached: Boolean(usage?.limitReached) };
   }
 }
 
-// Mirrors the pooled figure in the reference UI: the sum of what every
-// subscription has left, which is what you actually have available across all
-// of them before any of them has to be switched away from.
-function pooledItem(accounts, usageMap) {
-  const values = accounts
-    .map((account) => (usageMap.get(account.id) ? headline(usageMap.get(account.id)) : undefined))
-    .filter((value) => typeof value === 'number');
-
-  const item = new vscode.TreeItem('Usage remaining', vscode.TreeItemCollapsibleState.None);
-  const count = `${accounts.length} connected subscription${accounts.length === 1 ? '' : 's'}`;
-  item.description =
-    values.length > 0 ? `${count} · ${formatPercent(values.reduce((sum, value) => sum + value, 0))}` : count;
-  item.iconPath = new vscode.ThemeIcon('dashboard');
-  item.contextValue = 'contextBridgePooled';
-  item.tooltip = new vscode.MarkdownString(
-    values.length > 0
-      ? `Summed remaining quota across ${accounts.length} subscription(s).\n\nEach figure is that account's tightest window.`
-      : 'Quota has not been read yet. Use the refresh button above.'
-  );
-  return item;
-}
-
-function addItem(label) {
-  const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
-  item.iconPath = new vscode.ThemeIcon('add');
-  item.command = { command: 'contextBridge.addCodexAccount', title: label };
-  item.contextValue = 'contextBridgeAdd';
-  return item;
-}
-
-function accountItem(account, usage, isActive) {
-  const windows = usage?.windows || [];
-  const item = new vscode.TreeItem(
-    account.label,
-    windows.length > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None
-  );
-
-  const remaining = usage ? headline(usage) : undefined;
-  item.description = describeAccount(account, usage, remaining, isActive);
-  item.iconPath = accountIcon(usage, remaining, isActive);
-  item.contextValue = isActive ? 'contextBridgeCodexAccountActive' : 'contextBridgeCodexAccount';
-  item.id = account.id;
-  item.windows = windows;
-  item.account = account;
-  item.tooltip = accountTooltip(account, usage, remaining, isActive);
-
-  // Single click switches. Every subscription stays signed in, so this is cheap
-  // and reversible rather than something to guard behind a confirmation.
-  if (!isActive) {
-    item.command = { command: 'contextBridge.switchAccount', title: 'Use this subscription', arguments: [item] };
-  }
-  return item;
-}
-
-function describeAccount(account, usage, remaining, isActive) {
-  const parts = [];
-
-  if (usage?.error === 'not-signed-in') {
-    parts.push('not signed in');
-  } else if (usage?.error) {
-    parts.push(`unavailable — ${usage.error}`);
-  } else if (usage?.limitReached) {
-    // At the ceiling, when it lifts is the only number that helps.
-    const soonest = nextReset(usage.windows);
-    parts.push(`limit reached${soonest ? `, back${resetSuffix(soonest).replace(' · resets', '')}` : ''}`);
-  } else if (remaining !== undefined) {
-    parts.push(`${formatPercent(remaining)} left`);
-  } else if (usage) {
-    parts.push('quota unavailable');
+class AccountsWebview {
+  constructor(store) {
+    this.store = store;
+    this.view = undefined;
+    store.onDidChange((model) => this.post(model));
   }
 
-  if (usage?.credits?.hasCredits) {
-    parts.push(usage.credits.unlimited ? 'unlimited credits' : `${usage.credits.balance} credits`);
+  async resolveWebviewView(view) {
+    this.view = view;
+    view.webview.options = { enableScripts: true };
+    view.webview.html = html(view.webview);
+
+    view.webview.onDidReceiveMessage((message) => {
+      const commands = {
+        switch: 'contextBridge.switchAccount',
+        signin: 'contextBridge.signInAccount',
+        terminal: 'contextBridge.openAccountTerminal',
+        raw: 'contextBridge.showRawUsage',
+        forget: 'contextBridge.forgetAccount',
+        add: 'contextBridge.addCodexAccount',
+        import: 'contextBridge.importCodexAccount',
+        refresh: 'contextBridge.refreshAccountQuota'
+      };
+      const command = commands[message?.type];
+      if (command) vscode.commands.executeCommand(command, message.id ? { accountId: message.id } : undefined);
+    });
+
+    view.onDidChangeVisibility(() => {
+      if (view.visible) this.store.refresh();
+    });
+    this.post(await this.store.viewModel());
   }
-  if (account.plan) parts.push(planLabel(account.plan));
-  if (isActive) parts.push('in use');
-  return parts.join(' · ');
+
+  post(model) {
+    if (this.view?.visible) this.view.webview.postMessage({ type: 'state', model });
+  }
+}
+
+function remainingOf(usage) {
+  const values = (usage?.windows || [])
+    .map((window) => window.remainingPercent)
+    .filter((value) => typeof value === 'number' && Number.isFinite(value));
+  return values.length > 0 ? Math.min(...values) : undefined;
 }
 
 function nextReset(windows) {
@@ -164,106 +158,252 @@ function nextReset(windows) {
   return times.length > 0 ? new Date(Math.min(...times)).toISOString() : undefined;
 }
 
-// Encode state in form as well as number, so the account in use and an
-// exhausted account both read without parsing text.
-function accountIcon(usage, remaining, isActive) {
-  const color = (name) => new vscode.ThemeColor(name);
-  const exhausted = usage?.limitReached || (typeof remaining === 'number' && remaining <= 5);
-
-  // Being out is worth seeing even on the subscription in use - arguably
-  // especially then, since that is the one about to stop working.
-  if (exhausted && !usage?.credits?.hasCredits) {
-    return new vscode.ThemeIcon(isActive ? 'error' : 'circle-slash', color('problemsErrorIcon.foreground'));
-  }
-  if (isActive) return new vscode.ThemeIcon('check', color('testing.iconPassed'));
-  if (usage?.error === 'not-signed-in') return new vscode.ThemeIcon('circle-outline');
-  if (usage?.error) return new vscode.ThemeIcon('warning', color('problemsWarningIcon.foreground'));
-  if (remaining === undefined) return new vscode.ThemeIcon('account');
-  if (remaining <= 20) return new vscode.ThemeIcon('circle-filled', color('problemsWarningIcon.foreground'));
-  return new vscode.ThemeIcon('circle-filled', color('charts.blue'));
-}
-
-function accountTooltip(account, usage, remaining, isActive) {
-  const lines = [`**${account.label}**`, ''];
-  if (account.email) lines.push(account.email);
-  if (account.plan) lines.push(`Plan: ${planLabel(account.plan)}`);
-  lines.push(isActive ? '_Codex is using this subscription._' : '_Click to switch Codex to this subscription._');
-  lines.push('');
-
-  if (usage?.error === 'not-signed-in') {
-    lines.push('Not signed in. Use **Sign In** to run `codex login` for this subscription.');
-  } else if (usage?.error) {
-    lines.push(`Quota unavailable: ${usage.error}`);
-  } else if ((usage?.windows || []).length > 0) {
-    lines.push(
-      usage.limitReached
-        ? '**Limit reached.** This subscription cannot send until it resets.'
-        : `Remaining, tightest window: **${formatPercent(remaining)}**`,
-      ''
-    );
-    for (const window of usage.windows) {
-      lines.push(`- ${window.label}: ${formatPercent(window.remainingPercent)} left${resetSuffix(window.resetsAt)}`);
-    }
-    if (usage.credits) {
-      lines.push(
-        '',
-        usage.credits.unlimited
-          ? 'Credits: unlimited'
-          : `Credits: ${usage.credits.balance ?? 0}${usage.credits.hasCredits ? '' : ' (none available)'}`
-      );
-    }
-    lines.push('', `_Read ${age(usage.fetchedAt)}${usage.staleReason ? ` · refresh failed: ${usage.staleReason}` : ''}_`);
-  } else if (usage) {
-    lines.push('Quota returned no recognizable windows. Run **Show Raw Usage Response** to see what came back.');
-  } else {
-    lines.push('Quota not read yet.');
-  }
-
-  return new vscode.MarkdownString(lines.join('\n'));
-}
-
-function windowItem(window) {
-  const item = new vscode.TreeItem(window.label, vscode.TreeItemCollapsibleState.None);
-  item.description = `${formatPercent(window.remainingPercent)} left${resetSuffix(window.resetsAt)}`;
-  item.iconPath = new vscode.ThemeIcon('pulse');
-  item.tooltip = `${formatPercent(window.usedPercent)} used of the ${window.label} window`;
-  return item;
-}
-
-function headline(usage) {
-  const values = (usage?.windows || [])
-    .map((window) => window.remainingPercent)
-    .filter((value) => typeof value === 'number' && Number.isFinite(value));
-  return values.length > 0 ? Math.min(...values) : undefined;
-}
-
-function resetSuffix(resetsAt) {
-  const at = Date.parse(resetsAt || '');
-  if (!Number.isFinite(at)) return '';
-  const minutes = Math.round((at - Date.now()) / 60000);
-  if (minutes <= 0) return ' · resetting';
-  if (minutes < 60) return ` · resets in ${minutes}m`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return ` · resets in ${hours}h`;
-  return ` · resets in ${Math.round(hours / 24)}d`;
-}
-
-function age(fetchedAt) {
-  const at = Date.parse(fetchedAt || '');
-  if (!Number.isFinite(at)) return 'just now';
-  const minutes = Math.round((Date.now() - at) / 60000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  return `${Math.round(minutes / 60)}h ago`;
-}
-
 function planLabel(plan) {
   return String(plan).replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function formatPercent(value) {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
-  return `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
+// All colours come from the editor's own theme tokens, so the panel follows
+// whatever theme is active - including the high-contrast ones - instead of
+// shipping a palette that only suits the default dark.
+function html(webview) {
+  const nonce = crypto.randomBytes(16).toString('base64');
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<style>
+  :root {
+    --gap: 10px;
+    --radius: 6px;
+    --hairline: var(--vscode-panel-border, rgba(128,128,128,0.25));
+    --dim: var(--vscode-descriptionForeground);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: var(--gap) 0 16px;
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    color: var(--vscode-foreground);
+    background: transparent;
+  }
+  .pool {
+    margin: 0 var(--gap) 6px;
+    padding: 10px 12px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    background: var(--vscode-editorWidget-background, transparent);
+  }
+  .pool-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .pool-title { font-weight: 600; }
+  .pool-total { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 1.1em; }
+  .pool-sub { color: var(--dim); font-size: 0.9em; margin-top: 2px; }
+  .list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .item {
+    margin: 0 var(--gap);
+    padding: 9px 10px;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+  }
+  .item:hover { background: var(--vscode-list-hoverBackground); }
+  .item.active { border-color: var(--vscode-focusBorder); background: var(--vscode-list-inactiveSelectionBackground); }
+  .head { display: flex; align-items: center; gap: 9px; }
+  .avatar {
+    flex: none;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 0.8em; font-weight: 700;
+    color: var(--vscode-editor-background, #1e1e1e);
+    background: var(--tint);
+  }
+  .ident { min-width: 0; flex: 1; }
+  .name { display: flex; align-items: center; gap: 6px; }
+  .name b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .plan {
+    flex: none;
+    font-size: 0.75em; letter-spacing: 0.02em;
+    padding: 1px 6px; border-radius: 999px;
+    border: 1px solid var(--hairline); color: var(--dim);
+  }
+  .email { color: var(--dim); font-size: 0.85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pct { flex: none; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .pct.warn { color: var(--vscode-charts-yellow); }
+  .pct.crit { color: var(--vscode-charts-red); }
+  .bar {
+    position: relative;
+    height: 5px; margin-top: 8px;
+    border-radius: 999px;
+    background: var(--vscode-progressBar-background, var(--hairline));
+    opacity: 0.35;
+  }
+  .bar > i {
+    position: absolute; inset: 0 auto 0 0;
+    border-radius: 999px;
+    background: var(--fill);
+    transition: width 220ms ease;
+  }
+  .meta {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    margin-top: 6px; color: var(--dim); font-size: 0.85em;
+  }
+  .badge { color: var(--vscode-charts-green); font-weight: 600; }
+  .badge.crit { color: var(--vscode-charts-red); }
+  .actions { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+  .item:not(:hover):not(.active) .actions { display: none; }
+  button {
+    font-family: inherit; font-size: 0.85em;
+    padding: 3px 9px; border-radius: 4px; cursor: pointer;
+    border: 1px solid var(--vscode-button-border, transparent);
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+  }
+  button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  button.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  button.primary:hover { background: var(--vscode-button-hoverBackground); }
+  button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+  .add {
+    margin: 8px var(--gap) 0;
+    width: calc(100% - var(--gap) * 2);
+    text-align: center; padding: 7px;
+    border: 1px dashed var(--hairline); background: transparent; color: var(--dim);
+  }
+  .add:hover { background: var(--vscode-list-hoverBackground); color: var(--vscode-foreground); }
+  .empty { padding: 14px var(--gap); color: var(--dim); line-height: 1.5; }
+  .windows { margin: 7px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+  .windows li { display: flex; justify-content: space-between; gap: 8px; color: var(--dim); font-size: 0.85em; }
+  .windows b { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--vscode-foreground); }
+  @media (prefers-reduced-motion: reduce) { .bar > i { transition: none; } }
+</style>
+</head>
+<body>
+<div id="root"><div class="empty">Loading subscriptions…</div></div>
+<script nonce="${nonce}">
+const vscode = acquireVsCodeApi();
+const TINTS = ['--vscode-charts-blue','--vscode-charts-purple','--vscode-charts-green','--vscode-charts-orange','--vscode-charts-red','--vscode-charts-yellow'];
+
+function esc(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function pct(value) {
+  if (typeof value !== 'number' || !isFinite(value)) return '—';
+  return (Number.isInteger(value) ? value : value.toFixed(1)) + '%';
+}
+function tint(id) {
+  let hash = 0;
+  for (const char of String(id)) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return 'var(' + TINTS[hash % TINTS.length] + ')';
+}
+function maskEmail(email) {
+  if (!email || !email.includes('@')) return email || '';
+  const [name, domain] = email.split('@');
+  return name.slice(0, 1) + '•••@' + domain;
+}
+function until(iso) {
+  const at = Date.parse(iso || '');
+  if (!isFinite(at)) return '';
+  const minutes = Math.round((at - Date.now()) / 60000);
+  if (minutes <= 0) return 'resetting now';
+  if (minutes < 60) return 'resets in ' + minutes + 'm';
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return 'resets in ' + hours + 'h';
+  return 'resets in ' + Math.round(hours / 24) + 'd';
+}
+function level(row) {
+  if (row.limitReached || (typeof row.remaining === 'number' && row.remaining <= 5)) return 'crit';
+  if (typeof row.remaining === 'number' && row.remaining <= 20) return 'warn';
+  return 'ok';
+}
+function fillColor(name) {
+  return name === 'crit' ? 'var(--vscode-charts-red)'
+    : name === 'warn' ? 'var(--vscode-charts-yellow)'
+    : 'var(--vscode-charts-green)';
 }
 
-module.exports = { AccountsProvider };
+function renderRow(row) {
+  const state = level(row);
+  const width = typeof row.remaining === 'number' ? Math.max(row.remaining, row.remaining > 0 ? 2 : 0) : 0;
+
+  let status;
+  if (!row.signedIn) status = 'Not signed in';
+  else if (row.error) status = esc(row.error);
+  else if (row.limitReached) status = 'Limit reached';
+  else if (!row.loaded) status = 'Quota not read';
+  else if (typeof row.remaining !== 'number') status = 'Quota unavailable';
+  else status = until(row.resetsAt);
+
+  const credits = row.credits && row.credits.hasCredits
+    ? (row.credits.unlimited ? ' · unlimited credits' : ' · ' + row.credits.balance + ' credits')
+    : '';
+
+  const windows = (row.windows || []).length > 1
+    ? '<ul class="windows">' + row.windows.map((w) =>
+        '<li><span>' + esc(w.label) + '</span><b>' + pct(w.remaining) + '</b></li>').join('') + '</ul>'
+    : '';
+
+  return '<li class="item' + (row.active ? ' active' : '') + '">' +
+    '<div class="head">' +
+      '<span class="avatar" style="--tint:' + tint(row.id) + '">' + esc((row.label || '?').slice(0, 1).toUpperCase()) + '</span>' +
+      '<span class="ident">' +
+        '<span class="name"><b>' + esc(row.label) + '</b>' +
+          (row.plan ? '<span class="plan">' + esc(row.plan) + '</span>' : '') +
+        '</span>' +
+        '<span class="email">' + esc(maskEmail(row.email)) + '</span>' +
+      '</span>' +
+      '<span class="pct ' + (state === 'ok' ? '' : state) + '">' +
+        (row.signedIn && typeof row.remaining === 'number' ? pct(row.remaining) : '—') +
+      '</span>' +
+    '</div>' +
+    '<div class="bar"><i style="width:' + width + '%;--fill:' + fillColor(state) + '"></i></div>' +
+    '<div class="meta"><span>' + status + esc(credits) + '</span>' +
+      (row.active ? '<span class="badge' + (state === 'crit' ? ' crit' : '') + '">In use</span>' : '') +
+    '</div>' +
+    windows +
+    '<div class="actions">' +
+      (row.active || !row.signedIn ? '' : '<button class="primary" data-act="switch" data-id="' + esc(row.id) + '">Use this</button>') +
+      (row.signedIn ? '' : '<button class="primary" data-act="signin" data-id="' + esc(row.id) + '">Sign in</button>') +
+      '<button data-act="terminal" data-id="' + esc(row.id) + '">Terminal</button>' +
+      '<button data-act="raw" data-id="' + esc(row.id) + '">Raw usage</button>' +
+      '<button data-act="forget" data-id="' + esc(row.id) + '">Remove</button>' +
+    '</div>' +
+  '</li>';
+}
+
+function render(model) {
+  const root = document.getElementById('root');
+  if (!model || model.rows.length === 0) {
+    root.innerHTML = '<div class="empty">No Codex subscriptions yet.<br>Add one, or import the login you already have.</div>' +
+      '<button class="add" data-act="add">+ Add a subscription</button>' +
+      '<button class="add" data-act="import">Import current Codex login</button>';
+    return;
+  }
+
+  const pooled = model.pooled;
+  root.innerHTML =
+    '<div class="pool">' +
+      '<div class="pool-top"><span class="pool-title">Usage remaining</span>' +
+        '<span class="pool-total">' + (pooled.total === undefined ? '—' : pct(pooled.total)) + '</span></div>' +
+      '<div class="pool-sub">' + pooled.count + ' connected subscription' + (pooled.count === 1 ? '' : 's') + '</div>' +
+      '<div class="bar"><i style="width:' + (pooled.average || 0) + '%;--fill:var(--vscode-charts-blue)"></i></div>' +
+    '</div>' +
+    '<ul class="list">' + model.rows.map(renderRow).join('') + '</ul>' +
+    '<button class="add" data-act="add">+ Add another subscription</button>';
+}
+
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-act]');
+  if (!button) return;
+  vscode.postMessage({ type: button.dataset.act, id: button.dataset.id });
+});
+
+window.addEventListener('message', (event) => {
+  if (event.data?.type === 'state') render(event.data.model);
+});
+</script>
+</body>
+</html>`;
+}
+
+module.exports = { AccountsStore, AccountsWebview };

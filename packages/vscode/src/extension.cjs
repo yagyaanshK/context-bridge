@@ -1,25 +1,26 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const vscode = require('vscode');
-const { AccountsProvider } = require('./accounts-view.cjs');
+const { AccountsStore, AccountsWebview } = require('./accounts-view.cjs');
 
 let accountsProvider;
 let accountStatus;
 
 async function activateExtension(context) {
-  accountsProvider = new AccountsProvider(core);
+  accountsProvider = new AccountsStore(core);
+  const accountsWebview = new AccountsWebview(accountsProvider);
 
   // The panel is only visible when its view is open, so the account in use also
   // lives in the status bar - that is where you look while actually working.
   accountStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   accountStatus.command = 'contextBridge.switchAccount';
   accountStatus.name = 'Context Bridge: Codex subscription';
-  accountsProvider.onDidChangeActive.event((summary) => renderStatus(summary));
+  accountsProvider.onDidChange(() => accountsProvider.summary().then(renderStatus));
 
   context.subscriptions.push(
     accountStatus,
-    accountsProvider.onDidChangeActive,
-    vscode.window.registerTreeDataProvider('contextBridgeAccounts', accountsProvider),
+    accountsProvider.emitter,
+    vscode.window.registerWebviewViewProvider('contextBridgeAccounts', accountsWebview),
     command('contextBridge.switchAccount', (item) => switchAccount(item)),
     command('contextBridge.showRawUsage', (item) => showRawUsage(item)),
     command('contextBridge.undoAccountSwitch', () => undoAccountSwitch()),
@@ -75,7 +76,7 @@ async function switchAccount(item) {
   await activateCodexAccount(account.id);
   await accountsProvider.reloadUsage({ offline: true });
 
-  const summary = accountsProvider.summary(await accountsProvider.accounts());
+  const summary = await accountsProvider.summary();
   const remaining = summary.remaining === undefined ? '' : ` · ${formatPercent(summary.remaining)} left`;
 
   vscode.window
@@ -166,7 +167,7 @@ function formatPercent(value) {
 }
 
 async function addCodexAccount() {
-  const { createAccount } = await core();
+  const { createAccount, ensureCodexHome } = await core();
   const label = await vscode.window.showInputBox({
     title: 'Add Codex Account',
     prompt: 'A name for this subscription',
@@ -176,7 +177,8 @@ async function addCodexAccount() {
   if (!label) return;
 
   const account = await createAccount({ label: label.trim(), provider: 'codex' });
-  accountsProvider.refresh();
+  await ensureCodexHome(account.id);
+  await accountsProvider.refresh();
   await runCodexLogin(account);
 }
 
@@ -212,7 +214,10 @@ async function signInAccount(item) {
 // account's home. Context Bridge never handles the OAuth exchange or the token
 // itself - it only decides which directory the official CLI writes into.
 async function runCodexLogin(account) {
-  const { codexEnv } = await core();
+  const { codexEnv, ensureCodexHome } = await core();
+  // `codex` will not create CODEX_HOME itself; it errors out when the path is
+  // missing, so the directory has to exist before the terminal starts.
+  await ensureCodexHome(account.id);
   const terminal = vscode.window.createTerminal({
     name: `Codex login · ${account.label}`,
     env: codexEnv(account.id)
@@ -232,10 +237,11 @@ async function runCodexLogin(account) {
 async function openAccountTerminal(item) {
   const account = await resolveAccount(item);
   if (!account) return;
-  const { codexEnv, isSignedIn } = await core();
+  const { codexEnv, ensureCodexHome, isSignedIn } = await core();
   if (!(await isSignedIn(account.id))) {
     throw new Error(`"${account.label}" is not signed in yet. Use "Sign In" first.`);
   }
+  await ensureCodexHome(account.id);
 
   const root = await workspaceRoot();
   const terminal = vscode.window.createTerminal({
@@ -266,7 +272,8 @@ async function forgetAccount(item) {
   if (choice !== 'Forget' && choice !== 'Delete Credentials') return;
 
   await removeAccount(account.id, { purge: choice === 'Delete Credentials' });
-  accountsProvider.refresh();
+  accountsProvider.usage.delete(account.id);
+  await accountsProvider.reloadUsage({ offline: true });
   vscode.window.showInformationMessage(
     `Context Bridge: removed "${account.label}"${choice === 'Delete Credentials' ? ' and deleted its credentials' : ''}.`
   );
@@ -288,6 +295,13 @@ async function resolveAccount(item, options = {}) {
   if (item?.account) return item.account;
 
   const accounts = await accountsProvider.accounts();
+  // Buttons in the panel identify their subscription directly; the palette and
+  // the status bar arrive with nothing and have to ask.
+  if (item?.accountId) {
+    const known = accounts.find((account) => account.id === item.accountId);
+    if (known) return known;
+  }
+
   if (accounts.length === 0) throw new Error('No Codex subscriptions yet. Use "Add Codex Account" first.');
 
   const activeId = await accountsProvider.reloadActive(accounts);
