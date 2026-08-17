@@ -54,8 +54,18 @@ needs the command palette.
 Each subscription gets its own `CODEX_HOME` under `~/.context-bridge/accounts/`, so they all stay
 signed in simultaneously — there is nothing to swap.
 
-**Signing in** happens in a panel offering all three methods the Codex CLI supports: browser OAuth,
-a device code for remote machines, or an API key. Behind it, the official `codex` binary runs as a
+**Signing in** happens in a panel offering every method the Codex CLI supports. Each is a card that
+expands in place, so a method that will not work can be abandoned without losing the others, and each
+has its own Retry.
+
+| Method | Local port | Browser here | Notes |
+|--------|-----------|--------------|-------|
+| Sign in with ChatGPT | `localhost:1455` | yes | The default. Cannot complete over SSH or in a container, because nothing is listening on that port there. |
+| Device code | none | no | Approve a short code from any device. Must be enabled in your ChatGPT security settings; a workspace admin can disable it. |
+| Access token | none | no | `--with-access-token`. Workspace admins issue these for trusted scripts and CI. |
+| API key | none | no | Billed per token at API rates, not against a subscription. |
+
+Behind it, the official `codex` binary runs as a
 background process with `CODEX_HOME` pointed at that subscription's directory — Context Bridge reads
 its output to drive the progress display, but never performs the OAuth exchange and never holds a
 token. The CLI opens your browser itself; if it cannot, the panel shows the link. The credential is written by `codex`, into its own

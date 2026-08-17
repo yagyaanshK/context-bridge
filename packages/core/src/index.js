@@ -59,7 +59,9 @@ export {
   isLoopback,
   stripAnsi,
   parseCodexLoginOutput,
-  CODEX_LOGIN_MODES
+  CODEX_LOGIN_MODES,
+  CODEX_LOGIN_NEEDS_LOOPBACK,
+  CODEX_LOGIN_READS_STDIN
 } from './accounts/login.js';
 export {
   fetchCodexUsage,

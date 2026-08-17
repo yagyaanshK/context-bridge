@@ -8,10 +8,20 @@
 // piped to stdin. The credential is still written by `codex`, into the
 // CODEX_HOME we point it at.
 
-export const CODEX_LOGIN_MODES = ['browser', 'device', 'apikey'];
+export const CODEX_LOGIN_MODES = ['browser', 'device', 'token', 'apikey'];
+
+// Only `browser` binds a local callback server (localhost:1455). The other
+// three need no listening port and no browser on this machine, which is what
+// makes them the options for a remote box, a container, or a locked-down host.
+export const CODEX_LOGIN_NEEDS_LOOPBACK = { browser: true, device: false, token: false, apikey: false };
+
+// The two stdin modes take their secret on standard input rather than argv, so
+// it never appears in a process listing.
+export const CODEX_LOGIN_READS_STDIN = { browser: false, device: false, token: true, apikey: true };
 
 export function codexLoginArgs(mode) {
   if (mode === 'device') return ['login', '--device-auth'];
+  if (mode === 'token') return ['login', '--with-access-token'];
   if (mode === 'apikey') return ['login', '--with-api-key'];
   if (mode === 'browser' || mode === undefined) return ['login'];
   throw new Error(`Unknown Codex login mode: ${mode}`);

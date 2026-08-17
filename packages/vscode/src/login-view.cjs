@@ -100,7 +100,7 @@ class CodexLoginPanel {
     const args = codexLoginArgs(method);
     this.post({ type: 'running', method });
 
-    const result = await this.run(args, codexHome(accountId), method, message.apiKey);
+    const result = await this.run(args, codexHome(accountId), method, message.secret);
     if (!result.ok) {
       this.post({ type: 'failed', method, message: result.message });
       return;
@@ -120,7 +120,7 @@ class CodexLoginPanel {
     this.post({ type: 'done', method, email: auth.claims?.email, label: this.target.label });
   }
 
-  run(args, home, method, apiKey) {
+  run(args, home, method, secret) {
     return new Promise((resolve) => {
       const child = spawn('codex', args, {
         env: {
@@ -154,8 +154,10 @@ class CodexLoginPanel {
       child.stdout?.on('data', onChunk);
       child.stderr?.on('data', onChunk);
 
-      if (method === 'apikey') {
-        child.stdin?.end(`${String(apiKey || '').trim()}\n`);
+      // Both secret-bearing methods read from stdin, never argv, so the value
+      // never appears in a process listing.
+      if (method === 'apikey' || method === 'token') {
+        child.stdin?.end(`${String(secret || '').trim()}\n`);
       }
 
       child.on('error', (error) => {
@@ -355,10 +357,36 @@ function html(webview) {
             <button class="action" data-copy>Copy code</button>
           </div>
         </div>
+        <p class="note">No local port is used, so this works over SSH or in a container, and the
+          browser can be on any device. It has to be enabled in your ChatGPT security settings; on a
+          workspace account an admin may have turned it off.</p>
         <div class="row">
           <button class="action" data-retry="device">Retry</button>
           <button class="action" data-cancel>Cancel</button>
         </div>
+      </div>
+    </section>
+
+    <section class="card" data-method="token">
+      <button class="method" data-open="token">
+        <span class="glyph">⛨</span>
+        <span><b>Use an access token</b><span>Paste a Codex access token, no browser or local port</span></span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="body" hidden>
+        <div class="field">
+          <label for="accessToken">Codex access token</label>
+          <input id="accessToken" type="password" placeholder="Paste the token" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="status" data-busy hidden><span class="spinner"></span><span data-status>Verifying…</span></div>
+        <div class="row">
+          <button class="action primary" data-submit="token">Sign in with this token</button>
+          <button class="action" data-retry="token" hidden>Retry</button>
+          <button class="action" data-cancel>Cancel</button>
+        </div>
+        <p class="note">Runs <code>codex login --with-access-token</code>. Workspace admins issue these
+          for trusted scripts and private CI runners. The token goes straight to <code>codex</code> on
+          standard input — Context Bridge does not store or log it.</p>
       </div>
     </section>
 
@@ -375,7 +403,7 @@ function html(webview) {
         </div>
         <div class="status" data-busy hidden><span class="spinner"></span><span data-status>Verifying…</span></div>
         <div class="row">
-          <button class="action primary" data-submit-key>Sign in with this key</button>
+          <button class="action primary" data-submit="apikey">Sign in with this key</button>
           <button class="action" data-retry="apikey" hidden>Retry</button>
           <button class="action" data-cancel>Cancel</button>
         </div>
@@ -435,7 +463,15 @@ let method = 'browser';
 
 const card = (name) => document.querySelector('.card[data-method="' + name + '"]');
 const within = (name, selector) => card(name).querySelector(selector);
-const STARTING = { browser: 'Opening your browser…', device: 'Requesting a code…', apikey: 'Verifying the key…' };
+const STARTING = {
+  browser: 'Opening your browser…',
+  device: 'Requesting a code…',
+  token: 'Verifying the token…',
+  apikey: 'Verifying the key…'
+};
+// Methods that collect a secret before they can run, and where they read it from.
+const SECRET_INPUT = { token: 'accessToken', apikey: 'apiKey' };
+const secretOf = (name) => (SECRET_INPUT[name] ? $(SECRET_INPUT[name]).value.trim() : undefined);
 
 // One method runs at a time, but every method stays on screen. Opening a card
 // expands it in place and starts that flow; the others remain available so a
@@ -449,25 +485,35 @@ function open(name, options = {}) {
   $('outcome').hidden = true;
   method = name;
   reset(name);
-  // The API key card collects input before it can run.
-  if (name === 'apikey' && !options.run) { $('apiKey').focus(); return; }
-  run(name, options.apiKey);
+  // Cards that carry a secret collect it before anything is spawned.
+  if (SECRET_INPUT[name]) { $(SECRET_INPUT[name]).focus(); return; }
+  run(name);
 }
 
 function reset(name) {
   const body = card(name).querySelector('.body');
   body.querySelectorAll('[data-link], [data-code-block], [data-busy]').forEach((element) => { element.hidden = true; });
   const status = within(name, '.status');
-  if (status && name !== 'apikey') status.hidden = false;
+  if (status && !SECRET_INPUT[name]) status.hidden = false;
   const copy = within(name, '[data-copy]');
   if (copy) copy.textContent = 'Copy code';
+  const retry = within(name, '[data-retry]');
+  if (retry && SECRET_INPUT[name]) retry.hidden = true;
 }
 
-function run(name, apiKey) {
+function run(name, secret) {
   within(name, '[data-status]').textContent = STARTING[name] || 'Starting…';
   const busy = within(name, '[data-busy]');
   if (busy) busy.hidden = false;
-  vscode.postMessage({ type: 'start', method: name, label: $('label').value, apiKey });
+  vscode.postMessage({ type: 'start', method: name, label: $('label').value, secret });
+}
+
+// Shared by the submit buttons and by Retry: a secret-bearing method cannot run
+// without its value, and focusing the empty field says so better than an error.
+function runWithSecret(name) {
+  const secret = secretOf(name);
+  if (SECRET_INPUT[name] && !secret) { $(SECRET_INPUT[name]).focus(); return; }
+  run(name, secret);
 }
 
 document.querySelectorAll('[data-open]').forEach((button) =>
@@ -490,13 +536,7 @@ document.querySelectorAll('[data-retry]').forEach((button) =>
     vscode.postMessage({ type: 'cancel' });
     $('outcome').hidden = true;
     reset(name);
-    if (name === 'apikey') {
-      const key = $('apiKey').value.trim();
-      if (!key) { $('apiKey').focus(); return; }
-      run(name, key);
-      return;
-    }
-    run(name);
+    runWithSecret(name);
   }));
 
 document.querySelectorAll('[data-cancel]').forEach((button) =>
@@ -508,14 +548,13 @@ document.querySelectorAll('[data-cancel]').forEach((button) =>
     });
   }));
 
-document.querySelector('[data-submit-key]').addEventListener('click', () => {
-  const key = $('apiKey').value.trim();
-  if (!key) { $('apiKey').focus(); return; }
-  run('apikey', key);
-});
-$('apiKey').addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') document.querySelector('[data-submit-key]').click();
-});
+document.querySelectorAll('[data-submit]').forEach((button) =>
+  button.addEventListener('click', () => runWithSecret(button.dataset.submit)));
+
+Object.entries(SECRET_INPUT).forEach(([name, inputId]) =>
+  $(inputId).addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') runWithSecret(name);
+  }));
 
 document.querySelectorAll('[data-verify]').forEach((button) =>
   button.addEventListener('click', () => {
