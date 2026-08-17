@@ -34,6 +34,10 @@ Export options:
                           what an earlier handoff already delivered.
   --tool-max-chars <n>    Truncate tool-output turns over n chars (default 2000, 0 = off).
   --system-max-chars <n>  Truncate system turns over n chars (default 800, 0 = off).
+  --snapshot-diff-max-chars <n>
+                          How much uncommitted diff to embed (default 4000, 0 = off).
+  --keep-exports <n>      Past handoff files to keep (default 10, 0 = keep all).
+  --no-summary            Omit the extractive "Where This Left Off" section.
 
 Examples:
   context-bridge init
@@ -123,7 +127,11 @@ export async function runCli(argv, io = process) {
       dedupe: flags['no-dedupe'] ? false : undefined,
       sinceLastExport: Boolean(flags.sinceLastExport),
       toolMaxChars: flags.toolMaxChars !== undefined ? Number(flags.toolMaxChars) : undefined,
-      systemMaxChars: flags.systemMaxChars !== undefined ? Number(flags.systemMaxChars) : undefined
+      systemMaxChars: flags.systemMaxChars !== undefined ? Number(flags.systemMaxChars) : undefined,
+      snapshotDiffMaxChars:
+        flags.snapshotDiffMaxChars !== undefined ? Number(flags.snapshotDiffMaxChars) : undefined,
+      keepExports: flags.keepExports !== undefined ? Number(flags.keepExports) : undefined,
+      summary: flags['no-summary'] ? false : undefined
     });
     io.stdout.write(`Wrote handoff to ${result.relativePath}\n`);
     return;

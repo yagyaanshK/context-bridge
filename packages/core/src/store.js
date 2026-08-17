@@ -92,7 +92,13 @@ export async function readAllTurns(root) {
   return turns.sort((a, b) => String(a.timestamp || '').localeCompare(String(b.timestamp || '')));
 }
 
-export async function writeSnapshot(root, snapshot) {
+// Snapshots and exports are regenerated artifacts, not source data, and each
+// handoff is now on the order of 100 KB. Keeping the most recent few is enough
+// to look back at what was sent; the rest only grow the ledger.
+export const DEFAULT_KEEP_EXPORTS = 10;
+export const DEFAULT_KEEP_SNAPSHOTS = 10;
+
+export async function writeSnapshot(root, snapshot, options = {}) {
   await initStore(root);
   const id = timestampForPath();
   const relativePath = path.join('snapshots', `${id}.json`).replaceAll('\\', '/');
@@ -103,18 +109,20 @@ export async function writeSnapshot(root, snapshot) {
     path: relativePath,
     createdAt: snapshot.createdAt
   });
+  await pruneLedgerEntries(root, 'snapshots', pickKeep(options.keep, DEFAULT_KEEP_SNAPSHOTS));
   return { id, path: absolutePath, relativePath };
 }
 
 export async function latestSnapshot(root) {
   const manifest = await readManifest(root);
-  const snapshots = manifest.snapshots || [];
+  const snapshots = [...(manifest.snapshots || [])].sort((a, b) =>
+    String(a?.createdAt || '').localeCompare(String(b?.createdAt || ''))
+  );
   if (snapshots.length === 0) return null;
-  const latest = snapshots[snapshots.length - 1];
-  return readJson(path.join(resolveLedger(root), latest.path));
+  return readJson(path.join(resolveLedger(root), snapshots[snapshots.length - 1].path));
 }
 
-export async function writeExport(root, target, content) {
+export async function writeExport(root, target, content, options = {}) {
   await initStore(root);
   const id = `${timestampForPath()}-to-${target}`;
   const relativePath = path.join('exports', `${id}.md`).replaceAll('\\', '/');
@@ -126,5 +134,41 @@ export async function writeExport(root, target, content) {
     path: relativePath,
     createdAt: new Date().toISOString()
   });
+  await pruneLedgerEntries(root, 'exports', pickKeep(options.keep, DEFAULT_KEEP_EXPORTS));
   return { id, path: absolutePath, relativePath };
+}
+
+// Drop the oldest manifest entries of a kind, deleting their files.
+//
+// Only files the manifest itself recorded are removed, and only after resolving
+// back inside the ledger directory, so a malformed or hand-edited entry cannot
+// make this delete something elsewhere on disk. `keep` of 0 disables pruning.
+export async function pruneLedgerEntries(root, key, keep) {
+  if (!Number.isFinite(keep) || keep <= 0) return { removed: 0 };
+  const manifest = await readManifest(root);
+  const entries = Array.isArray(manifest[key]) ? manifest[key] : [];
+  if (entries.length <= keep) return { removed: 0 };
+
+  const ledger = path.resolve(resolveLedger(root));
+  const stale = entries.slice(0, entries.length - keep);
+  let removed = 0;
+
+  for (const entry of stale) {
+    if (!entry?.path) continue;
+    const target = path.resolve(ledger, entry.path);
+    if (target !== ledger && !target.startsWith(`${ledger}${path.sep}`)) continue;
+    await fs.rm(target, { force: true });
+    removed++;
+  }
+
+  manifest[key] = entries.slice(entries.length - keep);
+  manifest.updatedAt = new Date().toISOString();
+  await writeManifest(root, manifest);
+  return { removed };
+}
+
+function pickKeep(value, fallback) {
+  if (value === 0 || value === false) return 0;
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  return fallback;
 }

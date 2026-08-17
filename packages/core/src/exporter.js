@@ -1,5 +1,6 @@
 import { latestSnapshot, readAllTurns, readManifest, writeExport } from './store.js';
 import { mediaReferencesFromMetadata, sanitizeContentForHandoff } from './media.js';
+import { summarizeSession } from './summary.js';
 
 // Default caps for high-volume, low-signal roles. Tool outputs (git diffs, dir
 // listings) and system turn-context blobs dominate handoff size while the
@@ -15,6 +16,11 @@ export const DEFAULT_SYSTEM_MAX_CHARS = 800;
 // reliable. ~120k chars is roughly 30k tokens: enough for a long session, small
 // enough to leave the receiver room to actually work. 0 still disables clipping.
 export const DEFAULT_MAX_CHARS = 120000;
+
+// How much of the captured uncommitted diff to render. The snapshot stores more
+// than this; the handoff shows enough to orient the receiver, which can read the
+// rest from the working tree it is about to edit anyway.
+export const DEFAULT_SNAPSHOT_DIFF_MAX_CHARS = 4000;
 
 export async function exportHandoff(root, options = {}) {
   const target = normalizeTarget(options.target || 'unknown');
@@ -45,9 +51,14 @@ export async function exportHandoff(root, options = {}) {
     collapsedDuplicates: deduped.removed,
     maxChars,
     sinceTimestamp: appliedSince,
-    truncation
+    truncation,
+    // Summarize the full windowed transcript, not just the turns that survived
+    // the budget: the last request is the one thing that must never be dropped
+    // because the session ran long.
+    summary: options.summary === false ? undefined : summarizeSession(deduped.turns, options),
+    snapshotDiffMaxChars: pickCap(options.snapshotDiffMaxChars, DEFAULT_SNAPSHOT_DIFF_MAX_CHARS)
   });
-  return writeExport(root, target, content);
+  return writeExport(root, target, content, { keep: options.keepExports });
 }
 
 // Collapse runs of identical role+content turns. Native logs (notably Codex)
@@ -215,7 +226,9 @@ export function renderHandoff({
   collapsedDuplicates = 0,
   maxChars,
   sinceTimestamp,
-  truncation = {}
+  truncation = {},
+  summary,
+  snapshotDiffMaxChars = DEFAULT_SNAPSHOT_DIFF_MAX_CHARS
 }) {
   const blocks = prepared || prepareTurns(turns, truncation);
   let truncatedTurns = 0;
@@ -240,6 +253,7 @@ export function renderHandoff({
   lines.push('- Do not summarize this transcript with an AI unless the user explicitly asks.');
   lines.push('- Append future handoff-relevant work back into the Context Bridge ledger when possible.');
   lines.push('');
+  if (summary) lines.push(...renderSummary(summary));
   lines.push('## Ledger');
   lines.push('');
   lines.push(`- Schema version: ${manifest.schemaVersion}`);
@@ -260,10 +274,21 @@ export function renderHandoff({
     if (snapshot.git?.available) {
       lines.push(`- Git branch: ${snapshot.git.branch || '(unknown)'}`);
       lines.push(`- Git HEAD: ${snapshot.git.head || '(unknown)'}`);
+      const origin = firstRemoteUrl(snapshot.git.remotes);
+      if (origin) lines.push(`- Git remote: ${origin}`);
+      const entries = (snapshot.topLevelFiles || []).map((entry) => entry.name).filter(Boolean);
+      if (entries.length > 0) lines.push(`- Top-level entries: ${entries.join(', ')}`);
+      if (snapshot.git.head) {
+        // Give the "verify before editing" rule something mechanical to check.
+        lines.push(
+          `- Verify with \`git log -1 --oneline\`. A HEAD other than \`${shortHead(snapshot.git.head)}\` means the workspace advanced after this handoff was written.`
+        );
+      }
       lines.push('');
       lines.push('```text');
       lines.push(snapshot.git.status || '(clean or unavailable)');
       lines.push('```');
+      lines.push(...renderUncommittedChanges(snapshot.git, snapshotDiffMaxChars));
     } else {
       lines.push('- Git: unavailable');
     }
@@ -286,6 +311,104 @@ export function renderHandoff({
   }
   lines.push('');
   return `${lines.join('\n')}\n`;
+}
+
+// The orientation section. Nothing here is generated: every quote is verbatim
+// ledger content and every list is derived from recorded tool-call arguments.
+function renderSummary(summary) {
+  const lines = [];
+  lines.push('## Where This Left Off');
+  lines.push('');
+
+  const counts = summary.counts || {};
+  const span =
+    summary.firstTimestamp && summary.lastTimestamp
+      ? `${summary.firstTimestamp} to ${summary.lastTimestamp}`
+      : '(unknown)';
+  lines.push(`- Session spans: ${span}`);
+  lines.push(
+    `- Turns: ${counts.user || 0} user, ${counts.assistant || 0} assistant, ${counts.tool || 0} tool, ${counts.system || 0} system`
+  );
+  lines.push('');
+
+  if (summary.lastUser) {
+    lines.push(`### Last request from the user (${summary.lastUser.timestamp || 'no timestamp'})`);
+    lines.push('');
+    lines.push('```text');
+    lines.push(fence(summary.lastUser.content));
+    lines.push('```');
+    lines.push('');
+  }
+
+  if (summary.lastAssistant) {
+    lines.push(`### Last assistant message (${summary.lastAssistant.timestamp || 'no timestamp'})`);
+    lines.push('');
+    lines.push('This is a claim about what was done, not verified fact. Check it against the files.');
+    lines.push('');
+    lines.push('```text');
+    lines.push(fence(summary.lastAssistant.content));
+    lines.push('```');
+    lines.push('');
+  }
+
+  if (summary.filesWritten?.length > 0) {
+    lines.push('### Files written by tool calls');
+    lines.push('');
+    for (const file of summary.filesWritten) lines.push(`- ${file}`);
+    lines.push('');
+  }
+
+  if (summary.commands?.length > 0) {
+    lines.push('### Most recent commands');
+    lines.push('');
+    lines.push('```text');
+    for (const command of summary.commands) lines.push(fence(command));
+    lines.push('```');
+    lines.push('');
+  }
+
+  return lines;
+}
+
+function renderUncommittedChanges(git, maxChars) {
+  if (!git.diffStat && !git.diff) return [];
+  const lines = [];
+  lines.push('');
+  lines.push('Uncommitted changes (staged and unstaged, vs HEAD):');
+  lines.push('');
+  lines.push('```text');
+  lines.push(fence(git.diffStat || '(no diff stat captured)'));
+  lines.push('```');
+
+  if (git.diff) {
+    const truncated = truncateTurnContent(git.diff, maxChars);
+    lines.push('');
+    lines.push(git.diffClipped || truncated.removed > 0 ? 'Uncommitted diff (truncated):' : 'Uncommitted diff:');
+    lines.push('');
+    lines.push('```diff');
+    lines.push(fence(truncated.content));
+    lines.push('```');
+  }
+
+  return lines;
+}
+
+function firstRemoteUrl(remotes) {
+  const line = String(remotes || '')
+    .split(/\r?\n/)
+    .find((item) => item.includes('(fetch)'));
+  if (!line) return '';
+  const parts = line.split(/\s+/);
+  return parts.length >= 2 ? `${parts[0]} ${parts[1]}` : '';
+}
+
+function shortHead(head) {
+  return String(head || '').split(/\s+/)[0] || String(head || '');
+}
+
+// Keep embedded content from closing the fence that wraps it.
+function fence(value) {
+  return String(value || '').replaceAll('```', '` ` `');
 }
 
 function normalizeTarget(target) {

@@ -6,7 +6,12 @@ import { writeSnapshot } from './store.js';
 
 const execFileAsync = promisify(execFile);
 
-export async function captureSnapshot(root) {
+// Hard cap on the diff stored in the ledger. A handoff taken mid-edit is
+// exactly when the uncommitted diff matters most, but a runaway diff should
+// not be allowed to bloat every snapshot file.
+const SNAPSHOT_DIFF_MAX_CHARS = 20000;
+
+export async function captureSnapshot(root, options = {}) {
   const snapshot = {
     schemaVersion: 1,
     createdAt: new Date().toISOString(),
@@ -14,7 +19,7 @@ export async function captureSnapshot(root) {
     git: await gitSnapshot(root),
     topLevelFiles: await topLevelFiles(root)
   };
-  return writeSnapshot(root, snapshot);
+  return writeSnapshot(root, snapshot, { keep: options.keepSnapshots });
 }
 
 async function gitSnapshot(root) {
@@ -22,18 +27,29 @@ async function gitSnapshot(root) {
   if (inside.exitCode !== 0 || inside.stdout.trim() !== 'true') {
     return { available: false };
   }
-  const [branch, status, head, remotes] = await Promise.all([
+  // `git diff HEAD` covers staged and unstaged changes together, which is what
+  // "work in progress that is not committed yet" actually means to a reader.
+  const [branch, status, head, remotes, diffStat, diff] = await Promise.all([
     git(root, ['branch', '--show-current']),
     git(root, ['status', '--short', '--branch']),
     git(root, ['log', '-1', '--oneline']),
-    git(root, ['remote', '-v'])
+    git(root, ['remote', '-v']),
+    git(root, ['diff', 'HEAD', '--stat']),
+    git(root, ['diff', 'HEAD'])
   ]);
+
+  const diffText = diff.stdout.trimEnd();
+  const clipped = diffText.length > SNAPSHOT_DIFF_MAX_CHARS;
+
   return {
     available: true,
     branch: branch.stdout.trim(),
     head: head.stdout.trim(),
     status: status.stdout.trimEnd(),
-    remotes: remotes.stdout.trimEnd()
+    remotes: remotes.stdout.trimEnd(),
+    diffStat: diffStat.stdout.trimEnd(),
+    diff: clipped ? diffText.slice(0, SNAPSHOT_DIFF_MAX_CHARS) : diffText,
+    diffClipped: clipped
   };
 }
 

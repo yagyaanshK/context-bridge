@@ -33,12 +33,16 @@ To ingest a session without generating a handoff, use **Discover … Sessions** 
 | `systemMaxChars` | `800` | Truncate long system turns; `0` disables. |
 | `maxExportChars` | `120000` | Character budget for the transcript. User turns are reserved first, then the most recent turns fill the budget; `0` disables it. |
 | `sinceLastExport` | `false` | Only include turns newer than the previous export. Leave off unless you always paste every handoff into the same continuing session. |
+| `snapshotDiffMaxChars` | `4000` | How much of the uncommitted diff (vs HEAD) to embed; `0` shows the file-level stat only. |
+| `keepExports` | `10` | Past handoff files kept in `.context-bridge/exports`; older ones are deleted after each export. `0` keeps all. |
 | `openHandoffDocument` | `true` | Open the handoff file after export. |
 | `allowExternalClaudeUri` | `false` | Allow opening `vscode://` links. Keep `false` in forks so handoff stays in the current editor. |
 
 Handoffs are kept small deterministically: duplicate turns are collapsed, oversized tool/system output is trimmed (head + tail kept), inline base64 screenshots are stripped, and a total character budget caps the transcript. User and assistant prose is preserved verbatim — there is no AI summarization.
 
 The budget is on by default because an unbounded handoff is not actually lossless: receiving agents refuse or silently truncate oversized files, so an over-long export delivers a fraction of itself with no indication that anything is missing. A budgeted export reports exactly what it dropped in its header.
+
+Every handoff opens with **Where This Left Off**: the last real request and the last assistant message quoted verbatim, plus files written and recent commands pulled from recorded tool-call arguments. It is extractive, never generated, and it is built from the whole session — so the last request survives even when the budget drops the turn that carried it. The workspace snapshot below it carries the uncommitted diff and a `git log -1` check, so the receiving agent can tell whether the tree moved on before it starts editing.
 
 ## For AI agents
 

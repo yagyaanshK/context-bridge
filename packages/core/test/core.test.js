@@ -12,10 +12,13 @@ import {
   importTranscript,
   initStore,
   prepareTurns,
+  pruneLedgerEntries,
   readAllTurns,
   readManifest,
+  renderHandoff,
   sanitizeContentForHandoff,
   selectTurns,
+  summarizeSession,
   truncateTurnContent,
   writeSession,
   DEFAULT_MAX_CHARS
@@ -262,8 +265,10 @@ test('export collapses duplicate turns and truncates tool output', async () => {
   assert.match(handoff, /Collapsed duplicate turns: 1/);
   assert.match(handoff, /Truncated oversized turns: 1/);
   assert.match(handoff, /Context Bridge truncated \d+ chars/);
-  // The duplicate assistant line should appear exactly once.
-  assert.equal(handoff.split('\non it\n').length - 1, 1);
+  // Counted inside the transcript only: the summary section quotes the last
+  // assistant message by design, which is a separate occurrence.
+  const transcript = handoff.split('## Transcript Turns')[1];
+  assert.equal(transcript.split('\non it\n').length - 1, 1);
   // Truncated tool turn must be far smaller than the raw 5 KB.
   assert.ok(handoff.length < 4000);
 });
@@ -281,7 +286,8 @@ test('export with dedupe disabled keeps duplicate turns', async () => {
   );
   const exported = await exportHandoff(root, { target: 'claude', dedupe: false });
   const handoff = await fs.readFile(exported.path, 'utf8');
-  assert.equal(handoff.split('\ntwice\n').length - 1, 2);
+  const transcript = handoff.split('## Transcript Turns')[1];
+  assert.equal(transcript.split('\ntwice\n').length - 1, 2);
 });
 
 test('imports synthetic Claude Code native transcript', async () => {
@@ -414,6 +420,195 @@ test('Codex response_item user messages keep image payloads out of the ledger', 
   assert.doesNotMatch(turns[0].content, /AAAA/);
   assert.equal(turns[0].metadata.media.inlineImageCount, 1);
 });
+
+test('summarizeSession quotes the last real request, not injected context', () => {
+  const summary = summarizeSession([
+    { role: 'user', content: 'build the parser', timestamp: '1' },
+    { role: 'assistant', content: 'building it', timestamp: '2' },
+    { role: 'tool', content: 'Tool call: Edit\n{"file_path":"src/parser.js"}', timestamp: '3' },
+    { role: 'tool', content: 'Tool call: shell_command\n{"command":"npm test"}', timestamp: '4' },
+    { role: 'assistant', content: 'parser done', timestamp: '5' },
+    // Harness-injected turns arrive with the user role but are not requests.
+    { role: 'user', content: '<environment_context>\n  <cwd>/tmp</cwd>\n</environment_context>', timestamp: '6' }
+  ]);
+
+  assert.equal(summary.lastUser.content, 'build the parser');
+  assert.equal(summary.lastAssistant.content, 'parser done');
+  assert.deepEqual(summary.filesWritten, ['src/parser.js']);
+  assert.deepEqual(summary.commands, ['npm test']);
+  assert.equal(summary.counts.user, 2);
+  assert.equal(summary.counts.tool, 2);
+});
+
+test('summarizeSession falls back to an injected turn when there is nothing else', () => {
+  const summary = summarizeSession([{ role: 'user', content: '<environment_context>x</environment_context>', timestamp: '1' }]);
+  assert.match(summary.lastUser.content, /environment_context/);
+});
+
+test('summarizeSession ignores read-only tool calls and unparseable bodies', () => {
+  const summary = summarizeSession([
+    { role: 'tool', content: 'Tool call: Read\n{"file_path":"src/secret.js"}', timestamp: '1' },
+    { role: 'tool', content: 'Tool call: Write\nnot json at all', timestamp: '2' },
+    { role: 'tool', content: 'Tool call: Write\n{"file_path":"src/kept.js"}', timestamp: '3' }
+  ]);
+  assert.deepEqual(summary.filesWritten, ['src/kept.js']);
+});
+
+test('handoff leads with an extractive summary of where the session stopped', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-summary-'));
+  await initStore(root);
+  await writeSession(
+    root,
+    [
+      { role: 'user', content: 'fix the exporter', provider: 'openai', surface: 'cli', timestamp: '1' },
+      { role: 'tool', content: 'Tool call: apply_patch\n{"path":"src/exporter.js"}', provider: 'openai', surface: 'cli', timestamp: '2' },
+      { role: 'assistant', content: 'exporter fixed and tests pass', provider: 'openai', surface: 'cli', timestamp: '3' }
+    ],
+    { provider: 'openai', surface: 'cli', sessionId: 'summary-test' }
+  );
+
+  const handoff = await fs.readFile((await exportHandoff(root, { target: 'claude' })).path, 'utf8');
+  assert.match(handoff, /## Where This Left Off/);
+  assert.match(handoff, /Last request from the user/);
+  assert.match(handoff, /fix the exporter/);
+  assert.match(handoff, /exporter fixed and tests pass/);
+  assert.match(handoff, /src\/exporter\.js/);
+  // The summary must come before the bulk transcript so it is read first.
+  assert.ok(handoff.indexOf('## Where This Left Off') < handoff.indexOf('## Transcript Turns'));
+  // And it must be framed as a claim, not as verified fact.
+  assert.match(handoff, /not verified fact/);
+});
+
+test('the summary survives a budget that drops the turns it quotes', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-summary-budget-'));
+  await initStore(root);
+  await writeSession(
+    root,
+    [
+      { role: 'user', content: 'the original goal', provider: 'openai', surface: 'cli', timestamp: '0001' },
+      ...Array.from({ length: 200 }, (_, index) => ({
+        role: 'assistant',
+        content: `noise ${index} ${'n'.repeat(2000)}`,
+        provider: 'openai',
+        surface: 'cli',
+        timestamp: String(index + 2).padStart(4, '0')
+      }))
+    ],
+    { provider: 'openai', surface: 'cli', sessionId: 'summary-budget' }
+  );
+
+  const handoff = await fs.readFile((await exportHandoff(root, { target: 'claude', maxChars: 20000 })).path, 'utf8');
+  assert.match(handoff, /Omitted turns due to budget/);
+  assert.match(handoff, /the original goal/);
+});
+
+test('handoff can omit the summary section', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-nosummary-'));
+  await initStore(root);
+  await writeSession(root, [{ role: 'user', content: 'hello', provider: 'openai', surface: 'cli', timestamp: '1' }], {
+    provider: 'openai',
+    surface: 'cli',
+    sessionId: 'nosummary'
+  });
+  const handoff = await fs.readFile((await exportHandoff(root, { target: 'claude', summary: false })).path, 'utf8');
+  assert.doesNotMatch(handoff, /## Where This Left Off/);
+});
+
+test('snapshot section renders uncommitted work and a verification handle', () => {
+  const handoff = renderHandoff({
+    target: 'claude',
+    manifest: { schemaVersion: 1, projectRoot: '/repo', sessions: [], snapshots: [], exports: [] },
+    snapshot: {
+      createdAt: '2026-01-01T00:00:00.000Z',
+      topLevelFiles: [{ name: 'src', type: 'directory' }, { name: 'README.md', type: 'file' }],
+      git: {
+        available: true,
+        branch: 'main',
+        head: 'abc1234 Some commit',
+        status: '## main...origin/main',
+        remotes: 'origin\thttps://example.com/repo.git (fetch)\norigin\thttps://example.com/repo.git (push)',
+        diffStat: ' src/a.js | 2 +-',
+        diff: 'diff --git a/src/a.js b/src/a.js\n-old line\n+new line'
+      }
+    },
+    prepared: []
+  });
+
+  assert.match(handoff, /Git remote: origin https:\/\/example\.com\/repo\.git/);
+  assert.match(handoff, /Top-level entries: src, README\.md/);
+  assert.match(handoff, /A HEAD other than `abc1234` means the workspace advanced/);
+  assert.match(handoff, /Uncommitted changes \(staged and unstaged, vs HEAD\)/);
+  assert.match(handoff, /\+new line/);
+});
+
+test('snapshot diff is truncated to the configured budget', () => {
+  const handoff = renderHandoff({
+    target: 'claude',
+    manifest: { schemaVersion: 1, projectRoot: '/repo', sessions: [], snapshots: [], exports: [] },
+    snapshot: {
+      createdAt: '2026-01-01T00:00:00.000Z',
+      git: { available: true, branch: 'main', head: 'abc1234', status: '', diffStat: 'stat', diff: 'd'.repeat(50000) }
+    },
+    prepared: [],
+    snapshotDiffMaxChars: 500
+  });
+  assert.match(handoff, /Uncommitted diff \(truncated\)/);
+  assert.match(handoff, /Context Bridge truncated \d+ chars/);
+  assert.ok(handoff.length < 5000);
+});
+
+test('exports are pruned to the most recent few', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-prune-'));
+  await initStore(root);
+  await writeSession(root, [{ role: 'user', content: 'hi', provider: 'openai', surface: 'cli', timestamp: '1' }], {
+    provider: 'openai',
+    surface: 'cli',
+    sessionId: 'prune-test'
+  });
+
+  const paths = [];
+  for (let i = 0; i < 5; i++) {
+    paths.push((await exportHandoff(root, { target: 'claude', keepExports: 3 })).path);
+  }
+
+  const manifest = await readManifest(root);
+  assert.equal(manifest.exports.length, 3);
+  // The two oldest files are gone from disk, the three newest remain.
+  assert.equal(await pathExists(paths[0]), false);
+  assert.equal(await pathExists(paths[1]), false);
+  assert.equal(await pathExists(paths[4]), true);
+});
+
+test('pruning keeps everything when disabled and never escapes the ledger', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-prune-off-'));
+  await initStore(root);
+  await writeSession(root, [{ role: 'user', content: 'hi', provider: 'openai', surface: 'cli', timestamp: '1' }], {
+    provider: 'openai',
+    surface: 'cli',
+    sessionId: 'prune-off'
+  });
+  for (let i = 0; i < 3; i++) await exportHandoff(root, { target: 'claude', keepExports: 0 });
+  assert.equal((await readManifest(root)).exports.length, 3);
+
+  // A traversing path in a hand-edited manifest must not delete anything.
+  const outside = path.join(root, 'do-not-delete.txt');
+  await fs.writeFile(outside, 'keep me', 'utf8');
+  const manifest = await readManifest(root);
+  manifest.exports.unshift({ id: 'evil', path: '../../do-not-delete.txt', createdAt: '1970-01-01T00:00:00.000Z' });
+  await fs.writeFile(path.join(root, '.context-bridge', 'manifest.json'), JSON.stringify(manifest), 'utf8');
+
+  await pruneLedgerEntries(root, 'exports', 3);
+  assert.equal(await pathExists(outside), true);
+});
+
+async function pathExists(target) {
+  try {
+    await fs.access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 test('sanitizes inline base64 media during handoff rendering', () => {
   const blob = `${'A'.repeat(1200)}+/${'B'.repeat(1200)}==`;

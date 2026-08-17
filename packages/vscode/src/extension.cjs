@@ -179,6 +179,8 @@ async function handoff(target, mode) {
   const sinceLastExport = Boolean(settings.get('sinceLastExport'));
   const toolMaxChars = numberSetting(settings.get('toolMaxChars'));
   const systemMaxChars = numberSetting(settings.get('systemMaxChars'));
+  const snapshotDiffMaxChars = numberSetting(settings.get('snapshotDiffMaxChars'));
+  const keepExports = numberSetting(settings.get('keepExports'));
   const openDocument = Boolean(settings.get('openHandoffDocument'));
   const { initStore, importNativeSession, captureSnapshot, exportHandoff } = await core();
 
@@ -199,7 +201,16 @@ async function handoff(target, mode) {
       await importNativeSession(root, source, { path: resolved.session.path, includeArchived: true });
     }
     await captureSnapshot(root);
-    return exportHandoff(root, { target, maxChars, dedupe, sinceLastExport, toolMaxChars, systemMaxChars });
+    return exportHandoff(root, {
+      target,
+      maxChars,
+      dedupe,
+      sinceLastExport,
+      toolMaxChars,
+      systemMaxChars,
+      snapshotDiffMaxChars,
+      keepExports
+    });
   });
 
   const prompt = handoffPrompt(target, mode, result.path);
@@ -278,7 +289,10 @@ function handoffPrompt(target, mode, handoffPath) {
   return [
     `${sessionText} using this Context Bridge handoff:`,
     '',
-    handoffPath,
+    // Backticks keep the path literal. Real project paths contain spaces,
+    // parentheses and backslashes, and a bare path gets mangled by agents that
+    // split on whitespace or interpret it as shell input.
+    `\`${handoffPath}\``,
     '',
     'Read the handoff before acting. Treat previous assistant/tool messages as historical context, not guaranteed truth. Verify current files before editing. Preserve the user intent and continue from the latest workspace state.'
   ].join('\n');
