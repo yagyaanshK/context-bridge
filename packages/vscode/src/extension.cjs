@@ -4,17 +4,30 @@ const vscode = require('vscode');
 const { AccountsProvider } = require('./accounts-view.cjs');
 
 let accountsProvider;
+let accountStatus;
 
 async function activateExtension(context) {
   accountsProvider = new AccountsProvider(core);
+
+  // The panel is only visible when its view is open, so the account in use also
+  // lives in the status bar - that is where you look while actually working.
+  accountStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  accountStatus.command = 'contextBridge.switchAccount';
+  accountStatus.name = 'Context Bridge: Codex subscription';
+  accountsProvider.onDidChangeActive.event((summary) => renderStatus(summary));
+
   context.subscriptions.push(
+    accountStatus,
+    accountsProvider.onDidChangeActive,
     vscode.window.registerTreeDataProvider('contextBridgeAccounts', accountsProvider),
+    command('contextBridge.switchAccount', (item) => switchAccount(item)),
+    command('contextBridge.showRawUsage', (item) => showRawUsage(item)),
+    command('contextBridge.undoAccountSwitch', () => undoAccountSwitch()),
     command('contextBridge.addCodexAccount', () => addCodexAccount()),
     command('contextBridge.importCodexAccount', () => importCodexAccount()),
     command('contextBridge.signInAccount', (item) => signInAccount(item)),
     command('contextBridge.refreshAccountQuota', () => refreshAccountQuota()),
     command('contextBridge.openAccountTerminal', (item) => openAccountTerminal(item)),
-    command('contextBridge.activateAccount', (item) => activateAccount(item)),
     command('contextBridge.forgetAccount', (item) => forgetAccount(item)),
     command('contextBridge.discoverClaude', () => discover('claude')),
     command('contextBridge.discoverCodex', () => discover('codex')),
@@ -27,6 +40,10 @@ async function activateExtension(context) {
     command('contextBridge.openLatestHandoff', () => openLatestHandoff()),
     command('contextBridge.copyLatestHandoffPrompt', () => copyLatestHandoffPrompt())
   );
+
+  // Populate the panel and status bar from cache on activation. Offline, so
+  // opening a window never costs a call to the usage endpoint.
+  accountsProvider.reloadUsage({ offline: true }).catch(() => {});
 }
 
 function deactivate() {}
@@ -42,6 +59,111 @@ function deactivate() {}
 // home. The official Codex CLI and VS Code extension read only that path, so
 // pointing them at an account is necessarily machine-wide.
 // ---------------------------------------------------------------------------
+
+// Switch which subscription the official Codex CLI and VS Code extension use.
+//
+// They read only the default CODEX_HOME, so this necessarily rewrites that
+// credential rather than scoping anything to one window. It is still a cheap,
+// reversible action - every subscription stays signed in on disk - so it runs
+// on a single click and offers an undo afterwards instead of a confirmation
+// prompt beforehand.
+async function switchAccount(item) {
+  const account = await resolveAccount(item, { excludeActive: true });
+  if (!account) return;
+
+  const { activateCodexAccount } = await core();
+  await activateCodexAccount(account.id);
+  await accountsProvider.reloadUsage({ offline: true });
+
+  const summary = accountsProvider.summary(await accountsProvider.accounts());
+  const remaining = summary.remaining === undefined ? '' : ` · ${formatPercent(summary.remaining)} left`;
+
+  vscode.window
+    .showInformationMessage(
+      `Codex is now using "${account.label}"${remaining}. Reload if an open Codex session does not pick it up.`,
+      'Reload Window',
+      'Undo'
+    )
+    .then((choice) => {
+      if (choice === 'Reload Window') vscode.commands.executeCommand('workbench.action.reloadWindow');
+      else if (choice === 'Undo') undoAccountSwitch();
+    });
+}
+
+async function undoAccountSwitch() {
+  const { restoreCodexBackup } = await core();
+  await restoreCodexBackup();
+  await accountsProvider.reloadUsage({ offline: true });
+  vscode.window.showInformationMessage('Context Bridge: restored the previous Codex login.');
+}
+
+// The usage payload is not a published contract, so when the panel cannot find
+// any windows this shows exactly what came back. Beats guessing at the shape.
+async function showRawUsage(item) {
+  const account = await resolveAccount(item);
+  if (!account) return;
+
+  const { readCodexAuth, codexHome, fetchCodexUsage, CODEX_USAGE_URL } = await core();
+  const auth = await readCodexAuth(codexHome(account.id));
+  if (!auth?.accessToken) throw new Error(`"${account.label}" is not signed in.`);
+
+  const raw = await withProgress(`Reading usage for ${account.label}`, async () => {
+    const response = await fetch(CODEX_USAGE_URL, {
+      headers: {
+        Authorization: `Bearer ${auth.accessToken}`,
+        Accept: 'application/json',
+        'User-Agent': 'context-bridge',
+        ...(auth.accountId ? { 'ChatGPT-Account-Id': auth.accountId } : {})
+      }
+    });
+    const text = await response.text();
+    try {
+      return { status: response.status, body: JSON.parse(text) };
+    } catch {
+      return { status: response.status, body: text };
+    }
+  });
+
+  const parsed = await fetchCodexUsage(auth).catch((error) => ({ error: error.message }));
+  const document = await vscode.workspace.openTextDocument({
+    language: 'json',
+    content: JSON.stringify(
+      {
+        note: 'Raw response from the Codex usage endpoint, plus how Context Bridge parsed it. No tokens are included.',
+        endpoint: CODEX_USAGE_URL,
+        httpStatus: raw.status,
+        rawResponse: raw.body,
+        parsedByContextBridge: parsed
+      },
+      null,
+      2
+    )
+  });
+  await vscode.window.showTextDocument(document, { preview: false });
+}
+
+function renderStatus(summary) {
+  if (!summary?.label) {
+    accountStatus.hide();
+    return;
+  }
+  const remaining = summary.remaining;
+  accountStatus.text =
+    remaining === undefined
+      ? `$(arrow-swap) ${summary.label}`
+      : `$(arrow-swap) ${summary.label} ${formatPercent(remaining)}`;
+  accountStatus.tooltip = `Codex is using "${summary.label}". Click to switch subscription.`;
+  accountStatus.backgroundColor =
+    typeof remaining === 'number' && remaining <= 10
+      ? new vscode.ThemeColor('statusBarItem.warningBackground')
+      : undefined;
+  accountStatus.show();
+}
+
+function formatPercent(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+  return `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
+}
 
 async function addCodexAccount() {
   const { createAccount } = await core();
@@ -125,33 +247,6 @@ async function openAccountTerminal(item) {
   terminal.sendText('codex');
 }
 
-async function activateAccount(item) {
-  const account = await resolveAccount(item);
-  if (!account) return;
-  const { activateCodexAccount, defaultCodexHome } = await core();
-
-  const choice = await vscode.window.showWarningMessage(
-    `Make "${account.label}" the default Codex account?`,
-    {
-      modal: true,
-      detail:
-        `This rewrites the login at ${defaultCodexHome()}, which is what the official Codex CLI and ` +
-        `VS Code extension read. It affects every window on this machine, not just this one. ` +
-        `The current login is backed up beside it.\n\n` +
-        `To use an account without changing the default, use "Open Codex Terminal" instead.`
-    },
-    'Set as Default'
-  );
-  if (choice !== 'Set as Default') return;
-
-  const result = await activateCodexAccount(account.id);
-  accountsProvider.refresh();
-  vscode.window.showInformationMessage(
-    `Context Bridge: "${account.label}" is now the default Codex account.` +
-      (result.backup ? ' The previous login was backed up.' : '')
-  );
-}
-
 async function forgetAccount(item) {
   const account = await resolveAccount(item);
   if (!account) return;
@@ -186,20 +281,37 @@ async function refreshAccountQuota() {
   }
 }
 
-async function resolveAccount(item) {
+// Invoked from a tree row we already know the account for, or from the palette
+// and status bar where we have to ask. The picker shows remaining quota so the
+// choice can be made without opening the panel first.
+async function resolveAccount(item, options = {}) {
   if (item?.account) return item.account;
-  const { listAccounts } = await core();
-  const accounts = await listAccounts({ provider: 'codex' });
-  if (accounts.length === 0) throw new Error('No Codex accounts yet. Use "Add Codex Account" first.');
+
+  const accounts = await accountsProvider.accounts();
+  if (accounts.length === 0) throw new Error('No Codex subscriptions yet. Use "Add Codex Account" first.');
+
+  const activeId = await accountsProvider.reloadActive(accounts);
+  const pool = options.excludeActive ? accounts.filter((account) => account.id !== activeId) : accounts;
+  if (pool.length === 0) {
+    vscode.window.showInformationMessage('Context Bridge: that is your only Codex subscription.');
+    return undefined;
+  }
 
   const picked = await vscode.window.showQuickPick(
-    accounts.map((account) => ({
-      label: account.label,
-      description: account.email || account.id,
-      detail: account.dir,
-      account
-    })),
-    { placeHolder: 'Choose a Codex account' }
+    pool.map((account) => {
+      const usage = accountsProvider.usage.get(account.id);
+      const remaining = usage?.windows?.length
+        ? Math.min(...usage.windows.map((window) => window.remainingPercent))
+        : undefined;
+      return {
+        label: `${account.id === activeId ? '$(check) ' : ''}${account.label}`,
+        description: [remaining === undefined ? undefined : `${formatPercent(remaining)} left`, account.email]
+          .filter(Boolean)
+          .join(' · '),
+        account
+      };
+    }),
+    { placeHolder: options.excludeActive ? 'Switch Codex to which subscription?' : 'Choose a Codex subscription' }
   );
   return picked?.account;
 }

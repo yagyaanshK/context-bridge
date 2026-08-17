@@ -5,6 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   activateCodexAccount,
+  activeCodexAccountId,
+  restoreCodexBackup,
   codexEnv,
   codexHome,
   createAccount,
@@ -40,7 +42,9 @@ async function signIn(accountId, options, overrides = {}) {
     JSON.stringify({
       tokens: {
         access_token: overrides.accessToken || 'access-token',
-        refresh_token: 'refresh-token',
+        // Unique per account, as real refresh tokens are - this is the key the
+        // active-account match relies on.
+        refresh_token: overrides.refreshToken || `${accountId}-refresh`,
         account_id: overrides.accountId || 'acct_123',
         id_token: idToken({
           email: overrides.email || 'dev@example.com',
@@ -143,6 +147,55 @@ test('activating an account writes the default home and backs up what was there'
   assert.ok((await getAccount(account.id, options)).lastUsedAt);
 });
 
+test('the account in use is detected, and survives access-token rotation', async () => {
+  const { home, options } = await sandbox();
+  const defaultHome = path.join(home, '.codex');
+  const scoped = { ...options, defaultCodexHome: defaultHome };
+
+  const a = await createAccount({ label: 'A', provider: 'codex' }, options);
+  const b = await createAccount({ label: 'B', provider: 'codex' }, options);
+  await signIn(a.id, options, { accessToken: 'a-access' });
+  await signIn(b.id, options, { accessToken: 'b-access' });
+
+  const accounts = await listAccounts(options);
+  assert.equal(await activeCodexAccountId(accounts, scoped), undefined, 'nothing is active before a switch');
+
+  await activateCodexAccount(b.id, scoped);
+  assert.equal(await activeCodexAccountId(accounts, scoped), b.id);
+
+  // Codex rotates the access token in place as it expires. Matching on that
+  // alone would report no active account within the hour, so the refresh token
+  // is the primary key.
+  const current = JSON.parse(await fs.readFile(path.join(defaultHome, 'auth.json'), 'utf8'));
+  current.tokens.access_token = 'rotated-by-codex';
+  await fs.writeFile(path.join(defaultHome, 'auth.json'), JSON.stringify(current), 'utf8');
+  assert.equal(await activeCodexAccountId(accounts, scoped), b.id, 'still B after a token rotation');
+});
+
+test('a switch can be undone from the backup it leaves behind', async () => {
+  const { home, options } = await sandbox();
+  const defaultHome = path.join(home, '.codex');
+  const scoped = { ...options, defaultCodexHome: defaultHome };
+
+  const a = await createAccount({ label: 'A', provider: 'codex' }, options);
+  const b = await createAccount({ label: 'B', provider: 'codex' }, options);
+  await signIn(a.id, options, { accessToken: 'a-access' });
+  await signIn(b.id, options, { accessToken: 'b-access' });
+
+  await activateCodexAccount(a.id, scoped);
+  await activateCodexAccount(b.id, scoped);
+  const accounts = await listAccounts(options);
+  assert.equal(await activeCodexAccountId(accounts, scoped), b.id);
+
+  await restoreCodexBackup(scoped);
+  assert.equal(await activeCodexAccountId(accounts, scoped), a.id, 'undo puts the previous subscription back');
+});
+
+test('undo with nothing to restore reports it rather than corrupting the login', async () => {
+  const { home, options } = await sandbox();
+  await assert.rejects(() => restoreCodexBackup({ ...options, defaultCodexHome: path.join(home, '.codex') }), /No Context Bridge backup/);
+});
+
 test('activating an account that never signed in fails loudly', async () => {
   const { options } = await sandbox();
   const account = await createAccount({ label: 'Never', provider: 'codex' }, options);
@@ -197,6 +250,56 @@ test('usage normalization tolerates the shapes the endpoint actually returns', (
   assert.equal(week.label, 'weekly');
   assert.equal(week.remainingPercent, 59.6);
   assert.equal(headlineRemaining(usage), 59.6, 'the tightest window is the one that stops you');
+});
+
+test('usage normalization finds windows regardless of how they are nested', () => {
+  // The live payload shape is not published and has moved before, so the parser
+  // walks for percentage-carrying nodes instead of assuming one nesting.
+  const shapes = [
+    { rate_limits: { primary: { used_percent: 30, limit_window_seconds: 18000 } } },
+    { primary: { used_percent: 30, limit_window_seconds: 18000 } },
+    { usage: { rate_limits: { windows: [{ name: 'primary', used_percent: 30, limit_window_seconds: 18000 }] } } },
+    { data: { attributes: { limits: [{ key: 'primary', usedPercent: 30, windowSeconds: 18000 }] } } }
+  ];
+
+  for (const shape of shapes) {
+    const usage = normalizeCodexUsage(shape);
+    assert.equal(usage.windows.length, 1, `no window found in ${JSON.stringify(shape)}`);
+    assert.equal(usage.windows[0].remainingPercent, 70);
+    assert.equal(usage.windows[0].label, '5h');
+  }
+});
+
+test('usage normalization reads 0-1 utilization as well as percentages', () => {
+  const usage = normalizeCodexUsage({
+    five_hour: { utilization: 0.42, limit_window_seconds: 18000, resets_at: '2099-01-01T00:00:00.000Z' },
+    seven_day: { utilization: 0.61, limit_window_seconds: 604800 }
+  });
+  assert.equal(usage.windows.length, 2);
+  assert.equal(usage.windows[0].remainingPercent, 58);
+  assert.equal(usage.windows[1].remainingPercent, 39);
+  assert.equal(usage.windows[0].resetsAt, '2099-01-01T00:00:00.000Z');
+});
+
+test('usage normalization orders windows tightest first and picks up the plan', () => {
+  const usage = normalizeCodexUsage({
+    rate_limits: {
+      weekly: { used_percent: 5, limit_window_seconds: 604800 },
+      hourly: { used_percent: 80, limit_window_seconds: 18000 }
+    },
+    plan_type: 'pro_20x'
+  });
+  assert.deepEqual(usage.windows.map((w) => w.label), ['5h', 'weekly']);
+  assert.equal(usage.plan, 'pro_20x');
+  assert.equal(headlineRemaining(usage), 20);
+});
+
+test('usage normalization survives payloads with nothing usable in them', () => {
+  for (const payload of [{}, null, { message: 'unauthorized' }, [], { a: { b: { c: 'deep but empty' } } }]) {
+    const usage = normalizeCodexUsage(payload);
+    assert.deepEqual(usage.windows, [], `unexpected windows for ${JSON.stringify(payload)}`);
+    assert.equal(headlineRemaining(usage), undefined);
+  }
 });
 
 test('usage normalization clamps out-of-range percentages', () => {

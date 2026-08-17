@@ -79,33 +79,82 @@ export async function fetchCodexUsage(auth, options = {}) {
   return normalizeCodexUsage(await response.json());
 }
 
+const USED_PERCENT_KEYS = ['used_percent', 'usedPercent', 'percent_used', 'percentUsed'];
+// Expressed 0-1 rather than 0-100, so it needs scaling before use.
+const UTILIZATION_KEYS = ['utilization', 'usage_fraction'];
+const RESET_KEYS = ['resets_at', 'resetsAt', 'reset_at', 'resetAt', 'resets_in_seconds', 'resetsInSeconds'];
+const WINDOW_KEYS = ['limit_window_seconds', 'limitWindowSeconds', 'window_seconds', 'windowSeconds', 'window_minutes'];
+const PLAN_KEYS = ['plan_type', 'planType', 'plan', 'chatgpt_plan_type'];
+
 // The response shape is observed from the wire, not from a published contract,
-// so read defensively: accept several key spellings, tolerate missing windows,
-// and never let an unexpected payload throw.
+// and it differs between providers and over time. Rather than guessing at one
+// nesting, walk the payload and collect every object that carries a usage
+// percentage. That survives the windows moving under a different key, being
+// wrapped in an extra envelope, or arriving as a list instead of a map.
 export function normalizeCodexUsage(payload) {
-  const source = payload?.rate_limits || payload?.rateLimits || payload?.usage || payload || {};
-  const candidates = Array.isArray(source) ? source : Object.entries(source).map(([key, value]) => ({ key, ...value }));
-
   const windows = [];
-  for (const item of candidates) {
-    if (!item || typeof item !== 'object') continue;
-    const usedPercent = firstNumber(item.used_percent, item.usedPercent, item.percent_used);
-    if (usedPercent === undefined) continue;
+  const seen = new Set();
+  let plan;
 
-    const resetSeconds = firstNumber(item.resets_at, item.resetsAt, item.reset_at, item.resets_in_seconds);
-    const windowSeconds = firstNumber(item.limit_window_seconds, item.window_seconds, item.windowSeconds);
+  const visit = (node, key, depth) => {
+    if (!node || typeof node !== 'object' || depth > 6) return;
 
-    windows.push({
-      key: item.key || item.name || item.window || 'window',
-      label: windowLabel(item.key || item.name || item.window, windowSeconds),
-      usedPercent: clampPercent(usedPercent),
-      remainingPercent: clampPercent(100 - usedPercent),
-      resetsAt: toIso(resetSeconds),
-      windowSeconds
-    });
+    if (Array.isArray(node)) {
+      node.forEach((item, index) => visit(item, `${key || 'window'}_${index + 1}`, depth + 1));
+      return;
+    }
+
+    for (const planKey of PLAN_KEYS) {
+      if (!plan && typeof node[planKey] === 'string') plan = node[planKey];
+    }
+
+    const window = readWindow(node, key);
+    if (window) {
+      const identity = `${window.key}:${window.usedPercent}:${window.windowSeconds ?? ''}`;
+      if (!seen.has(identity)) {
+        seen.add(identity);
+        windows.push(window);
+      }
+      // A node that is itself a window has no nested windows worth finding.
+      return;
+    }
+
+    for (const [childKey, value] of Object.entries(node)) {
+      visit(value, childKey, depth + 1);
+    }
+  };
+
+  visit(payload, undefined, 0);
+  // Tightest window first. Unknown durations sort last, and must compare equal
+  // to each other rather than producing NaN from Infinity - Infinity.
+  const rank = (window) => window.windowSeconds ?? Number.MAX_SAFE_INTEGER;
+  windows.sort((a, b) => rank(a) - rank(b));
+  return { fetchedAt: new Date().toISOString(), windows, plan };
+}
+
+function readWindow(node, key) {
+  let usedPercent = firstNumber(...USED_PERCENT_KEYS.map((name) => node[name]));
+
+  if (usedPercent === undefined) {
+    const utilization = firstNumber(...UTILIZATION_KEYS.map((name) => node[name]));
+    // A utilization is a 0-1 fraction; anything above 1 is already a percentage
+    // that happens to use the same key name.
+    if (utilization !== undefined) usedPercent = utilization <= 1 ? utilization * 100 : utilization;
   }
+  if (usedPercent === undefined) return null;
 
-  return { fetchedAt: new Date().toISOString(), windows, plan: payload?.plan_type || payload?.plan };
+  const minutes = firstNumber(node.window_minutes, node.windowMinutes);
+  const windowSeconds = firstNumber(...WINDOW_KEYS.map((name) => node[name])) ?? (minutes ? minutes * 60 : undefined);
+  const name = node.key || node.name || node.window || node.id || key;
+
+  return {
+    key: String(name || 'window'),
+    label: windowLabel(name, windowSeconds),
+    usedPercent: clampPercent(usedPercent),
+    remainingPercent: clampPercent(100 - usedPercent),
+    resetsAt: toIso(firstNumber(...RESET_KEYS.map((name2) => node[name2])), node),
+    windowSeconds
+  };
 }
 
 // The headline number for a panel: the tightest window is the one that will
@@ -140,10 +189,15 @@ function clampPercent(value) {
   return Math.max(0, Math.min(100, Math.round(value * 10) / 10));
 }
 
-function toIso(seconds) {
+function toIso(seconds, node) {
+  // Some payloads carry the reset as an ISO string instead of a number.
+  for (const key of RESET_KEYS) {
+    const value = node?.[key];
+    if (typeof value === 'string' && Number.isFinite(Date.parse(value))) return new Date(value).toISOString();
+  }
   if (!Number.isFinite(seconds)) return undefined;
-  // Values under a plausible epoch are a duration until reset, not a timestamp.
-  const ms = seconds < 10_000_000_000 && seconds < 315_360_000 ? Date.now() + seconds * 1000 : seconds * 1000;
+  // Values too small to be an epoch are a duration until reset, not a timestamp.
+  const ms = seconds < 315_360_000 ? Date.now() + seconds * 1000 : seconds * 1000;
   const date = new Date(ms);
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }

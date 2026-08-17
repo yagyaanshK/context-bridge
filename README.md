@@ -153,10 +153,12 @@ context-bridge accounts --refresh               # remaining quota per subscripti
 Quota comes from the same usage endpoint the official client uses, read once per account and cached
 for five minutes. A failed refresh keeps the last good reading rather than blanking the display.
 
-**Two ways to use an account.** *Open Codex Terminal* starts a session scoped to one subscription and
-changes nothing else on the machine — this is the one to reach for. *Set as Default* rewrites the
-login in your real `CODEX_HOME`, which is the only way to point the official Codex CLI and VS Code
-extension at a different account, and therefore affects every window. It backs up what it replaced.
+**Switching.** Click a subscription in the panel and the official Codex extension and CLI start using
+it — they read one credential path, so switching rewrites it and the change is machine-wide. The
+account in use is marked in the panel and shown in the status bar with its remaining quota. Every
+subscription stays signed in, so this is cheap and reversible; the toast offers **Undo**. To use a
+subscription *without* changing the default, use **Open Codex Terminal**, which scopes `CODEX_HOME`
+to that one session.
 
 **Switching is manual and deliberate.** Context Bridge shows you what each subscription has left and
 lets you choose; it does not silently fail over when one runs out.

@@ -54,15 +54,26 @@ signed in simultaneously — there is nothing to swap. Sign-in runs the official
 terminal scoped to that directory; Context Bridge never touches the OAuth exchange or uses the token
 for inference.
 
+**Click a row to switch.** The official Codex extension and CLI read one credential path, so
+switching rewrites it — which is exactly what makes the *official* Codex UI start using the
+subscription you picked. The account in use is marked, and shows in the status bar with its
+remaining quota. Every subscription stays signed in, so switching back is one more click; the
+confirmation toast also offers **Undo** and **Reload Window**.
+
 | Action | Effect |
 |--------|--------|
-| **Open Codex Terminal** | Starts `codex` as that subscription. Changes nothing else on the machine. |
-| **Set as Default** | Rewrites the login in your real `CODEX_HOME`. The only way to point the *official* Codex CLI and extension at a different account, so it affects every window. Backs up what it replaces. |
+| **Click a row** | Switches Codex to that subscription. |
+| **Open Codex Terminal** | Starts `codex` as that subscription without changing the machine default. |
 | **Sign In** | Runs `codex login` scoped to that account's directory. |
 | **Refresh Quota** | Forces a usage read; otherwise readings are cached for five minutes. |
+| **Show Raw Usage Response** | Opens the endpoint's actual JSON next to how Context Bridge parsed it. Use this if the percentages look wrong or missing. |
 
 Switching is manual. The panel shows what each subscription has left and lets you choose — it does
 not fail over on its own when one runs out.
+
+**What this cannot do.** A VS Code extension cannot add UI inside another extension's panel, so the
+picker lives in the sidebar and status bar rather than inside Codex's own menu. Tools that put it
+there patch the ChatGPT desktop application itself, which pins them to an exact app build.
 
 ---
 

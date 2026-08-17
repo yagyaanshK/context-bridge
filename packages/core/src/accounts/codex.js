@@ -115,6 +115,35 @@ async function copyCredential(source, target) {
   }
 }
 
+// Which registered account the official Codex CLI and VS Code extension are
+// currently using. They read only the default home, so "active" means "the
+// credential sitting in that directory matches this account's".
+//
+// Matched on the refresh token rather than the access token: Codex rotates the
+// access token in place as it expires, so comparing that would report no active
+// account within the hour. The refresh token survives those rotations.
+export async function activeCodexAccountId(accounts, options = {}) {
+  const current = await readCodexAuth(defaultCodexHome(options));
+  if (!current) return undefined;
+
+  for (const account of accounts) {
+    const auth = await readCodexAuth(codexHome(account.id, options)).catch(() => null);
+    if (!auth) continue;
+    if (current.refreshToken && auth.refreshToken === current.refreshToken) return account.id;
+    if (current.accessToken && auth.accessToken === current.accessToken) return account.id;
+  }
+  return undefined;
+}
+
+// Put back whatever `activateCodexAccount` displaced.
+export async function restoreCodexBackup(options = {}) {
+  const target = defaultCodexHome(options);
+  const backup = path.join(target, 'auth.context-bridge-backup.json');
+  if (!(await pathExists(backup))) throw new Error('No Context Bridge backup to restore.');
+  await copyCredential(backup, codexAuthPath(target));
+  return { restored: codexAuthPath(target) };
+}
+
 // The id_token is a JWT. We read its payload purely to label the account in the
 // UI - never to make a trust decision - so it is decoded, not verified.
 export function decodeJwtClaims(token) {

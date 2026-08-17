@@ -40,6 +40,7 @@ export {
 } from './accounts/store.js';
 export {
   activateCodexAccount,
+  activeCodexAccountId,
   codexAuthPath,
   codexEnv,
   codexHome,
@@ -47,7 +48,8 @@ export {
   defaultCodexHome,
   importCodexAuth,
   isSignedIn,
-  readCodexAuth
+  readCodexAuth,
+  restoreCodexBackup
 } from './accounts/codex.js';
 export {
   fetchCodexUsage,
