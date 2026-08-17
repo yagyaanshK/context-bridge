@@ -96,29 +96,44 @@ class CodexLoginPanel {
     // `codex` will not create CODEX_HOME; it exits if the path is missing.
     await ensureCodexHome(accountId);
 
-    const args = codexLoginArgs(message.method);
-    this.post({ type: 'running', method: message.method });
+    const method = message.method;
+    const args = codexLoginArgs(method);
+    this.post({ type: 'running', method });
 
-    const result = await this.run(args, codexHome(accountId), message.method, message.apiKey);
+    const result = await this.run(args, codexHome(accountId), method, message.apiKey);
     if (!result.ok) {
-      this.post({ type: 'failed', message: result.message });
+      this.post({ type: 'failed', method, message: result.message });
       return;
     }
 
     const auth = await refreshCodexAccountIdentity(accountId);
     if (!auth) {
-      this.post({ type: 'failed', message: 'Sign-in finished but no credential was written. Please try again.' });
+      this.post({
+        type: 'failed',
+        method,
+        message: 'Sign-in finished but no credential was written. Try again.'
+      });
       return;
     }
 
     await this.store.reloadUsage({ force: true });
-    this.post({ type: 'done', email: auth.claims?.email, label: this.target.label });
+    this.post({ type: 'done', method, email: auth.claims?.email, label: this.target.label });
   }
 
   run(args, home, method, apiKey) {
     return new Promise((resolve) => {
       const child = spawn('codex', args, {
-        env: { ...process.env, CODEX_HOME: home },
+        env: {
+          ...process.env,
+          CODEX_HOME: home,
+          // Ask for plain output. Highlighting wraps the device code and the
+          // links in escape sequences; the parser strips them anyway, but not
+          // emitting them is the cheaper half of the fix.
+          NO_COLOR: '1',
+          FORCE_COLOR: '0',
+          CLICOLOR: '0',
+          TERM: 'dumb'
+        },
         // The launcher on Windows is a shim, not an executable.
         shell: process.platform === 'win32'
       });
@@ -137,7 +152,7 @@ class CodexLoginPanel {
           opened = true;
           vscode.env.openExternal(vscode.Uri.parse(parsed.authorizeUrl));
         }
-        this.post({ type: 'progress', parsed });
+        this.post({ type: 'progress', method, parsed });
       };
 
       child.stdout?.on('data', onChunk);
@@ -230,6 +245,26 @@ function html(webview) {
     flex: none; width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
     background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); font-size: 15px;
   }
+  .method .chev { margin-left: auto; opacity: 0.6; transition: transform 160ms ease; }
+  .card.open .method .chev { transform: rotate(180deg); }
+  .card {
+    border-radius: 9px;
+    border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.28));
+    overflow: hidden;
+  }
+  .card > .method { border: none; border-radius: 0; width: 100%; }
+  .card.open { border-color: var(--vscode-focusBorder); }
+  .card .body {
+    display: flex; flex-direction: column; gap: 13px;
+    padding: 15px 16px 16px;
+    border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.28));
+    background: var(--vscode-editorWidget-background);
+  }
+  .outcome {
+    margin: 0; padding: 13px 16px; border-radius: 9px; line-height: 1.5;
+    border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.28));
+    background: var(--vscode-editorWidget-background);
+  }
   .method.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: transparent; }
   .method.primary .glyph { background: rgba(255,255,255,0.22); color: inherit; }
   .method b { display: block; font-weight: 600; }
@@ -287,51 +322,73 @@ function html(webview) {
   </div>
 
   <div class="methods" id="methods">
-    <button class="method primary" data-method="browser">
-      <span class="glyph">↗</span>
-      <span><b>Sign in with ChatGPT</b><span>Opens your browser and waits for you to finish</span></span>
-    </button>
-    <button class="method" data-method="device">
-      <span class="glyph">⌘</span>
-      <span><b>Use a device code</b><span>For remote or headless machines, or a different device</span></span>
-    </button>
-    <button class="method" data-method="apikey">
-      <span class="glyph">⚿</span>
-      <span><b>Use an API key</b><span>Billed per token, not against a subscription</span></span>
-    </button>
-  </div>
 
-  <div class="field" id="apiKeyField" hidden>
-    <label for="apiKey">OpenAI API key</label>
-    <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false">
-    <div class="row">
-      <button class="action primary" id="apiKeySubmit">Sign in with this key</button>
-      <button class="action" data-cancel>Back</button>
-    </div>
-    <p class="note">The key is passed straight to <code>codex</code> on standard input. Context Bridge does not store or log it.</p>
-  </div>
-
-  <div class="panel" id="progress" hidden>
-    <div class="status" id="statusRow"><span class="spinner"></span><span id="statusText">Starting sign-in…</span></div>
-    <div id="deviceBlock" hidden>
-      <div class="code" id="deviceCode"></div>
-      <p class="note" id="deviceHint"></p>
-      <div class="row">
-        <button class="action primary" id="openVerify">Open the sign-in page</button>
-        <button class="action" id="copyCode">Copy code</button>
+    <section class="card" data-method="browser">
+      <button class="method primary" data-open="browser">
+        <span class="glyph">↗</span>
+        <span><b>Sign in with ChatGPT</b><span>Opens your browser and waits for you to finish</span></span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="body" hidden>
+        <div class="status"><span class="spinner"></span><span data-status>Starting…</span></div>
+        <div data-link hidden>
+          <p class="note">Your browser should have opened. If it did not, use this link:</p>
+          <p class="link" data-authlink></p>
+        </div>
+        <div class="row">
+          <button class="action" data-retry="browser">Retry</button>
+          <button class="action" data-cancel>Cancel</button>
+        </div>
       </div>
-    </div>
-    <div id="browserBlock" hidden>
-      <p class="note">Your browser should have opened. If it did not, use this link:</p>
-      <p class="link" id="authLink"></p>
-    </div>
-    <div class="row"><button class="action" data-cancel>Cancel</button></div>
+    </section>
+
+    <section class="card" data-method="device">
+      <button class="method" data-open="device">
+        <span class="glyph">⌗</span>
+        <span><b>Use a device code</b><span>For remote or headless machines, or a different device</span></span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="body" hidden>
+        <div class="status"><span class="spinner"></span><span data-status>Requesting a code…</span></div>
+        <div data-code-block hidden>
+          <div class="code" data-code></div>
+          <p class="note" data-hint></p>
+          <div class="row">
+            <button class="action primary" data-verify>Open the sign-in page</button>
+            <button class="action" data-copy>Copy code</button>
+          </div>
+        </div>
+        <div class="row">
+          <button class="action" data-retry="device">Retry</button>
+          <button class="action" data-cancel>Cancel</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" data-method="apikey">
+      <button class="method" data-open="apikey">
+        <span class="glyph">⚿</span>
+        <span><b>Use an API key</b><span>Billed per token, not against a subscription</span></span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="body" hidden>
+        <div class="field">
+          <label for="apiKey">OpenAI API key</label>
+          <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false">
+        </div>
+        <div class="status" data-busy hidden><span class="spinner"></span><span data-status>Verifying…</span></div>
+        <div class="row">
+          <button class="action primary" data-submit-key>Sign in with this key</button>
+          <button class="action" data-retry="apikey" hidden>Retry</button>
+          <button class="action" data-cancel>Cancel</button>
+        </div>
+        <p class="note">The key is passed straight to <code>codex</code> on standard input. Context Bridge does not store or log it.</p>
+      </div>
+    </section>
+
   </div>
 
-  <div class="panel" id="result" hidden>
-    <p id="resultText"></p>
-    <div class="row"><button class="action primary" id="closeButton">Done</button></div>
-  </div>
+  <p class="outcome" id="outcome" hidden></p>
 </div>
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
@@ -379,88 +436,167 @@ let method = 'browser';
   if (reduced) draw(0); else requestAnimationFrame(frame);
 })();
 
-function show(view) {
-  $('methods').hidden = view !== 'choose';
-  $('nameField').hidden = view !== 'choose' || $('nameField').dataset.locked === 'true';
-  $('apiKeyField').hidden = view !== 'apikey';
-  $('progress').hidden = view !== 'progress';
-  $('result').hidden = view !== 'result';
-}
+const card = (name) => document.querySelector('.card[data-method="' + name + '"]');
+const within = (name, selector) => card(name).querySelector(selector);
+const STARTING = { browser: 'Opening your browser…', device: 'Requesting a code…', apikey: 'Verifying the key…' };
 
-function start(payload) {
-  vscode.postMessage(Object.assign({ type: 'start', method, label: $('label').value }, payload || {}));
-  show('progress');
-  $('statusText').textContent = 'Starting sign-in…';
-  $('deviceBlock').hidden = true;
-  $('browserBlock').hidden = true;
-}
-
-document.querySelectorAll('[data-method]').forEach((button) => {
-  button.addEventListener('click', () => {
-    method = button.dataset.method;
-    if (method === 'apikey') { show('apikey'); $('apiKey').focus(); return; }
-    start();
+// One method runs at a time, but every method stays on screen. Opening a card
+// expands it in place and starts that flow; the others remain available so a
+// method that is not working can be abandoned without losing the panel.
+function open(name, options = {}) {
+  document.querySelectorAll('.card').forEach((element) => {
+    const isTarget = element.dataset.method === name;
+    element.classList.toggle('open', isTarget);
+    element.querySelector('.body').hidden = !isTarget;
   });
-});
-$('apiKeySubmit').addEventListener('click', () => {
+  $('outcome').hidden = true;
+  method = name;
+  reset(name);
+  // The API key card collects input before it can run.
+  if (name === 'apikey' && !options.run) { $('apiKey').focus(); return; }
+  run(name, options.apiKey);
+}
+
+function reset(name) {
+  const body = card(name).querySelector('.body');
+  body.querySelectorAll('[data-link], [data-code-block], [data-busy]').forEach((element) => { element.hidden = true; });
+  const status = within(name, '.status');
+  if (status && name !== 'apikey') status.hidden = false;
+  const copy = within(name, '[data-copy]');
+  if (copy) copy.textContent = 'Copy code';
+}
+
+function run(name, apiKey) {
+  within(name, '[data-status]').textContent = STARTING[name] || 'Starting…';
+  const busy = within(name, '[data-busy]');
+  if (busy) busy.hidden = false;
+  vscode.postMessage({ type: 'start', method: name, label: $('label').value, apiKey });
+}
+
+document.querySelectorAll('[data-open]').forEach((button) =>
+  button.addEventListener('click', () => {
+    const name = button.dataset.open;
+    // Clicking the header of the card that is already open collapses it.
+    if (card(name).classList.contains('open')) {
+      vscode.postMessage({ type: 'cancel' });
+      card(name).classList.remove('open');
+      card(name).querySelector('.body').hidden = true;
+      return;
+    }
+    vscode.postMessage({ type: 'cancel' });
+    open(name);
+  }));
+
+document.querySelectorAll('[data-retry]').forEach((button) =>
+  button.addEventListener('click', () => {
+    const name = button.dataset.retry;
+    vscode.postMessage({ type: 'cancel' });
+    $('outcome').hidden = true;
+    reset(name);
+    if (name === 'apikey') {
+      const key = $('apiKey').value.trim();
+      if (!key) { $('apiKey').focus(); return; }
+      run(name, key);
+      return;
+    }
+    run(name);
+  }));
+
+document.querySelectorAll('[data-cancel]').forEach((button) =>
+  button.addEventListener('click', () => {
+    vscode.postMessage({ type: 'cancel' });
+    document.querySelectorAll('.card').forEach((element) => {
+      element.classList.remove('open');
+      element.querySelector('.body').hidden = true;
+    });
+  }));
+
+document.querySelector('[data-submit-key]').addEventListener('click', () => {
   const key = $('apiKey').value.trim();
   if (!key) { $('apiKey').focus(); return; }
-  start({ apiKey: key });
-  $('apiKey').value = '';
+  run('apikey', key);
 });
-document.querySelectorAll('[data-cancel]').forEach((button) =>
-  button.addEventListener('click', () => { vscode.postMessage({ type: 'cancel' }); show('choose'); }));
-$('closeButton').addEventListener('click', () => { show('choose'); });
-$('openVerify').addEventListener('click', () => {
-  const url = $('openVerify').dataset.url;
-  if (url) vscode.postMessage({ type: 'openExternal', url });
+$('apiKey').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') document.querySelector('[data-submit-key]').click();
 });
-$('copyCode').addEventListener('click', () =>
-  vscode.postMessage({ type: 'copy', value: $('deviceCode').textContent }));
+
+document.querySelectorAll('[data-verify]').forEach((button) =>
+  button.addEventListener('click', () => {
+    if (button.dataset.url) vscode.postMessage({ type: 'openExternal', url: button.dataset.url });
+  }));
+document.querySelectorAll('[data-copy]').forEach((button) =>
+  button.addEventListener('click', () =>
+    vscode.postMessage({ type: 'copy', value: within(method, '[data-code]').textContent })));
 
 window.addEventListener('message', (event) => {
   const data = event.data || {};
+  const name = data.method || method;
+
   if (data.type === 'ready') {
     $('label').value = data.label || '';
-    $('nameField').dataset.locked = data.locked ? 'true' : 'false';
-    show('choose');
+    $('nameField').hidden = Boolean(data.locked);
+    return;
   }
-  if (data.type === 'idle') show('choose');
   if (data.type === 'running') {
-    $('statusText').textContent = data.method === 'device'
-      ? 'Requesting a device code…'
-      : data.method === 'apikey' ? 'Verifying the key…' : 'Opening your browser…';
+    within(name, '[data-status]').textContent = STARTING[name] || 'Starting…';
+    return;
   }
   if (data.type === 'progress') {
     const parsed = data.parsed || {};
     if (parsed.deviceCode) {
-      $('deviceBlock').hidden = false;
-      $('deviceCode').textContent = parsed.deviceCode;
-      $('deviceHint').textContent = 'Enter this code after signing in'
+      within(name, '[data-code-block]').hidden = false;
+      within(name, '[data-code]').textContent = parsed.deviceCode;
+      within(name, '[data-hint]').textContent = 'Enter this code after signing in'
         + (parsed.expiresIn ? '. It expires in ' + parsed.expiresIn + '.' : '.');
-      $('statusText').textContent = 'Waiting for you to enter the code…';
-      if (parsed.verificationUrl) $('openVerify').dataset.url = parsed.verificationUrl;
+      within(name, '[data-status]').textContent = 'Waiting for you to enter the code…';
+      if (parsed.verificationUrl) within(name, '[data-verify]').dataset.url = parsed.verificationUrl;
     }
     if (parsed.authorizeUrl) {
-      $('browserBlock').hidden = false;
-      $('authLink').textContent = parsed.authorizeUrl;
-      $('authLink').onclick = () => vscode.postMessage({ type: 'openExternal', url: parsed.authorizeUrl });
-      $('statusText').textContent = 'Waiting for you to finish in the browser…';
+      const block = within(name, '[data-link]');
+      if (block) {
+        block.hidden = false;
+        const link = within(name, '[data-authlink]');
+        link.textContent = parsed.authorizeUrl;
+        link.onclick = () => vscode.postMessage({ type: 'openExternal', url: parsed.authorizeUrl });
+      }
+      within(name, '[data-status]').textContent = 'Waiting for you to finish in the browser…';
     }
+    return;
   }
-  if (data.type === 'copied') $('copyCode').textContent = 'Copied';
+  if (data.type === 'copied') {
+    const copy = within(name, '[data-copy]');
+    if (copy) copy.textContent = 'Copied';
+    return;
+  }
   if (data.type === 'done') {
-    show('result');
-    $('resultText').innerHTML = '<span class="ok">Connected.</span> '
-      + (data.email ? String(data.email).replace(/[&<>]/g, '') + ' is now available as “' : '“')
-      + String(data.label || '').replace(/[&<>]/g, '') + '”.';
+    document.querySelectorAll('.card').forEach((element) => {
+      element.classList.remove('open');
+      element.querySelector('.body').hidden = true;
+    });
+    const outcome = $('outcome');
+    outcome.hidden = false;
+    outcome.innerHTML = '<span class="ok">Connected.</span> '
+      + (data.email ? esc(data.email) + ' is now available as “' : '“') + esc(data.label || '') + '”.';
+    return;
   }
   if (data.type === 'failed') {
-    show('result');
-    $('resultText').innerHTML = '<span class="error">Sign-in did not complete.</span><br>'
-      + String(data.message || '').replace(/[&<>]/g, '');
+    const status = within(name, '.status');
+    if (status) status.hidden = true;
+    const busy = within(name, '[data-busy]');
+    if (busy) busy.hidden = true;
+    const retry = within(name, '[data-retry]');
+    if (retry) retry.hidden = false;
+    const outcome = $('outcome');
+    outcome.hidden = false;
+    outcome.innerHTML = '<span class="error">Sign-in did not complete.</span><br>' + esc(data.message || '');
+    return;
   }
 });
+
+function esc(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 </script>
 </body>
 </html>`;

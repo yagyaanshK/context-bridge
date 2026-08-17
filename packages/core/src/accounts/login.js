@@ -17,6 +17,22 @@ export function codexLoginArgs(mode) {
   throw new Error(`Unknown Codex login mode: ${mode}`);
 }
 
+// Colour codes wrap the very values we need to read. An escape like [32m
+// ends with `m`, a word character, so a \b assertion in front of a highlighted
+// device code never matches and the code becomes invisible to the parser. URLs
+// pick up the trailing reset sequence and break. Strip escapes before anything
+// else looks at the text.
+// eslint-disable-next-line no-control-regex
+const ANSI_PATTERN = new RegExp('\u001B\[[0-9;?]*[ -/]*[@-~]|\u001B\][^\u0007]*\u0007', 'g');
+
+export function stripAnsi(text) {
+  return String(text || '')
+    .replace(ANSI_PATTERN, '')
+    // Progress redraws use a bare carriage return; treat it as a line break so
+    // rewritten lines stay separate rather than running together.
+    .replace(/\r(?!\n)/g, '\n');
+}
+
 const URL_PATTERN = /https?:\/\/[^\s<>"'`)]+/g;
 // Device codes are chunked and upper case, but the halves are not equal length:
 // the CLI issues things like XJPT-7M1V3. Pinning this to 4+4 matched nothing at
@@ -30,7 +46,7 @@ const EXPIRY_PATTERN = /expires in (\d+)\s*(minute|hour|second)s?/i;
 // not a contract, so anything recognisable is used and anything unfamiliar is
 // simply ignored rather than treated as failure.
 export function parseCodexLoginOutput(text) {
-  const output = String(text || '');
+  const output = stripAnsi(text);
   const urls = output.match(URL_PATTERN) || [];
   const cleaned = urls.map((url) => url.replace(/[.,;:]+$/, ''));
 
@@ -65,7 +81,7 @@ export function isLoopback(url) {
 // `codex login` exits non-zero on failure, but its message is the useful part.
 // Keep the last non-empty line, which is where the reason lands.
 export function codexLoginFailureReason(output, exitCode) {
-  const lines = String(output || '')
+  const lines = stripAnsi(output)
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)

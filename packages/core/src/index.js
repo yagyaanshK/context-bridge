@@ -57,6 +57,7 @@ export {
   codexLoginArgs,
   codexLoginFailureReason,
   isLoopback,
+  stripAnsi,
   parseCodexLoginOutput,
   CODEX_LOGIN_MODES
 } from './accounts/login.js';
