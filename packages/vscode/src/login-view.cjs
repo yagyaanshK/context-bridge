@@ -140,19 +140,15 @@ class CodexLoginPanel {
       this.child = child;
 
       let output = '';
-      let opened = false;
 
       const onChunk = async (chunk) => {
         output += chunk.toString();
         const { parseCodexLoginOutput: parse } = await this.core();
-        const parsed = parse(output);
-
-        // Open the browser once, on the user's behalf, as the CLI would have.
-        if (!opened && method !== 'device' && parsed.authorizeUrl) {
-          opened = true;
-          vscode.env.openExternal(vscode.Uri.parse(parsed.authorizeUrl));
-        }
-        this.post({ type: 'progress', method, parsed });
+        // `codex login` opens the browser itself. Opening it again from here
+        // launched the page twice and raised the editor's own "open external
+        // website?" prompt on top of it. The panel offers the link as a manual
+        // fallback instead, for when the CLI could not open one.
+        this.post({ type: 'progress', method, parsed: parse(output) });
       };
 
       child.stdout?.on('data', onChunk);
@@ -332,7 +328,8 @@ function html(webview) {
       <div class="body" hidden>
         <div class="status"><span class="spinner"></span><span data-status>Starting…</span></div>
         <div data-link hidden>
-          <p class="note">Your browser should have opened. If it did not, use this link:</p>
+          <p class="note">Your browser should have opened. If it did not, open the page yourself:</p>
+          <div class="row"><button class="action primary" data-verify>Open sign-in page</button></div>
           <p class="link" data-authlink></p>
         </div>
         <div class="row">
@@ -558,6 +555,8 @@ window.addEventListener('message', (event) => {
         const link = within(name, '[data-authlink]');
         link.textContent = parsed.authorizeUrl;
         link.onclick = () => vscode.postMessage({ type: 'openExternal', url: parsed.authorizeUrl });
+        const verify = within(name, '[data-verify]');
+        if (verify) verify.dataset.url = parsed.authorizeUrl;
       }
       within(name, '[data-status]').textContent = 'Waiting for you to finish in the browser…';
     }

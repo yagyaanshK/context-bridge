@@ -57,8 +57,8 @@ signed in simultaneously — there is nothing to swap.
 **Signing in** happens in a panel offering all three methods the Codex CLI supports: browser OAuth,
 a device code for remote machines, or an API key. Behind it, the official `codex` binary runs as a
 background process with `CODEX_HOME` pointed at that subscription's directory — Context Bridge reads
-its output to drive the progress display and opens your browser for you, but never performs the
-OAuth exchange and never holds a token. The credential is written by `codex`, into its own
+its output to drive the progress display, but never performs the OAuth exchange and never holds a
+token. The CLI opens your browser itself; if it cannot, the panel shows the link. The credential is written by `codex`, into its own
 directory. **Your existing login at `~/.codex` is never touched by signing in or adding an
 account**; only *switching* writes there, and it backs up what it replaces first.
 
@@ -74,7 +74,7 @@ confirmation toast also offers **Undo** and **Reload Window**.
 | **Open Codex Terminal** | Starts `codex` as that subscription without changing the machine default. |
 | **Sign In** | Opens the sign-in panel: browser, device code, or API key. |
 | **Refresh Quota** | Forces a usage read; otherwise readings are cached for five minutes. |
-| **Show Raw Usage Response** | Opens the endpoint's actual JSON next to how Context Bridge parsed it. Use this if the percentages look wrong or missing. |
+| **Raw Response** | Opens the endpoint's actual JSON next to how Context Bridge parsed it. Use this if the percentages look wrong or missing. |
 
 Switching is manual. The panel shows what each subscription has left and lets you choose — it does
 not fail over on its own when one runs out.

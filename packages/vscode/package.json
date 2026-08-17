@@ -2,7 +2,7 @@
   "name": "context-bridge-vscode",
   "displayName": "Context Bridge",
   "description": "Continue developer agent sessions across Claude, Codex, and other tools from VS Code.",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "publisher": "yagyaanshK",
   "license": "MIT",
   "type": "commonjs",
@@ -86,7 +86,7 @@
       },
       {
         "command": "contextBridge.showRawUsage",
-        "title": "Context Bridge: Show Raw Usage Response",
+        "title": "Context Bridge: Show Raw Response",
         "icon": "$(json)"
       },
       {
@@ -241,7 +241,7 @@
     }
   },
   "dependencies": {
-    "@context-bridge/core": "0.4.1"
+    "@context-bridge/core": "0.4.2"
   },
   "devDependencies": {
     "@types/vscode": "^1.95.0"

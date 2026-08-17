@@ -395,7 +395,7 @@ function renderRow(row) {
       (row.active || !row.signedIn ? '' : '<button class="primary" data-act="switch" data-id="' + esc(row.id) + '">Use this</button>') +
       (row.signedIn ? '' : '<button class="primary" data-act="signin" data-id="' + esc(row.id) + '">Sign in</button>') +
       (row.signedIn ? '<button data-act="terminal" data-id="' + esc(row.id) + '">Terminal</button>' : '') +
-      (row.signedIn ? '<button data-act="raw" data-id="' + esc(row.id) + '">Raw usage</button>' : '') +
+      (row.signedIn ? '<button data-act="raw" data-id="' + esc(row.id) + '">Raw Response</button>' : '') +
       '<button data-ask="' + esc(row.id) + '">Remove</button>' +
     '</div>' +
     '<div class="confirm" id="confirm-' + esc(row.id) + '" hidden>' +
