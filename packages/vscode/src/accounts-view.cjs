@@ -53,8 +53,17 @@ class AccountsStore {
   // Everything the panel and the status bar draw, resolved in one place so the
   // two can never disagree about which subscription is in use.
   async viewModel(known) {
+    const { isSignedIn } = await this.core();
     const accounts = known || (await this.accounts());
     if (this.activeId === undefined && accounts.length > 0) await this.reloadActive(accounts);
+
+    // Read sign-in state from disk rather than inferring it from a quota
+    // result: a subscription that has never been polled has no usage record at
+    // all, and treating that as signed in offered "Use this" on an account that
+    // could not possibly be switched to.
+    const signedIn = new Map(
+      await Promise.all(accounts.map(async (account) => [account.id, await isSignedIn(account.id).catch(() => false)]))
+    );
 
     const rows = accounts.map((account) => {
       const usage = this.usage.get(account.id);
@@ -66,7 +75,7 @@ class AccountsStore {
         plan: account.plan ? planLabel(account.plan) : undefined,
         email: usage?.email || account.email,
         active: account.id === this.activeId,
-        signedIn: usage?.error !== 'not-signed-in',
+        signedIn: signedIn.get(account.id) === true,
         error: usage?.error === 'not-signed-in' ? undefined : usage?.error,
         limitReached: Boolean(usage?.limitReached),
         credits: usage?.credits,
@@ -125,12 +134,19 @@ class AccountsWebview {
         terminal: 'contextBridge.openAccountTerminal',
         raw: 'contextBridge.showRawUsage',
         forget: 'contextBridge.forgetAccount',
+        purge: 'contextBridge.forgetAccount',
         add: 'contextBridge.addCodexAccount',
         import: 'contextBridge.importCodexAccount',
         refresh: 'contextBridge.refreshAccountQuota'
       };
       const command = commands[message?.type];
-      if (command) vscode.commands.executeCommand(command, message.id ? { accountId: message.id } : undefined);
+      if (!command) return;
+      // `confirmed` tells the handler the panel already asked in the card, so
+      // it must not raise a dialog of its own.
+      vscode.commands.executeCommand(
+        command,
+        message.id ? { accountId: message.id, confirmed: true, purge: Boolean(message.purge) } : undefined
+      );
     });
 
     view.onDidChangeVisibility(() => {
@@ -231,12 +247,13 @@ function html(webview) {
   .pct { flex: none; font-variant-numeric: tabular-nums; font-weight: 600; }
   .pct.warn { color: var(--vscode-charts-yellow); }
   .pct.crit { color: var(--vscode-charts-red); }
+  /* The track must not carry opacity: it applies to the fill inside too, which
+     washed every bar out to 35%. Dim the track's own colour instead. */
   .bar {
-    position: relative;
+    position: relative; overflow: hidden;
     height: 5px; margin-top: 8px;
     border-radius: 999px;
-    background: var(--vscode-progressBar-background, var(--hairline));
-    opacity: 0.35;
+    background: var(--vscode-scrollbarSlider-background, rgba(128,128,128,0.25));
   }
   .bar > i {
     position: absolute; inset: 0 auto 0 0;
@@ -250,8 +267,21 @@ function html(webview) {
   }
   .badge { color: var(--vscode-charts-green); font-weight: 600; }
   .badge.crit { color: var(--vscode-charts-red); }
+  /* Always visible. Hiding actions until hover is what sent people to the
+     command palette in the first place. */
   .actions { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
-  .item:not(:hover):not(.active) .actions { display: none; }
+  .confirm {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    margin-top: 8px; padding-top: 8px;
+    border-top: 1px solid var(--hairline);
+    font-size: 0.85em; color: var(--dim);
+  }
+  .confirm .danger {
+    background: var(--vscode-inputValidation-errorBackground, transparent);
+    border-color: var(--vscode-inputValidation-errorBorder, var(--vscode-charts-red));
+    color: var(--vscode-foreground);
+  }
+  [hidden] { display: none !important; }
   button {
     font-family: inherit; font-size: 0.85em;
     padding: 3px 9px; border-radius: 4px; cursor: pointer;
@@ -364,9 +394,15 @@ function renderRow(row) {
     '<div class="actions">' +
       (row.active || !row.signedIn ? '' : '<button class="primary" data-act="switch" data-id="' + esc(row.id) + '">Use this</button>') +
       (row.signedIn ? '' : '<button class="primary" data-act="signin" data-id="' + esc(row.id) + '">Sign in</button>') +
-      '<button data-act="terminal" data-id="' + esc(row.id) + '">Terminal</button>' +
-      '<button data-act="raw" data-id="' + esc(row.id) + '">Raw usage</button>' +
-      '<button data-act="forget" data-id="' + esc(row.id) + '">Remove</button>' +
+      (row.signedIn ? '<button data-act="terminal" data-id="' + esc(row.id) + '">Terminal</button>' : '') +
+      (row.signedIn ? '<button data-act="raw" data-id="' + esc(row.id) + '">Raw usage</button>' : '') +
+      '<button data-ask="' + esc(row.id) + '">Remove</button>' +
+    '</div>' +
+    '<div class="confirm" id="confirm-' + esc(row.id) + '" hidden>' +
+      '<span>Remove this subscription?</span>' +
+      '<button data-act="forget" data-id="' + esc(row.id) + '">Forget</button>' +
+      '<button class="danger" data-act="purge" data-id="' + esc(row.id) + '">Delete credentials</button>' +
+      '<button data-cancel="' + esc(row.id) + '">Cancel</button>' +
     '</div>' +
   '</li>';
 }
@@ -392,10 +428,25 @@ function render(model) {
     '<button class="add" data-act="add">+ Add another subscription</button>';
 }
 
+// Confirmation for a destructive action happens here, in the card, so acting on
+// something in this panel never hands the user off to a dialog or a picker.
 document.addEventListener('click', (event) => {
+  const ask = event.target.closest('[data-ask]');
+  if (ask) {
+    const panel = document.getElementById('confirm-' + ask.dataset.ask);
+    if (panel) panel.hidden = !panel.hidden;
+    return;
+  }
+  const cancel = event.target.closest('[data-cancel]');
+  if (cancel) {
+    const panel = document.getElementById('confirm-' + cancel.dataset.cancel);
+    if (panel) panel.hidden = true;
+    return;
+  }
   const button = event.target.closest('[data-act]');
   if (!button) return;
-  vscode.postMessage({ type: button.dataset.act, id: button.dataset.id });
+  const act = button.dataset.act;
+  vscode.postMessage({ type: act, id: button.dataset.id, purge: act === 'purge' });
 });
 
 window.addEventListener('message', (event) => {

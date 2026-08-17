@@ -253,29 +253,37 @@ async function openAccountTerminal(item) {
   terminal.sendText('codex');
 }
 
+// The panel confirms in the card before calling this, so an invocation carrying
+// `confirmed` acts immediately. Only the command palette, which has nowhere to
+// put an inline confirmation, falls back to a dialog.
 async function forgetAccount(item) {
   const account = await resolveAccount(item);
   if (!account) return;
   const { removeAccount } = await core();
 
-  const choice = await vscode.window.showWarningMessage(
-    `Remove "${account.label}" from Context Bridge?`,
-    {
-      modal: true,
-      detail:
-        `"Forget" removes it from this list but leaves its login on disk at ${account.dir}, so it can be added back.\n\n` +
-        `"Delete Credentials" also erases that directory. That cannot be undone.`
-    },
-    'Forget',
-    'Delete Credentials'
-  );
-  if (choice !== 'Forget' && choice !== 'Delete Credentials') return;
+  let purge = Boolean(item?.purge);
+  if (!item?.confirmed) {
+    const choice = await vscode.window.showWarningMessage(
+      `Remove "${account.label}" from Context Bridge?`,
+      {
+        modal: true,
+        detail:
+          `"Forget" removes it from this list but leaves its login on disk at ${account.dir}, so it can be added back.\n\n` +
+          `"Delete Credentials" also erases that directory. That cannot be undone.`
+      },
+      'Forget',
+      'Delete Credentials'
+    );
+    if (choice !== 'Forget' && choice !== 'Delete Credentials') return;
+    purge = choice === 'Delete Credentials';
+  }
 
-  await removeAccount(account.id, { purge: choice === 'Delete Credentials' });
+  await removeAccount(account.id, { purge });
   accountsProvider.usage.delete(account.id);
   await accountsProvider.reloadUsage({ offline: true });
-  vscode.window.showInformationMessage(
-    `Context Bridge: removed "${account.label}"${choice === 'Delete Credentials' ? ' and deleted its credentials' : ''}.`
+  vscode.window.setStatusBarMessage(
+    `Context Bridge: removed "${account.label}"${purge ? ' and deleted its credentials' : ''}.`,
+    4000
   );
 }
 
@@ -335,10 +343,14 @@ function numberSetting(value) {
   return Number.isFinite(num) ? num : undefined;
 }
 
+// Arguments must be forwarded: commands invoked from the panel carry the
+// subscription they act on. Dropping them made every button fall through to the
+// "choose a subscription" picker, which is exactly what the panel exists to
+// avoid.
 function command(name, handler) {
-  return vscode.commands.registerCommand(name, async () => {
+  return vscode.commands.registerCommand(name, async (...args) => {
     try {
-      await handler();
+      await handler(...args);
     } catch (error) {
       vscode.window.showErrorMessage(`Context Bridge: ${error.message}`);
     }
