@@ -20,7 +20,9 @@ await fs.mkdir(dist, { recursive: true });
 
 await copyFile(path.join(vscodePackage, 'README.md'), path.join(stage, 'README.md'));
 await copyFile(path.join(root, 'LICENSE'), path.join(stage, 'LICENSE'));
-await copyFile(path.join(vscodePackage, 'src', 'extension.cjs'), path.join(stage, 'src', 'extension.cjs'));
+// Copy the whole source directory rather than naming one entry file, so a new
+// module cannot be left out of the VSIX and fail only at runtime.
+await copyDir(path.join(vscodePackage, 'src'), path.join(stage, 'src'));
 await copyDir(path.join(corePackage, 'src'), path.join(stage, 'node_modules', '@context-bridge', 'core', 'src'));
 
 const extensionPkg = sourceExtensionPkg;

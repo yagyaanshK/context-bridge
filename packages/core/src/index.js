@@ -28,3 +28,33 @@ export {
   DEFAULT_KEEP_SNAPSHOTS
 } from './store.js';
 export { createTurn, normalizeProvider, normalizeRole, normalizeSurface } from './schema.js';
+export {
+  accountDir,
+  accountsRoot,
+  createAccount,
+  getAccount,
+  listAccounts,
+  readRegistry,
+  removeAccount,
+  updateAccount
+} from './accounts/store.js';
+export {
+  activateCodexAccount,
+  codexAuthPath,
+  codexEnv,
+  codexHome,
+  decodeJwtClaims,
+  defaultCodexHome,
+  importCodexAuth,
+  isSignedIn,
+  readCodexAuth
+} from './accounts/codex.js';
+export {
+  fetchCodexUsage,
+  getCodexUsage,
+  headlineRemaining,
+  normalizeCodexUsage,
+  readQuotaCache,
+  CODEX_USAGE_URL,
+  DEFAULT_QUOTA_TTL_MS
+} from './accounts/quota.js';

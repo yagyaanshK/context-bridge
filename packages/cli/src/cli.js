@@ -1,13 +1,23 @@
 import path from 'node:path';
 import {
+  activateCodexAccount,
   captureSnapshot,
+  codexHome,
+  createAccount,
   discoverNativeSessions,
   exportHandoff,
+  getCodexUsage,
+  headlineRemaining,
+  importCodexAuth,
   importNativeSession,
   importTranscript,
   initStore,
+  isSignedIn,
+  listAccounts,
   normalizeNativeProvider,
-  readManifest
+  readManifest,
+  removeAccount,
+  defaultCodexHome
 } from '@context-bridge/core';
 import { spawn } from 'node:child_process';
 
@@ -23,6 +33,18 @@ Usage:
   context-bridge export --to <target> [--max-chars <n>] [--no-dedupe] [--since-last-export]
                         [--tool-max-chars <n>] [--system-max-chars <n>] [--cwd <path>]
   context-bridge status [--cwd <path>]
+  context-bridge accounts [--provider codex] [--refresh]
+  context-bridge account add <label> [--import]
+  context-bridge account use <id>
+  context-bridge account remove <id> [--purge]
+
+Account options:
+  --import                Adopt the login already in the default CODEX_HOME
+                          instead of signing in fresh.
+  --refresh               Force a quota read instead of using the cache.
+  --use <id>              Print the shell export needed to run codex as an
+                          account without changing the machine default.
+  --purge                 Also delete the account's credential directory.
 
 Export options:
   --max-chars <n>         Character budget for the transcript (default 120000, 0 = off).
@@ -143,6 +165,61 @@ export async function runCli(argv, io = process) {
     return;
   }
 
+  if (command === 'accounts') {
+    const accounts = await listAccounts({ provider: flags.provider || 'codex' });
+    if (accounts.length === 0) {
+      io.stdout.write('No accounts yet. Add one with `context-bridge account add <label>`.\n');
+      return;
+    }
+    const rows = [];
+    for (const account of accounts) {
+      const usage = await getCodexUsage(account.id, { force: Boolean(flags.refresh), offline: !flags.refresh });
+      rows.push(renderAccountRow(account, usage, await isSignedIn(account.id)));
+    }
+    io.stdout.write(`Accounts:\n\n${rows.join('\n')}\n`);
+    return;
+  }
+
+  if (command === 'account') {
+    const action = args[0];
+
+    if (action === 'add') {
+      const label = args.slice(1).join(' ').trim();
+      if (!label) throw new Error('account add requires a label');
+      const account = await createAccount({ label, provider: 'codex' });
+      if (flags.import) {
+        const auth = await importCodexAuth(account.id, defaultCodexHome());
+        io.stdout.write(`Added ${account.id} (${auth?.claims?.email || label}) from ${defaultCodexHome()}\n`);
+      } else {
+        io.stdout.write(
+          `Added ${account.id}. Sign in with:\n\n  CODEX_HOME="${codexHome(account.id)}" codex login\n`
+        );
+      }
+      return;
+    }
+
+    if (action === 'use') {
+      const id = args[1];
+      if (!id) throw new Error('account use requires an account id');
+      const result = await activateCodexAccount(id);
+      io.stdout.write(
+        `Default Codex account is now ${id}.\nWrote ${result.target}` +
+          (result.backup ? `\nPrevious login backed up to ${result.backup}\n` : '\n')
+      );
+      return;
+    }
+
+    if (action === 'remove') {
+      const id = args[1];
+      if (!id) throw new Error('account remove requires an account id');
+      const result = await removeAccount(id, { purge: Boolean(flags.purge) });
+      io.stdout.write(`Removed ${id}${result.purged ? ' and deleted its credentials' : ' (credentials kept on disk)'}\n`);
+      return;
+    }
+
+    throw new Error(`unknown account action: ${action || '(none)'}`);
+  }
+
   throw new Error(`unknown command: ${command}`);
 }
 
@@ -257,6 +334,29 @@ function renderSessions(sessions) {
   }
   lines.push('');
   return lines.join('\n');
+}
+
+function renderAccountRow(account, usage, signedIn) {
+  const remaining = usage ? headlineRemaining(usage) : undefined;
+  const state =
+    !signedIn || usage?.error === 'not-signed-in'
+      ? 'not signed in'
+      : usage?.error
+        ? `unavailable (${usage.error})`
+        : remaining === undefined
+          ? 'quota not read (use --refresh)'
+          : `${remaining}% left`;
+
+  const detail = (usage?.windows || [])
+    .map((window) => `${window.label} ${window.remainingPercent}%`)
+    .join(', ');
+
+  return [
+    `  ${account.id}`,
+    `    ${account.label}${account.email ? ` <${account.email}>` : ''}`,
+    `    ${state}${detail ? ` — ${detail}` : ''}`,
+    `    ${codexHome(account.id)}`
+  ].join('\n');
 }
 
 function renderStatus(manifest) {

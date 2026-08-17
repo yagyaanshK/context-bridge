@@ -1,9 +1,21 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const vscode = require('vscode');
+const { AccountsProvider } = require('./accounts-view.cjs');
+
+let accountsProvider;
 
 async function activateExtension(context) {
+  accountsProvider = new AccountsProvider(core);
   context.subscriptions.push(
+    vscode.window.registerTreeDataProvider('contextBridgeAccounts', accountsProvider),
+    command('contextBridge.addCodexAccount', () => addCodexAccount()),
+    command('contextBridge.importCodexAccount', () => importCodexAccount()),
+    command('contextBridge.signInAccount', (item) => signInAccount(item)),
+    command('contextBridge.refreshAccountQuota', () => refreshAccountQuota()),
+    command('contextBridge.openAccountTerminal', (item) => openAccountTerminal(item)),
+    command('contextBridge.activateAccount', (item) => activateAccount(item)),
+    command('contextBridge.forgetAccount', (item) => forgetAccount(item)),
     command('contextBridge.discoverClaude', () => discover('claude')),
     command('contextBridge.discoverCodex', () => discover('codex')),
     command('contextBridge.importLatestClaude', () => importLatest('claude')),
@@ -18,6 +30,179 @@ async function activateExtension(context) {
 }
 
 function deactivate() {}
+
+// ---------------------------------------------------------------------------
+// Codex subscriptions
+//
+// Each account owns a CODEX_HOME. Signing in, running a session, and reading
+// quota all happen against that directory, so several subscriptions stay logged
+// in at once and nothing has to be swapped to use a different one.
+//
+// The one exception is "Set as Default", which writes the official CLI's own
+// home. The official Codex CLI and VS Code extension read only that path, so
+// pointing them at an account is necessarily machine-wide.
+// ---------------------------------------------------------------------------
+
+async function addCodexAccount() {
+  const { createAccount } = await core();
+  const label = await vscode.window.showInputBox({
+    title: 'Add Codex Account',
+    prompt: 'A name for this subscription',
+    placeHolder: 'Primary, Work, Subscription 2 …',
+    validateInput: (value) => (value.trim() ? undefined : 'Enter a name.')
+  });
+  if (!label) return;
+
+  const account = await createAccount({ label: label.trim(), provider: 'codex' });
+  accountsProvider.refresh();
+  await runCodexLogin(account);
+}
+
+async function importCodexAccount() {
+  const { createAccount, importCodexAuth, defaultCodexHome } = await core();
+  const source = defaultCodexHome();
+  if (!fs.existsSync(path.join(source, 'auth.json'))) {
+    throw new Error(`No existing Codex login found at ${source}. Use "Add Codex Account" to sign in instead.`);
+  }
+
+  const label = await vscode.window.showInputBox({
+    title: 'Import Current Codex Login',
+    prompt: `Name for the account currently signed in at ${source}`,
+    value: 'Primary',
+    validateInput: (value) => (value.trim() ? undefined : 'Enter a name.')
+  });
+  if (!label) return;
+
+  const account = await createAccount({ label: label.trim(), provider: 'codex' });
+  const auth = await importCodexAuth(account.id, source);
+  await accountsProvider.reloadUsage({ force: true });
+  vscode.window.showInformationMessage(
+    `Context Bridge: imported ${auth?.claims?.email || label.trim()} as "${account.label}". The original login is untouched.`
+  );
+}
+
+async function signInAccount(item) {
+  const account = await resolveAccount(item);
+  if (account) await runCodexLogin(account);
+}
+
+// Sign-in runs the official `codex login` in a terminal scoped to this
+// account's home. Context Bridge never handles the OAuth exchange or the token
+// itself - it only decides which directory the official CLI writes into.
+async function runCodexLogin(account) {
+  const { codexEnv } = await core();
+  const terminal = vscode.window.createTerminal({
+    name: `Codex login · ${account.label}`,
+    env: codexEnv(account.id)
+  });
+  terminal.show();
+  terminal.sendText('codex login');
+  vscode.window
+    .showInformationMessage(
+      `Context Bridge: signing in "${account.label}" in the terminal. Choose "Loaded" when the browser flow finishes.`,
+      'Loaded'
+    )
+    .then((choice) => {
+      if (choice === 'Loaded') refreshAccountQuota();
+    });
+}
+
+async function openAccountTerminal(item) {
+  const account = await resolveAccount(item);
+  if (!account) return;
+  const { codexEnv, isSignedIn } = await core();
+  if (!(await isSignedIn(account.id))) {
+    throw new Error(`"${account.label}" is not signed in yet. Use "Sign In" first.`);
+  }
+
+  const root = await workspaceRoot();
+  const terminal = vscode.window.createTerminal({
+    name: `Codex · ${account.label}`,
+    cwd: root,
+    env: codexEnv(account.id)
+  });
+  terminal.show();
+  terminal.sendText('codex');
+}
+
+async function activateAccount(item) {
+  const account = await resolveAccount(item);
+  if (!account) return;
+  const { activateCodexAccount, defaultCodexHome } = await core();
+
+  const choice = await vscode.window.showWarningMessage(
+    `Make "${account.label}" the default Codex account?`,
+    {
+      modal: true,
+      detail:
+        `This rewrites the login at ${defaultCodexHome()}, which is what the official Codex CLI and ` +
+        `VS Code extension read. It affects every window on this machine, not just this one. ` +
+        `The current login is backed up beside it.\n\n` +
+        `To use an account without changing the default, use "Open Codex Terminal" instead.`
+    },
+    'Set as Default'
+  );
+  if (choice !== 'Set as Default') return;
+
+  const result = await activateCodexAccount(account.id);
+  accountsProvider.refresh();
+  vscode.window.showInformationMessage(
+    `Context Bridge: "${account.label}" is now the default Codex account.` +
+      (result.backup ? ' The previous login was backed up.' : '')
+  );
+}
+
+async function forgetAccount(item) {
+  const account = await resolveAccount(item);
+  if (!account) return;
+  const { removeAccount } = await core();
+
+  const choice = await vscode.window.showWarningMessage(
+    `Remove "${account.label}" from Context Bridge?`,
+    {
+      modal: true,
+      detail:
+        `"Forget" removes it from this list but leaves its login on disk at ${account.dir}, so it can be added back.\n\n` +
+        `"Delete Credentials" also erases that directory. That cannot be undone.`
+    },
+    'Forget',
+    'Delete Credentials'
+  );
+  if (choice !== 'Forget' && choice !== 'Delete Credentials') return;
+
+  await removeAccount(account.id, { purge: choice === 'Delete Credentials' });
+  accountsProvider.refresh();
+  vscode.window.showInformationMessage(
+    `Context Bridge: removed "${account.label}"${choice === 'Delete Credentials' ? ' and deleted its credentials' : ''}.`
+  );
+}
+
+async function refreshAccountQuota() {
+  const accounts = await withProgress('Reading subscription quota', () =>
+    accountsProvider.reloadUsage({ force: true })
+  );
+  if (accounts.length === 0) {
+    vscode.window.showInformationMessage('Context Bridge: no Codex accounts yet. Use "Add Codex Account".');
+  }
+}
+
+async function resolveAccount(item) {
+  if (item?.account) return item.account;
+  const { listAccounts } = await core();
+  const accounts = await listAccounts({ provider: 'codex' });
+  if (accounts.length === 0) throw new Error('No Codex accounts yet. Use "Add Codex Account" first.');
+
+  const picked = await vscode.window.showQuickPick(
+    accounts.map((account) => ({
+      label: account.label,
+      description: account.email || account.id,
+      detail: account.dir,
+      account
+    })),
+    { placeHolder: 'Choose a Codex account' }
+  );
+  return picked?.account;
+}
 
 function numberSetting(value) {
   const num = Number(value);

@@ -44,6 +44,28 @@ The budget is on by default because an unbounded handoff is not actually lossles
 
 Every handoff opens with **Where This Left Off**: the last real request and the last assistant message quoted verbatim, plus files written and recent commands pulled from recorded tool-call arguments. It is extractive, never generated, and it is built from the whole session — so the last request survives even when the budget drops the turn that carried it. The workspace snapshot below it carries the uncommitted diff and a `git log -1` check, so the receiving agent can tell whether the tree moved on before it starts editing.
 
+## Codex subscriptions
+
+A **Context Bridge** panel in the activity bar lists your Codex subscriptions with the remaining
+percentage of whichever window is tightest, broken down per window when you expand a row.
+
+Each subscription gets its own `CODEX_HOME` under `~/.context-bridge/accounts/`, so they all stay
+signed in simultaneously — there is nothing to swap. Sign-in runs the official `codex login` in a
+terminal scoped to that directory; Context Bridge never touches the OAuth exchange or uses the token
+for inference.
+
+| Action | Effect |
+|--------|--------|
+| **Open Codex Terminal** | Starts `codex` as that subscription. Changes nothing else on the machine. |
+| **Set as Default** | Rewrites the login in your real `CODEX_HOME`. The only way to point the *official* Codex CLI and extension at a different account, so it affects every window. Backs up what it replaces. |
+| **Sign In** | Runs `codex login` scoped to that account's directory. |
+| **Refresh Quota** | Forces a usage read; otherwise readings are cached for five minutes. |
+
+Switching is manual. The panel shows what each subscription has left and lets you choose — it does
+not fail over on its own when one runs out.
+
+---
+
 ## For AI agents
 
 > Briefing for an AI agent evaluating or installing this extension.

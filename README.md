@@ -94,6 +94,10 @@ The ledger header of every export reports exactly what was collapsed and truncat
 | `snapshot` | Capture a git + file-metadata workspace snapshot. |
 | `export --to <target> [options]` | Generate a handoff markdown file. |
 | `status` | Print ledger counts. |
+| `accounts [--refresh]` | List Codex subscriptions with remaining quota. |
+| `account add <label> [--import]` | Register a subscription; `--import` adopts your current login. |
+| `account use <id>` | Make a subscription the machine default for the official CLI. |
+| `account remove <id> [--purge]` | Forget a subscription; `--purge` also deletes its credentials. |
 
 **Export options:** `--max-chars <n>` (budget, default 120000, 0 = off) · `--no-dedupe` · `--since-last-export` · `--tool-max-chars <n>` (default 2000) · `--system-max-chars <n>` (default 800) · `--snapshot-diff-max-chars <n>` (default 4000) · `--keep-exports <n>` (default 10) · `--no-summary`. All flags accept kebab- or camelCase.
 
@@ -126,6 +130,36 @@ The ledger header of every export reports exactly what was collapsed and truncat
 | `keepExports` | `10` | Past handoff files to keep; older ones are deleted (0 = keep all). |
 | `openHandoffDocument` | `true` | Open the handoff file after export. |
 | `allowExternalClaudeUri` | `false` | Allow opening `vscode://` links (keep off in forks). |
+
+---
+
+## Multiple Codex subscriptions
+
+If you hold more than one Codex subscription, Context Bridge can keep them all signed in at once
+and show what each has left.
+
+The mechanism is one environment variable. The Codex CLI keeps its identity in `auth.json` under
+whatever `CODEX_HOME` points at, so each account gets its own directory under
+`~/.context-bridge/accounts/<id>/codex-home`. Nothing is swapped to use a different one — Context
+Bridge launches the **official** `codex` binary with that variable set. It never handles the OAuth
+exchange and never uses your token to run inference.
+
+```bash
+context-bridge account add "Primary" --import   # adopt the login you already have
+context-bridge account add "Subscription 2"     # then run the printed `codex login`
+context-bridge accounts --refresh               # remaining quota per subscription
+```
+
+Quota comes from the same usage endpoint the official client uses, read once per account and cached
+for five minutes. A failed refresh keeps the last good reading rather than blanking the display.
+
+**Two ways to use an account.** *Open Codex Terminal* starts a session scoped to one subscription and
+changes nothing else on the machine — this is the one to reach for. *Set as Default* rewrites the
+login in your real `CODEX_HOME`, which is the only way to point the official Codex CLI and VS Code
+extension at a different account, and therefore affects every window. It backs up what it replaced.
+
+**Switching is manual and deliberate.** Context Bridge shows you what each subscription has left and
+lets you choose; it does not silently fail over when one runs out.
 
 ---
 

@@ -2,7 +2,7 @@
   "name": "context-bridge-vscode",
   "displayName": "Context Bridge",
   "description": "Continue developer agent sessions across Claude, Codex, and other tools from VS Code.",
-  "version": "0.1.10",
+  "version": "0.2.0",
   "publisher": "yagyaanshK",
   "license": "MIT",
   "type": "commonjs",
@@ -13,6 +13,10 @@
     "Other"
   ],
   "activationEvents": [
+    "onView:contextBridgeAccounts",
+    "onCommand:contextBridge.addCodexAccount",
+    "onCommand:contextBridge.importCodexAccount",
+    "onCommand:contextBridge.refreshAccountQuota",
     "onCommand:contextBridge.discoverClaude",
     "onCommand:contextBridge.discoverCodex",
     "onCommand:contextBridge.importLatestClaude",
@@ -26,7 +30,59 @@
   ],
   "main": "./src/extension.cjs",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "contextBridge",
+          "title": "Context Bridge",
+          "icon": "$(arrow-swap)"
+        }
+      ]
+    },
+    "views": {
+      "contextBridge": [
+        {
+          "id": "contextBridgeAccounts",
+          "name": "Codex Subscriptions",
+          "contextualTitle": "Context Bridge"
+        }
+      ]
+    },
     "commands": [
+      {
+        "command": "contextBridge.addCodexAccount",
+        "title": "Context Bridge: Add Codex Account",
+        "icon": "$(add)"
+      },
+      {
+        "command": "contextBridge.importCodexAccount",
+        "title": "Context Bridge: Import Current Codex Login"
+      },
+      {
+        "command": "contextBridge.signInAccount",
+        "title": "Context Bridge: Sign In",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "contextBridge.refreshAccountQuota",
+        "title": "Context Bridge: Refresh Subscription Quota",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "contextBridge.openAccountTerminal",
+        "title": "Context Bridge: Open Codex Terminal for Account",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "contextBridge.activateAccount",
+        "title": "Context Bridge: Set as Default Codex Account",
+        "icon": "$(star)"
+      },
+      {
+        "command": "contextBridge.forgetAccount",
+        "title": "Context Bridge: Remove Codex Account",
+        "icon": "$(trash)"
+      },
       {
         "command": "contextBridge.discoverClaude",
         "title": "Context Bridge: Discover Claude Sessions"
@@ -134,6 +190,45 @@
       }
     },
     "menus": {
+      "view/title": [
+        {
+          "command": "contextBridge.addCodexAccount",
+          "when": "view == contextBridgeAccounts",
+          "group": "navigation@1"
+        },
+        {
+          "command": "contextBridge.refreshAccountQuota",
+          "when": "view == contextBridgeAccounts",
+          "group": "navigation@2"
+        },
+        {
+          "command": "contextBridge.importCodexAccount",
+          "when": "view == contextBridgeAccounts",
+          "group": "1_add"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "contextBridge.openAccountTerminal",
+          "when": "view == contextBridgeAccounts && viewItem == contextBridgeCodexAccount",
+          "group": "inline@1"
+        },
+        {
+          "command": "contextBridge.signInAccount",
+          "when": "view == contextBridgeAccounts && viewItem == contextBridgeCodexAccount",
+          "group": "1_use@1"
+        },
+        {
+          "command": "contextBridge.activateAccount",
+          "when": "view == contextBridgeAccounts && viewItem == contextBridgeCodexAccount",
+          "group": "1_use@2"
+        },
+        {
+          "command": "contextBridge.forgetAccount",
+          "when": "view == contextBridgeAccounts && viewItem == contextBridgeCodexAccount",
+          "group": "9_danger"
+        }
+      ],
       "commandPalette": [
         {
           "command": "contextBridge.handoffToClaudeExisting"
@@ -157,7 +252,7 @@
     }
   },
   "dependencies": {
-    "@context-bridge/core": "0.1.10"
+    "@context-bridge/core": "0.2.0"
   },
   "devDependencies": {
     "@types/vscode": "^1.95.0"
