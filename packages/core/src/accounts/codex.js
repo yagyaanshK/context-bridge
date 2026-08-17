@@ -124,6 +124,53 @@ async function copyCredential(source, target) {
   }
 }
 
+// Adopt a login copied from another machine.
+//
+// The official docs list this as the way to authenticate a host that cannot run
+// any of the interactive flows: sign in somewhere with a browser, then bring
+// the credential across. Validation is strict about the shape but says exactly
+// what is wrong, because the usual mistakes - pasting the wrong file, pasting a
+// fragment, pasting a bare token - are all indistinguishable from "it failed".
+export function parseCodexAuthText(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) throw new Error('Paste the contents of an auth.json file.');
+
+  let value;
+  try {
+    value = JSON.parse(trimmed);
+  } catch (error) {
+    const hint = /^[A-Za-z0-9._-]+$/.test(trimmed)
+      ? ' That looks like a bare token: use the access-token option instead, or paste the whole auth.json file.'
+      : '';
+    throw new Error(`That is not valid JSON.${hint}`);
+  }
+
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('An auth.json holds a JSON object.');
+  }
+
+  const tokens = value.tokens || {};
+  const hasOauth = typeof (tokens.access_token || tokens.accessToken) === 'string';
+  const hasApiKey = typeof (value.OPENAI_API_KEY || value.openai_api_key) === 'string';
+  if (!hasOauth && !hasApiKey) {
+    throw new Error('This is JSON, but not a Codex auth.json: it has no tokens.access_token and no OPENAI_API_KEY.');
+  }
+  return value;
+}
+
+export async function importCodexAuthText(accountId, text, options = {}) {
+  const value = parseCodexAuthText(text);
+  const home = await ensureCodexHome(accountId, options);
+  // Same 0600 treatment the credential gets everywhere else.
+  await fs.writeFile(codexAuthPath(home), `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  try {
+    await fs.chmod(codexAuthPath(home), 0o600);
+  } catch {
+    // Windows and some network filesystems do not support POSIX modes.
+  }
+  return refreshCodexAccountIdentity(accountId, options);
+}
+
 // After a login completes, read back who signed in so the panel can label the
 // subscription without asking. Returns null when no credential was written,
 // which is how a cancelled or failed login is detected.

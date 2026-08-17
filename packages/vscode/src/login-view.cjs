@@ -37,6 +37,7 @@ class CodexLoginPanel {
         this.panel = undefined;
       });
     }
+    this.pendingLabel = target.label || '';
     this.post({ type: 'ready', label: target.label || '', locked: Boolean(target.accountId) });
   }
 
@@ -70,32 +71,77 @@ class CodexLoginPanel {
       this.post({ type: 'copied' });
       return;
     }
+    if (message?.type === 'pickFile') {
+      try {
+        await this.adoptFromFile();
+      } catch (error) {
+        this.post({ type: 'failed', method: 'paste', message: error.message });
+      }
+      return;
+    }
     if (message?.type === 'start') {
       try {
         await this.start(message);
       } catch (error) {
-        this.post({ type: 'failed', message: error.message });
+        this.post({ type: 'failed', method: message.method, message: error.message });
       }
     }
   }
 
+  // Reading the file here rather than in the webview means the credential is
+  // never handed to the page at all - only the outcome is.
+  async adoptFromFile() {
+    const picked = await vscode.window.showOpenDialog({
+      title: 'Choose an auth.json',
+      canSelectMany: false,
+      filters: { 'Codex credential': ['json'] },
+      openLabel: 'Use this login'
+    });
+    if (!picked?.length) return;
+
+    const bytes = await vscode.workspace.fs.readFile(picked[0]);
+    await this.adopt(Buffer.from(bytes).toString('utf8'));
+  }
+
+  async adopt(text) {
+    const { importCodexAuthText } = await this.core();
+    const accountId = await this.ensureAccount();
+
+    this.post({ type: 'running', method: 'paste' });
+    const auth = await importCodexAuthText(accountId, text);
+    if (!auth) {
+      this.post({ type: 'failed', method: 'paste', message: 'That credential has no access token in it.' });
+      return;
+    }
+    await this.store.reloadUsage({ force: true });
+    this.post({ type: 'done', method: 'paste', email: auth.claims?.email, label: this.target.label });
+  }
+
+  // A subscription row has to exist before any method can write into it.
+  async ensureAccount() {
+    const { createAccount, ensureCodexHome } = await this.core();
+    if (this.target?.accountId) {
+      await ensureCodexHome(this.target.accountId);
+      return this.target.accountId;
+    }
+    const label = String(this.pendingLabel || '').trim();
+    if (!label) throw new Error('Give this subscription a name first.');
+    const account = await createAccount({ label, provider: 'codex' });
+    this.target = { accountId: account.id, label };
+    await ensureCodexHome(account.id);
+    return account.id;
+  }
+
   async start(message) {
-    const { createAccount, ensureCodexHome, codexHome, refreshCodexAccountIdentity, codexLoginArgs } =
-      await this.core();
+    const { codexHome, refreshCodexAccountIdentity, codexLoginArgs } = await this.core();
 
     if (this.child) throw new Error('A sign-in is already running. Cancel it first.');
+    this.pendingLabel = message.label;
 
-    let accountId = this.target?.accountId;
-    if (!accountId) {
-      const label = String(message.label || '').trim();
-      if (!label) throw new Error('Give this subscription a name first.');
-      const account = await createAccount({ label, provider: 'codex' });
-      accountId = account.id;
-      this.target = { accountId, label };
-    }
-    // `codex` will not create CODEX_HOME; it exits if the path is missing.
-    await ensureCodexHome(accountId);
+    // Adopting a credential runs no process at all; it is a file copy.
+    if (message.method === 'paste') return this.adopt(message.secret);
 
+    const accountId = await this.ensureAccount();
     const method = message.method;
     const args = codexLoginArgs(method);
     this.post({ type: 'running', method });
@@ -221,12 +267,16 @@ function html(webview) {
   .lede { margin: 0; color: var(--vscode-descriptionForeground); line-height: 1.55; max-width: 42ch; }
   .field { display: flex; flex-direction: column; gap: 6px; }
   label { font-size: 0.85rem; color: var(--vscode-descriptionForeground); }
-  input {
+  input, textarea {
     font-family: inherit; font-size: 1rem; padding: 9px 11px; border-radius: 6px;
     background: var(--vscode-input-background); color: var(--vscode-input-foreground);
     border: 1px solid var(--vscode-input-border, transparent);
   }
-  input:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+  textarea {
+    font-family: var(--vscode-editor-font-family, monospace); font-size: 0.85rem;
+    resize: vertical; min-height: 96px; line-height: 1.45;
+  }
+  input:focus-visible, textarea:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
   .methods { display: flex; flex-direction: column; gap: 10px; }
   .method {
     display: flex; align-items: center; gap: 13px; width: 100%; text-align: left;
@@ -411,6 +461,31 @@ function html(webview) {
       </div>
     </section>
 
+    <section class="card" data-method="paste">
+      <button class="method" data-open="paste">
+        <span class="glyph">⇩</span>
+        <span><b>Paste an existing login</b><span>Bring an auth.json across from a machine that is already signed in</span></span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="body" hidden>
+        <div class="field">
+          <label for="authJson">Contents of <code>auth.json</code></label>
+          <textarea id="authJson" rows="5" placeholder='{ "tokens": { "access_token": "..." } }'
+            autocomplete="off" spellcheck="false"></textarea>
+        </div>
+        <div class="status" data-busy hidden><span class="spinner"></span><span data-status>Adopting…</span></div>
+        <div class="row">
+          <button class="action primary" data-submit="paste">Use this login</button>
+          <button class="action" data-pick-file>Choose a file…</button>
+          <button class="action" data-retry="paste" hidden>Retry</button>
+          <button class="action" data-cancel>Cancel</button>
+        </div>
+        <p class="note">On the signed-in machine the file is at <code>~/.codex/auth.json</code>
+          (<code>%USERPROFILE%\\.codex\\auth.json</code> on Windows). Treat it like a password: it
+          contains live access tokens. Choosing a file keeps the contents out of this page entirely.</p>
+      </div>
+    </section>
+
   </div>
 
   <p class="outcome" id="outcome" hidden></p>
@@ -467,10 +542,11 @@ const STARTING = {
   browser: 'Opening your browser…',
   device: 'Requesting a code…',
   token: 'Verifying the token…',
-  apikey: 'Verifying the key…'
+  apikey: 'Verifying the key…',
+  paste: 'Adopting the login…'
 };
-// Methods that collect a secret before they can run, and where they read it from.
-const SECRET_INPUT = { token: 'accessToken', apikey: 'apiKey' };
+// Methods that collect input before they can run, and where they read it from.
+const SECRET_INPUT = { token: 'accessToken', apikey: 'apiKey', paste: 'authJson' };
 const secretOf = (name) => (SECRET_INPUT[name] ? $(SECRET_INPUT[name]).value.trim() : undefined);
 
 // One method runs at a time, but every method stays on screen. Opening a card
@@ -551,9 +627,19 @@ document.querySelectorAll('[data-cancel]').forEach((button) =>
 document.querySelectorAll('[data-submit]').forEach((button) =>
   button.addEventListener('click', () => runWithSecret(button.dataset.submit)));
 
+// Picking a file lets the extension read it directly, so the credential is
+// never pasted into, or held by, this page.
+document.querySelectorAll('[data-pick-file]').forEach((button) =>
+  button.addEventListener('click', () => {
+    $('outcome').hidden = true;
+    reset('paste');
+    vscode.postMessage({ type: 'pickFile', label: $('label').value });
+  }));
+
 Object.entries(SECRET_INPUT).forEach(([name, inputId]) =>
   $(inputId).addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') runWithSecret(name);
+    // The pasted credential is multi-line, so Enter must not submit it.
+    if (event.key === 'Enter' && $(inputId).tagName !== 'TEXTAREA') runWithSecret(name);
   }));
 
 document.querySelectorAll('[data-verify]').forEach((button) =>

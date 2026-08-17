@@ -64,6 +64,7 @@ has its own Retry.
 | Device code | none | no | Approve a short code from any device. Must be enabled in your ChatGPT security settings; a workspace admin can disable it. |
 | Access token | none | no | `--with-access-token`. Workspace admins issue these for trusted scripts and CI. |
 | API key | none | no | Billed per token at API rates, not against a subscription. |
+| Paste an existing login | none | no | Bring `auth.json` across from a machine that is already signed in. Choosing a file rather than pasting keeps the credential out of the panel. |
 
 Behind it, the official `codex` binary runs as a
 background process with `CODEX_HOME` pointed at that subscription's directory — Context Bridge reads

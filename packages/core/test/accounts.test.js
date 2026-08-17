@@ -17,6 +17,8 @@ import {
   getCodexUsage,
   headlineRemaining,
   importCodexAuth,
+  importCodexAuthText,
+  parseCodexAuthText,
   isSignedIn,
   listAccounts,
   normalizeCodexUsage,
@@ -124,6 +126,55 @@ test('renaming to a label that collides with another account is allowed', async 
   assert.notEqual(listed[0].id, listed[1].id);
   assert.equal(first.id, 'one');
   assert.equal(second.id, 'two');
+});
+
+test('a pasted auth.json is adopted and its identity recorded', async () => {
+  const { options } = await sandbox();
+  const account = await createAccount({ label: 'From laptop', provider: 'codex' }, options);
+
+  const pasted = JSON.stringify({
+    tokens: {
+      access_token: 'brought-across',
+      refresh_token: 'r',
+      account_id: 'acct_7',
+      id_token: idToken({ email: 'other@example.com', 'https://api.openai.com/auth': { chatgpt_plan_type: 'pro' } })
+    },
+    last_refresh: '2026-08-01T00:00:00.000Z'
+  });
+
+  await importCodexAuthText(account.id, pasted, options);
+
+  const auth = await readCodexAuth(codexHome(account.id, options));
+  assert.equal(auth.accessToken, 'brought-across');
+  assert.equal(await isSignedIn(account.id, options), true);
+  assert.equal((await getAccount(account.id, options)).email, 'other@example.com');
+});
+
+test('an API-key auth.json is accepted too', async () => {
+  const { options } = await sandbox();
+  const account = await createAccount({ label: 'Key', provider: 'codex' }, options);
+  await importCodexAuthText(account.id, JSON.stringify({ OPENAI_API_KEY: 'sk-test' }), options);
+  const written = JSON.parse(await fs.readFile(path.join(codexHome(account.id, options), 'auth.json'), 'utf8'));
+  assert.equal(written.OPENAI_API_KEY, 'sk-test');
+});
+
+test('pasted content is rejected with a reason that says what is wrong', () => {
+  assert.throws(() => parseCodexAuthText(''), /Paste the contents/);
+  assert.throws(() => parseCodexAuthText('   '), /Paste the contents/);
+  assert.throws(() => parseCodexAuthText('{ nope'), /not valid JSON/);
+  assert.throws(() => parseCodexAuthText('[1,2]'), /JSON object/);
+  assert.throws(() => parseCodexAuthText('{"hello":"world"}'), /not a Codex auth\.json/);
+  // The most likely mistake gets its own hint rather than a bare parse error.
+  assert.throws(() => parseCodexAuthText('sk-abc123'), /looks like a bare token/);
+});
+
+test('a rejected paste leaves any existing login untouched', async () => {
+  const { options } = await sandbox();
+  const account = await createAccount({ label: 'Safe', provider: 'codex' }, options);
+  await signIn(account.id, options, { accessToken: 'original' });
+
+  await assert.rejects(() => importCodexAuthText(account.id, 'not json at all', options), /not valid JSON/);
+  assert.equal((await readCodexAuth(codexHome(account.id, options))).accessToken, 'original');
 });
 
 test('listAccounts can filter by provider', async () => {

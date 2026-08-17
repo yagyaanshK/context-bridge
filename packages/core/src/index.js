@@ -48,6 +48,8 @@ export {
   defaultCodexHome,
   ensureCodexHome,
   importCodexAuth,
+  importCodexAuthText,
+  parseCodexAuthText,
   isSignedIn,
   readCodexAuth,
   refreshCodexAccountIdentity,
