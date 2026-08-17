@@ -124,6 +124,20 @@ async function copyCredential(source, target) {
   }
 }
 
+// After a login completes, read back who signed in so the panel can label the
+// subscription without asking. Returns null when no credential was written,
+// which is how a cancelled or failed login is detected.
+export async function refreshCodexAccountIdentity(accountId, options = {}) {
+  const auth = await readCodexAuth(codexHome(accountId, options)).catch(() => null);
+  if (!auth?.accessToken) return null;
+  await updateAccount(
+    accountId,
+    { email: auth.claims?.email, plan: auth.claims?.plan, signedInAt: new Date().toISOString() },
+    options
+  );
+  return auth;
+}
+
 // Which registered account the official Codex CLI and VS Code extension are
 // currently using. They read only the default home, so "active" means "the
 // credential sitting in that directory matches this account's".

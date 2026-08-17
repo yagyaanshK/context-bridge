@@ -50,8 +50,16 @@ export {
   importCodexAuth,
   isSignedIn,
   readCodexAuth,
+  refreshCodexAccountIdentity,
   restoreCodexBackup
 } from './accounts/codex.js';
+export {
+  codexLoginArgs,
+  codexLoginFailureReason,
+  isLoopback,
+  parseCodexLoginOutput,
+  CODEX_LOGIN_MODES
+} from './accounts/login.js';
 export {
   fetchCodexUsage,
   getCodexUsage,

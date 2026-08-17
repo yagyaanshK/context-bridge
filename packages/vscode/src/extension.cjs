@@ -2,13 +2,16 @@ const path = require('node:path');
 const fs = require('node:fs');
 const vscode = require('vscode');
 const { AccountsStore, AccountsWebview } = require('./accounts-view.cjs');
+const { CodexLoginPanel } = require('./login-view.cjs');
 
 let accountsProvider;
 let accountStatus;
+let loginPanel;
 
 async function activateExtension(context) {
   accountsProvider = new AccountsStore(core);
   const accountsWebview = new AccountsWebview(accountsProvider);
+  loginPanel = new CodexLoginPanel(context, core, accountsProvider);
 
   // The panel is only visible when its view is open, so the account in use also
   // lives in the status bar - that is where you look while actually working.
@@ -166,20 +169,11 @@ function formatPercent(value) {
   return `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
 }
 
+// Naming and sign-in both happen in the panel, so adding a subscription is one
+// uninterrupted flow rather than an input box followed by a terminal.
 async function addCodexAccount() {
-  const { createAccount, ensureCodexHome } = await core();
-  const label = await vscode.window.showInputBox({
-    title: 'Add Codex Account',
-    prompt: 'A name for this subscription',
-    placeHolder: 'Primary, Work, Subscription 2 …',
-    validateInput: (value) => (value.trim() ? undefined : 'Enter a name.')
-  });
-  if (!label) return;
-
-  const account = await createAccount({ label: label.trim(), provider: 'codex' });
-  await ensureCodexHome(account.id);
-  await accountsProvider.refresh();
-  await runCodexLogin(account);
+  const accounts = await accountsProvider.accounts();
+  await loginPanel.open({ label: `Subscription ${accounts.length + 1}` });
 }
 
 async function importCodexAccount() {
@@ -207,31 +201,7 @@ async function importCodexAccount() {
 
 async function signInAccount(item) {
   const account = await resolveAccount(item);
-  if (account) await runCodexLogin(account);
-}
-
-// Sign-in runs the official `codex login` in a terminal scoped to this
-// account's home. Context Bridge never handles the OAuth exchange or the token
-// itself - it only decides which directory the official CLI writes into.
-async function runCodexLogin(account) {
-  const { codexEnv, ensureCodexHome } = await core();
-  // `codex` will not create CODEX_HOME itself; it errors out when the path is
-  // missing, so the directory has to exist before the terminal starts.
-  await ensureCodexHome(account.id);
-  const terminal = vscode.window.createTerminal({
-    name: `Codex login · ${account.label}`,
-    env: codexEnv(account.id)
-  });
-  terminal.show();
-  terminal.sendText('codex login');
-  vscode.window
-    .showInformationMessage(
-      `Context Bridge: signing in "${account.label}" in the terminal. Choose "Loaded" when the browser flow finishes.`,
-      'Loaded'
-    )
-    .then((choice) => {
-      if (choice === 'Loaded') refreshAccountQuota();
-    });
+  if (account) await loginPanel.open({ accountId: account.id, label: account.label });
 }
 
 async function openAccountTerminal(item) {
