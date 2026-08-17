@@ -172,8 +172,11 @@ async function handoff(target, mode) {
   const root = await workspaceRoot();
   const source = target === 'claude' ? 'codex' : 'claude';
   const settings = vscode.workspace.getConfiguration('contextBridge');
-  const maxChars = Number(settings.get('maxExportChars') || 0) || undefined;
+  // 0 is a meaningful value here ("no clipping"), so it must reach the core
+  // instead of collapsing to undefined and picking up the default budget.
+  const maxChars = numberSetting(settings.get('maxExportChars'));
   const dedupe = settings.get('dedupeTurns') !== false;
+  const sinceLastExport = Boolean(settings.get('sinceLastExport'));
   const toolMaxChars = numberSetting(settings.get('toolMaxChars'));
   const systemMaxChars = numberSetting(settings.get('systemMaxChars'));
   const openDocument = Boolean(settings.get('openHandoffDocument'));
@@ -196,7 +199,7 @@ async function handoff(target, mode) {
       await importNativeSession(root, source, { path: resolved.session.path, includeArchived: true });
     }
     await captureSnapshot(root);
-    return exportHandoff(root, { target, maxChars, dedupe, toolMaxChars, systemMaxChars });
+    return exportHandoff(root, { target, maxChars, dedupe, sinceLastExport, toolMaxChars, systemMaxChars });
   });
 
   const prompt = handoffPrompt(target, mode, result.path);

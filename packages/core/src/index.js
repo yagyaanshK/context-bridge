@@ -1,11 +1,15 @@
 export { importTranscript, parseTranscript } from './importer.js';
 export { discoverNativeSessions, importNativeSession, normalizeNativeProvider } from './adapters/index.js';
+export { collapseCodexStreamDuplicates } from './adapters/codex.js';
 export {
   exportHandoff,
   renderHandoff,
+  prepareTurns,
   selectTurns,
+  selectPreparedTurns,
   dedupeAdjacentTurns,
   truncateTurnContent,
+  DEFAULT_MAX_CHARS,
   DEFAULT_TOOL_MAX_CHARS,
   DEFAULT_SYSTEM_MAX_CHARS
 } from './exporter.js';

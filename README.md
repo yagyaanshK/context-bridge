@@ -95,7 +95,7 @@ The ledger header of every export reports exactly what was collapsed and truncat
 | `export --to <target> [options]` | Generate a handoff markdown file. |
 | `status` | Print ledger counts. |
 
-**Export options:** `--max-chars <n>` (budget, 0 = off) · `--no-dedupe` · `--tool-max-chars <n>` (default 2000) · `--system-max-chars <n>` (default 800). All flags accept kebab- or camelCase.
+**Export options:** `--max-chars <n>` (budget, default 120000, 0 = off) · `--no-dedupe` · `--since-last-export` · `--tool-max-chars <n>` (default 2000) · `--system-max-chars <n>` (default 800). All flags accept kebab- or camelCase.
 
 ---
 
@@ -110,7 +110,8 @@ The ledger header of every export reports exactly what was collapsed and truncat
 | `dedupeTurns` | `true` | Collapse consecutive duplicate turns. |
 | `toolMaxChars` | `2000` | Truncate long tool outputs (0 = off). |
 | `systemMaxChars` | `800` | Truncate long system turns (0 = off). |
-| `maxExportChars` | `0` | Optional hard character budget. |
+| `maxExportChars` | `120000` | Character budget for the transcript (0 = off). User turns are reserved first, then the most recent turns fill the budget. |
+| `sinceLastExport` | `false` | Only include turns newer than the previous export. |
 | `openHandoffDocument` | `true` | Open the handoff file after export. |
 | `allowExternalClaudeUri` | `false` | Allow opening `vscode://` links (keep off in forks). |
 

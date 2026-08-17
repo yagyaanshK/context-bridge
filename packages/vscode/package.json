@@ -2,7 +2,7 @@
   "name": "context-bridge-vscode",
   "displayName": "Context Bridge",
   "description": "Continue developer agent sessions across Claude, Codex, and other tools from VS Code.",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "publisher": "yagyaanshK",
   "license": "MIT",
   "type": "commonjs",
@@ -73,8 +73,13 @@
       "properties": {
         "contextBridge.maxExportChars": {
           "type": "number",
-          "default": 0,
-          "description": "Optional maximum characters to embed in generated handoffs. 0 means no deterministic clipping."
+          "default": 120000,
+          "description": "Character budget for the transcript embedded in a handoff. Receiving agents refuse or silently truncate oversized files, so an unbounded handoff delivers less than a budgeted one. User turns are reserved first, then the most recent remaining turns fill the budget; anything dropped is reported in the handoff header. 0 disables clipping."
+        },
+        "contextBridge.sinceLastExport": {
+          "type": "boolean",
+          "default": false,
+          "description": "Only include turns recorded after the previous export. Keeps repeat handoffs small, but a new agent session has no memory of what an earlier handoff delivered, so leave this off unless you always paste every handoff into the same continuing session."
         },
         "contextBridge.dedupeTurns": {
           "type": "boolean",
@@ -142,7 +147,7 @@
     }
   },
   "dependencies": {
-    "@context-bridge/core": "0.1.8"
+    "@context-bridge/core": "0.1.9"
   },
   "devDependencies": {
     "@types/vscode": "^1.95.0"

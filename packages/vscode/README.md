@@ -31,11 +31,14 @@ To ingest a session without generating a handoff, use **Discover … Sessions** 
 | `dedupeTurns` | `true` | Collapse consecutive duplicate turns in exports. |
 | `toolMaxChars` | `2000` | Truncate long tool outputs (git diffs, listings); `0` disables. |
 | `systemMaxChars` | `800` | Truncate long system turns; `0` disables. |
-| `maxExportChars` | `0` | Optional hard character budget for the handoff. |
+| `maxExportChars` | `120000` | Character budget for the transcript. User turns are reserved first, then the most recent turns fill the budget; `0` disables it. |
+| `sinceLastExport` | `false` | Only include turns newer than the previous export. Leave off unless you always paste every handoff into the same continuing session. |
 | `openHandoffDocument` | `true` | Open the handoff file after export. |
 | `allowExternalClaudeUri` | `false` | Allow opening `vscode://` links. Keep `false` in forks so handoff stays in the current editor. |
 
-Handoffs are kept small deterministically: duplicate turns are collapsed, oversized tool/system output is trimmed (head + tail kept), and inline base64 screenshots are stripped. User and assistant prose is preserved verbatim — there is no AI summarization.
+Handoffs are kept small deterministically: duplicate turns are collapsed, oversized tool/system output is trimmed (head + tail kept), inline base64 screenshots are stripped, and a total character budget caps the transcript. User and assistant prose is preserved verbatim — there is no AI summarization.
+
+The budget is on by default because an unbounded handoff is not actually lossless: receiving agents refuse or silently truncate oversized files, so an over-long export delivers a fraction of itself with no indication that anything is missing. A budgeted export reports exactly what it dropped in its header.
 
 ## For AI agents
 

@@ -20,13 +20,18 @@ Usage:
   context-bridge import-native --provider claude|codex [--last|--session <id>] [--all] [--cwd <path>]
   context-bridge run claude|codex [-- <native args>] [--cwd <path>]
   context-bridge snapshot [--cwd <path>]
-  context-bridge export --to <target> [--max-chars <n>] [--no-dedupe]
+  context-bridge export --to <target> [--max-chars <n>] [--no-dedupe] [--since-last-export]
                         [--tool-max-chars <n>] [--system-max-chars <n>] [--cwd <path>]
   context-bridge status [--cwd <path>]
 
 Export options:
-  --max-chars <n>         Hard character budget for the handoff (0 = no clipping).
+  --max-chars <n>         Character budget for the transcript (default 120000, 0 = off).
+                          Receiving agents refuse or silently truncate oversized
+                          handoffs, so the budget is on by default.
   --no-dedupe             Keep consecutive duplicate turns instead of collapsing them.
+  --since-last-export     Only include turns recorded after the previous export.
+                          Off by default: a new agent session has no memory of
+                          what an earlier handoff already delivered.
   --tool-max-chars <n>    Truncate tool-output turns over n chars (default 2000, 0 = off).
   --system-max-chars <n>  Truncate system turns over n chars (default 800, 0 = off).
 
@@ -114,8 +119,9 @@ export async function runCli(argv, io = process) {
     if (!flags.to) throw new Error('export requires --to <target>');
     const result = await exportHandoff(cwd, {
       target: flags.to,
-      maxChars: flags.maxChars ? Number(flags.maxChars) : undefined,
+      maxChars: flags.maxChars !== undefined ? Number(flags.maxChars) : undefined,
       dedupe: flags['no-dedupe'] ? false : undefined,
+      sinceLastExport: Boolean(flags.sinceLastExport),
       toolMaxChars: flags.toolMaxChars !== undefined ? Number(flags.toolMaxChars) : undefined,
       systemMaxChars: flags.systemMaxChars !== undefined ? Number(flags.systemMaxChars) : undefined
     });

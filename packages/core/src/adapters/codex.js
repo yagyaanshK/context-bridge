@@ -5,6 +5,21 @@ import { homePath, listJsonlFiles, pathsSameOrNested, readFirstJsonlObjects, rea
 
 export const CODEX_PROVIDER = 'openai';
 
+// Codex records a session twice. `event_msg` entries are the UI event stream;
+// `response_item` entries are the model transcript. Nearly every message appears
+// in both, and `task_complete` repeats the final agent message a third time, so
+// a naive import inflates the ledger roughly 2x on exactly the content that
+// matters most. Tagging each turn with its source stream lets the collapse pass
+// below drop the redundant copy safely.
+const EVENT_STREAM = 'event';
+const ITEM_STREAM = 'item';
+const META_STREAM = 'meta';
+
+// How far back to look for the other stream's copy of a message. The two copies
+// are written back-to-back, so this only needs to absorb an interleaved tool
+// call or two.
+const STREAM_PAIR_WINDOW = 4;
+
 export async function discoverCodexSessions(options = {}) {
   const root = options.root || process.cwd();
   const sessionsDir = options.sessionsDir || homePath('.codex', 'sessions');
@@ -43,7 +58,8 @@ export async function importCodexSession(root, session) {
     if (turn) turns.push(turn);
   });
   if (turns.length === 0) throw new Error(`No importable Codex turns found in ${session.path}`);
-  return writeSession(root, turns, {
+  const collapsed = collapseCodexStreamDuplicates(turns);
+  return writeSession(root, collapsed.turns, {
     provider: CODEX_PROVIDER,
     surface: session.surface || 'cli',
     sessionId: `native-codex-${session.sessionId}`,
@@ -67,6 +83,7 @@ export function codexEventToTurn(event, session, lineNumber) {
         nativeSessionId: session.sessionId,
         nativePath: session.path,
         lineNumber,
+        stream: mapped.stream,
         cwd: event.payload?.cwd || session.cwd,
         ...(mapped.media ? { media: mapped.media } : {})
       }
@@ -83,59 +100,155 @@ function codexEventContent(event) {
   const payload = event.payload || {};
 
   if (event.type === 'event_msg' && payload.type === 'user_message') {
-    return codexUserMessage(payload);
+    return { ...codexUserMessage(payload), stream: EVENT_STREAM };
   }
 
   if (event.type === 'event_msg' && payload.type === 'agent_message') {
-    return { role: 'assistant', content: contentToText(payload.message || payload) };
+    return { role: 'assistant', content: contentToText(payload.message || payload), stream: EVENT_STREAM };
   }
 
   if (event.type === 'event_msg' && payload.type === 'task_complete' && payload.last_agent_message) {
-    return { role: 'assistant', content: contentToText(payload.last_agent_message) };
+    return { role: 'assistant', content: contentToText(payload.last_agent_message), stream: EVENT_STREAM };
   }
 
   if (event.type === 'response_item' && payload.type === 'message') {
-    return { role: payload.role || 'assistant', content: contentToText(payload.content) };
+    const role = payload.role || 'assistant';
+    if (role === 'user') return { ...codexUserItemMessage(payload), stream: ITEM_STREAM };
+    return { role, content: contentToText(payload.content), stream: ITEM_STREAM };
   }
 
   if (event.type === 'response_item' && payload.type === 'function_call') {
-    return { role: 'tool', content: `Tool call: ${payload.name}\n${contentToText(payload.arguments)}` };
+    return { role: 'tool', content: `Tool call: ${payload.name}\n${contentToText(payload.arguments)}`, stream: ITEM_STREAM };
   }
 
   if (event.type === 'response_item' && payload.type === 'function_call_output') {
-    return { role: 'tool', content: contentToText(payload.output || payload.content || payload) };
+    return { role: 'tool', content: contentToText(payload.output || payload.content || payload), stream: ITEM_STREAM };
   }
 
   if (event.type === 'turn_context') {
-    return { role: 'system', content: `Turn context:\n${JSON.stringify(payload, null, 2)}` };
+    return { role: 'system', content: `Turn context:\n${JSON.stringify(payload, null, 2)}`, stream: META_STREAM };
   }
 
   if (event.type === 'parse_error') {
-    return { role: 'system', content: `Parse error: ${event.error}\n${event.rawLine}` };
+    return { role: 'system', content: `Parse error: ${event.error}\n${event.rawLine}`, stream: META_STREAM };
   }
 
   return null;
 }
 
+// `event_msg/user_message` shape: message text plus sibling media arrays.
 function codexUserMessage(payload) {
   const media = mediaFromPayload(payload);
+  const text = contentToText(payload.message || payload.text_elements || '');
+  return { role: 'user', content: renderUserContent(text, media), media };
+}
+
+// `response_item/message` shape for the user role: a content-part array that
+// interleaves text with image parts. Extracting media here rather than letting
+// `contentToText` stringify the raw part is what makes this stream's text
+// byte-identical to the event stream's, so the two copies collapse cleanly -
+// and it keeps inline base64 image payloads out of the ledger either way.
+function codexUserItemMessage(payload) {
+  const parts = Array.isArray(payload.content) ? payload.content : [payload.content];
+  const media = { localImages: [], localFiles: [], inlineImageCount: 0 };
+  const texts = [];
+
+  for (const part of parts) {
+    if (isImagePart(part)) {
+      const local = mediaItemPath(part);
+      if (local) media.localImages.push(local);
+      else media.inlineImageCount++;
+      continue;
+    }
+    if (isFilePart(part)) {
+      const local = mediaItemPath(part);
+      if (local) media.localFiles.push(local);
+      continue;
+    }
+    const text = contentToText(part);
+    if (text.trim()) texts.push(text);
+  }
+
+  media.localImages = [...new Set(media.localImages)];
+  media.localFiles = [...new Set(media.localFiles)];
+  return { role: 'user', content: renderUserContent(texts.join('\n'), media), media };
+}
+
+// Shared so both streams format a user message identically.
+function renderUserContent(text, media) {
   const parts = [];
-  const messageText = contentToText(payload.message || payload.text_elements || '');
-  if (messageText.trim()) parts.push(messageText);
+  if (String(text || '').trim()) parts.push(String(text));
   if (media.localImages.length > 0) {
-    parts.push([
-      'Attached local images:',
-      ...media.localImages.map((item) => `- ${item}`)
-    ].join('\n'));
+    parts.push(['Attached local images:', ...media.localImages.map((item) => `- ${item}`)].join('\n'));
+  }
+  if (media.localFiles.length > 0) {
+    parts.push(['Attached local files:', ...media.localFiles.map((item) => `- ${item}`)].join('\n'));
   }
   if (media.inlineImageCount > 0) {
     parts.push(`Inline image payloads omitted from imported text: ${media.inlineImageCount}`);
   }
-  const content = parts.join('\n\n');
+  return parts.join('\n\n');
+}
+
+function isImagePart(part) {
+  if (!part || typeof part !== 'object') return false;
+  if (part.image_url || part.imageUrl) return true;
+  return String(part.type || '').toLowerCase().includes('image');
+}
+
+function isFilePart(part) {
+  if (!part || typeof part !== 'object') return false;
+  return String(part.type || '').toLowerCase().includes('file');
+}
+
+// Drop the second copy of a message that Codex wrote to both of its streams.
+//
+// The rule is deliberately narrow: the two turns must have the same role, byte-
+// identical content, and come from *different* native streams, within a short
+// window. Requiring different streams is what keeps genuinely repeated messages
+// intact - a user who types "yes" twice produces an event+item pair each time,
+// and those pairs never merge into one, because each candidate has already been
+// matched by its own counterpart.
+export function collapseCodexStreamDuplicates(turns) {
+  const result = [];
+  let removed = 0;
+
+  for (const turn of turns) {
+    const stream = turn.metadata?.stream;
+    let merged = false;
+
+    if (stream === EVENT_STREAM || stream === ITEM_STREAM) {
+      const start = Math.max(0, result.length - STREAM_PAIR_WINDOW);
+      for (let i = result.length - 1; i >= start; i--) {
+        const candidate = result[i];
+        const candidateStream = candidate.metadata?.stream;
+        if (candidateStream !== EVENT_STREAM && candidateStream !== ITEM_STREAM) continue;
+        if (candidateStream === stream) continue;
+        if (candidate.role !== turn.role || candidate.content !== turn.content) continue;
+        result[i] = mergeStreamPair(candidate, turn);
+        removed++;
+        merged = true;
+        break;
+      }
+    }
+
+    if (!merged) result.push(turn);
+  }
+
+  return { turns: result, removed };
+}
+
+// Keep the earlier turn's position and identity, but carry over media metadata
+// if only the dropped copy had it.
+function mergeStreamPair(kept, dropped) {
+  const media = kept.metadata?.media || dropped.metadata?.media;
   return {
-    role: 'user',
-    content,
-    media
+    ...kept,
+    metadata: {
+      ...kept.metadata,
+      ...(media ? { media } : {}),
+      collapsedStreams: [kept.metadata?.stream, dropped.metadata?.stream].filter(Boolean).join('+')
+    }
   };
 }
 
@@ -167,13 +280,19 @@ function mediaFromPayload(payload) {
   };
 }
 
+// Returns a usable local path, or '' for an inline payload the caller should
+// count rather than embed. Object parts are checked against the same data: URI
+// rule as bare strings; `response_item` image parts carry theirs on image_url.
 function mediaItemPath(item) {
-  if (typeof item === 'string') {
-    if (/^data:image\//i.test(item)) return '';
-    return item;
-  }
+  if (typeof item === 'string') return isInlinePayload(item) ? '' : item;
   if (!item || typeof item !== 'object') return '';
-  return item.path || item.filePath || item.localPath || item.uri || item.url || '';
+  const value =
+    item.path || item.filePath || item.localPath || item.uri || item.url || item.image_url || item.imageUrl || '';
+  return isInlinePayload(value) ? '' : String(value);
+}
+
+function isInlinePayload(value) {
+  return /^data:/i.test(String(value || ''));
 }
 
 function contentToText(value) {
