@@ -406,6 +406,11 @@ function html(webview) {
     background: transparent; color: var(--dim);
   }
   .add:hover { background: var(--vscode-list-hoverBackground); color: var(--vscode-foreground); }
+  .adopt {
+    border-style: solid;
+    border-color: color-mix(in srgb, var(--edge) 35%, transparent);
+    color: var(--vscode-foreground);
+  }
   .empty { padding: 4px 2px 8px; color: var(--dim); line-height: 1.5; font-size: 0.9em; }
   .windows { margin: 7px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
   .windows li { display: flex; justify-content: space-between; gap: 8px; color: var(--dim); font-size: 0.85em; }
@@ -431,6 +436,10 @@ function tint(id) {
   let hash = 0;
   for (const char of String(id)) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
   return 'var(' + TINTS[hash % TINTS.length] + ')';
+}
+// "a subscription" but "an account" - the two agents' nouns differ.
+function article(noun) {
+  return /^[aeiou]/i.test(noun) ? 'n' : '';
 }
 function maskEmail(email) {
   if (!email || !email.includes('@')) return email || '';
@@ -544,7 +553,10 @@ function renderSection(section) {
   const noun = esc(section.noun);
 
   const body = section.rows.length === 0
-    ? '<div class="empty">No ' + esc(section.title) + ' ' + noun + 's yet.</div>'
+    ? '<div class="empty">No ' + esc(section.title) + ' ' + noun + 's yet. ' +
+        'Existing logins are never picked up on their own — adopt the one on this machine, or sign in to another.</div>' +
+      '<button class="add adopt" data-act="import" data-provider="' + provider + '">' +
+        'Use the ' + esc(section.title) + ' login on this machine</button>'
     : '<div class="pool">' +
         '<div class="pool-top"><span class="pool-title">Usage remaining</span>' +
           '<span class="pool-total">' + (pooled.total === undefined ? '—' : pct(pooled.total)) + '</span></div>' +
@@ -558,8 +570,8 @@ function renderSection(section) {
   return '<section class="agent" data-provider="' + provider + '">' +
     '<span class="agent-name">' + esc(section.title) + '</span>' +
     body +
-    '<button class="add" data-act="add" data-provider="' + provider + '">+ Add ' +
-      (section.rows.length === 0 ? 'a' : 'another') + ' ' + noun + '</button>' +
+    '<button class="add" data-act="add" data-provider="' + provider + '">+ ' +
+      (section.rows.length === 0 ? 'Sign in to a' + article(noun) : 'Add another') + ' ' + noun + '</button>' +
   '</section>';
 }
 
