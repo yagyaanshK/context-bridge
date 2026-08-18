@@ -2,9 +2,13 @@
 
 Context Bridge includes a VS Code extension package for developers who use Claude and Codex primarily through IDE extensions.
 
+It does two separate jobs: it generates **handoffs** between the two agents, and it manages **accounts** for both of them in a sidebar panel. The two are independent — you can use either without the other.
+
 ## Commands
 
 Open the command palette and run:
+
+**Handoff**
 
 - `Context Bridge: Handoff to Existing Claude Session`
 - `Context Bridge: Handoff to New Claude Session`
@@ -14,6 +18,67 @@ Open the command palette and run:
 - `Context Bridge: Discover Codex Sessions`
 - `Context Bridge: Import Latest Claude Session`
 - `Context Bridge: Import Latest Codex Session`
+- `Context Bridge: Open Latest Handoff`
+- `Context Bridge: Copy Latest Handoff Prompt`
+
+**Accounts**
+
+- `Context Bridge: Add Account` / `Add Codex Subscription` / `Add Claude Account`
+- `Context Bridge: Import Current Login` / `Import Current Codex Login` / `Import Current Claude Login`
+- `Context Bridge: Switch Account`
+- `Context Bridge: Undo Account Switch`
+- `Context Bridge: Refresh Account Quota`
+- `Context Bridge: Open Terminal for Account`
+- `Context Bridge: Rename Account`
+- `Context Bridge: Remove Account`
+- `Context Bridge: Show Raw Response`
+
+Everything in the accounts group is also reachable from the panel, which never hands you off to a
+dropdown: confirmations and renames happen inline in the card you clicked.
+
+## The Accounts Panel
+
+The panel lists Codex subscriptions and Claude accounts in two labelled sections, each with its own
+cards, usage bars and pooled total. Nothing is pooled across the two — the quotas are not the same
+currency, and switching one has no effect on the other.
+
+Each card shows the plan, masked email, a bar for the tightest quota window, and when it resets.
+Hovering reveals a pencil to rename; renaming changes the label only, never the directory holding
+the credential, so it cannot invalidate a login.
+
+| Action | Effect |
+|--------|--------|
+| **Use this** | Points that agent's official CLI and extension at this account (machine-wide). |
+| **Terminal** | Starts the agent as that account without changing the machine default. |
+| **Sign in** | Opens the sign-in panel for that agent. |
+| **Refresh now** | Forces a usage read; otherwise readings are cached for five minutes. |
+| **Raw Response** | Shows the endpoint's actual JSON next to how Context Bridge parsed it. |
+| **Remove** | Forget the account, or also delete its credentials. Confirmed inline. |
+
+### Signing in
+
+**Codex** delegates to the official binary: Context Bridge spawns `codex login` with `CODEX_HOME`
+set and reads its output to render progress. It never performs the OAuth exchange. Methods: browser,
+device code, access token, API key, paste an existing `auth.json`.
+
+**Claude** cannot work that way. Its login is an Ink terminal UI needing raw mode on stdin, so a
+piped child process dies before printing anything, and `claude setup-token` writes no credential by
+design. The official extension avoids this by bundling the CLI runtime, which another extension
+cannot borrow. So Context Bridge runs the same public PKCE flow the CLI runs and writes the
+credential itself — meaning **it handles Claude tokens, which it never does for Codex**. Methods:
+browser (loopback on port 54545), authorization code (no local port, for SSH and containers), adopt
+the login at `~/.claude`, or paste a `.credentials.json`.
+
+On macOS Claude keeps credentials in the Keychain rather than a file, so the adopt and paste methods
+have nothing to read there; the two OAuth methods work everywhere.
+
+### Switching
+
+Switching rewrites the one credential path the official tooling reads, which is what makes the
+official UI start using your choice. For Claude that is two files — the credential plus the
+`oauthAccount` key in `~/.claude.json`, where the displayed email lives. The rest of that file is
+project history and caches and is left byte-identical. Both files are backed up first, and the
+confirmation toast offers **Undo**.
 
 ## How Handoff Works
 
@@ -67,6 +132,7 @@ You can set `contextBridge.codexOpenCommand` to the exact Codex command id if yo
 
 ```bash
 npm install
+npm test
 npm run lint
 ```
 
@@ -83,7 +149,7 @@ npm run package:vscode
 This writes:
 
 ```text
-dist/context-bridge-0.1.0.vsix
+dist/context-bridge-0.7.0.vsix
 ```
 
 Install it from the Extensions view:
@@ -91,7 +157,7 @@ Install it from the Extensions view:
 1. Open Extensions.
 2. Click the `...` menu.
 3. Choose `Install from VSIX...`.
-4. Select `dist/context-bridge-0.1.0.vsix`.
+4. Select `dist/context-bridge-0.7.0.vsix`.
 
 This is the best path before marketplace publication because it works like a normal extension install.
 

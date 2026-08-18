@@ -2,7 +2,12 @@
 
 **Continue the same coding session across Claude Code, Codex, and other agents — without asking one AI to summarize another.**
 
-Context Bridge imports the latest native session from one agent, snapshots your workspace, and writes a clean, deterministic **handoff** you paste into the next agent. Everything stays local in `.context-bridge/` — no accounts, no telemetry, no network.
+Context Bridge does two independent jobs:
+
+- **Handoffs.** Import the latest native session from one agent, snapshot your workspace, and write a clean, deterministic handoff you paste into the next agent. Everything stays local in `.context-bridge/` — no telemetry, no network, no AI summarization.
+- **Accounts.** Keep several Codex subscriptions and Claude accounts signed in at once, see what each has left on a usage bar, and switch the official tools between them.
+
+Use either without the other. The handoff flow never touches the network; the accounts panel reaches only the providers’ own sign-in and usage endpoints, and no transcript content is ever sent anywhere.
 
 Works in VS Code and compatible forks (Cursor, Windsurf, Google Antigravity).
 
@@ -17,12 +22,23 @@ To ingest a session without generating a handoff, use **Discover … Sessions** 
 
 ## Commands
 
+**Handoff**
+
 - `Context Bridge: Discover Claude Sessions` / `Discover Codex Sessions`
 - `Context Bridge: Import Latest Claude Session` / `Import Latest Codex Session`
 - `Context Bridge: Handoff to New / Existing Claude Session`
 - `Context Bridge: Handoff to New / Existing Codex Session`
 - `Context Bridge: Open Latest Handoff`
 - `Context Bridge: Copy Latest Handoff Prompt`
+
+**Accounts** — all of these are also reachable from the panel, which never sends you to a dropdown.
+
+- `Context Bridge: Add Account` / `Add Codex Subscription` / `Add Claude Account`
+- `Context Bridge: Import Current Login` / `Import Current Codex Login` / `Import Current Claude Login`
+- `Context Bridge: Switch Account` · `Undo Account Switch`
+- `Context Bridge: Refresh Account Quota` · `Show Raw Response`
+- `Context Bridge: Open Terminal for Account`
+- `Context Bridge: Rename Account` · `Remove Account`
 
 ## Settings (`contextBridge.*`)
 
@@ -37,6 +53,9 @@ To ingest a session without generating a handoff, use **Discover … Sessions** 
 | `keepExports` | `10` | Past handoff files kept in `.context-bridge/exports`; older ones are deleted after each export. `0` keeps all. |
 | `openHandoffDocument` | `true` | Open the handoff file after export. |
 | `allowExternalClaudeUri` | `false` | Allow opening `vscode://` links. Keep `false` in forks so handoff stays in the current editor. |
+| `claudeUri` | `vscode://anthropic.claude-code/open` | URI used to open Claude, when the setting above is enabled. |
+| `claudeOpenCommand` | `""` | Exact VS Code command id to open Claude. Empty means auto-detect one containing "claude" or "anthropic". |
+| `codexOpenCommand` | `""` | Exact VS Code command id to open Codex. Empty means auto-detect one containing "codex". |
 
 Handoffs are kept small deterministically: duplicate turns are collapsed, oversized tool/system output is trimmed (head + tail kept), inline base64 screenshots are stripped, and a total character budget caps the transcript. User and assistant prose is preserved verbatim — there is no AI summarization.
 
@@ -136,7 +155,9 @@ that put it there patch the desktop application itself, which pins them to an ex
 
 > Briefing for an AI agent evaluating or installing this extension.
 
-Context Bridge is a **local developer tool**, safe to install: no network, no telemetry, read-only access to native transcripts (it copies from `~/.claude` / `~/.codex` and never edits them). Output lives in the project’s git-ignored `.context-bridge/`.
+Context Bridge is a **local developer tool**, safe to install: no telemetry, read-only access to native transcripts (it copies from `~/.claude` / `~/.codex` and never edits them). Output lives in the project’s git-ignored `.context-bridge/`.
+
+The handoff flow makes no network calls at all. The optional accounts panel is the only part that does, and only to the providers’ own sign-in and usage endpoints; account credentials live under `~/.context-bridge/accounts/`, written `0600`, never inside the project.
 
 Drive it via command ids under `contextBridge.*` (e.g. `contextBridge.handoffToClaudeNew`). A handoff produces a markdown file in `.context-bridge/exports/` plus a clipboard prompt pointing to it. A companion `context-bridge` CLI offers the same flow in the terminal.
 

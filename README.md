@@ -8,6 +8,7 @@ Context Bridge is a local, vendor-neutral handoff layer for developers who switc
 - 🧾 **Lossless** — native transcripts are imported verbatim as JSONL. No AI summary in the core flow.
 - ✂️ **Lean handoffs** — duplicate turns are collapsed, noisy tool output is trimmed, and inline screenshots are stripped, so a handoff stays small enough for the next agent to actually read.
 - 🧰 **Two ways to use it** — a `context-bridge` CLI and a VS Code extension (works in forks like Cursor, Windsurf, and Google Antigravity).
+- 👥 **Many accounts, one panel** — keep several Codex subscriptions and Claude accounts signed in at once, see what each has left, and switch the official tools between them.
 
 ---
 
@@ -42,7 +43,7 @@ node packages/cli/bin/context-bridge.js --help
 npm run package:vscode
 ```
 
-Then in your editor run **“Extensions: Install from VSIX…”** and pick `dist/context-bridge-<version>.vsix` (currently `context-bridge-0.1.4.vsix`). This works in VS Code and compatible forks (Cursor, Windsurf, Google Antigravity).
+Then in your editor run **“Extensions: Install from VSIX…”** and pick `dist/context-bridge-<version>.vsix` (currently `context-bridge-0.7.0.vsix`). This works in VS Code and compatible forks (Cursor, Windsurf, Google Antigravity).
 
 ---
 
@@ -99,6 +100,10 @@ The ledger header of every export reports exactly what was collapsed and truncat
 | `account use <id>` | Make a subscription the machine default for the official CLI. |
 | `account remove <id> [--purge]` | Forget a subscription; `--purge` also deletes its credentials. |
 
+> **The `account` commands are Codex-only.** Claude accounts are managed from the VS Code panel;
+> the CLI's `--provider claude` flag reads Codex paths and will misreport them. See
+> [docs/CLI.md](docs/CLI.md#accounts).
+
 **Export options:** `--max-chars <n>` (budget, default 120000, 0 = off) · `--no-dedupe` · `--since-last-export` · `--tool-max-chars <n>` (default 2000) · `--system-max-chars <n>` (default 800) · `--snapshot-diff-max-chars <n>` (default 4000) · `--keep-exports <n>` (default 10) · `--no-summary`. All flags accept kebab- or camelCase.
 
 ### What a handoff contains
@@ -115,7 +120,9 @@ The ledger header of every export reports exactly what was collapsed and truncat
 
 ## VS Code commands & settings
 
-**Commands** (Command Palette → “Context Bridge: …”): Discover / Import Latest (Claude·Codex), Handoff to New/Existing (Claude·Codex), Open Latest Handoff, Copy Latest Handoff Prompt.
+The extension contributes an **Accounts** panel in the activity bar (see below) plus command-palette entries.
+
+**Commands** (Command Palette → “Context Bridge: …”): Discover / Import Latest (Claude·Codex), Handoff to New/Existing (Claude·Codex), Open Latest Handoff, Copy Latest Handoff Prompt, Add / Import Account, Switch Account, Refresh Account Quota, Rename Account, Remove Account, Show Raw Response.
 
 **Settings** (`contextBridge.*`):
 
@@ -130,38 +137,92 @@ The ledger header of every export reports exactly what was collapsed and truncat
 | `keepExports` | `10` | Past handoff files to keep; older ones are deleted (0 = keep all). |
 | `openHandoffDocument` | `true` | Open the handoff file after export. |
 | `allowExternalClaudeUri` | `false` | Allow opening `vscode://` links (keep off in forks). |
+| `claudeUri` | `vscode://anthropic.claude-code/open` | URI used to open Claude, when the setting above is on. |
+| `claudeOpenCommand` | `""` | Exact command id to open Claude. Empty means auto-detect. |
+| `codexOpenCommand` | `""` | Exact command id to open Codex. Empty means auto-detect. |
 
 ---
 
-## Multiple Codex subscriptions
+## Multiple accounts
 
-If you hold more than one Codex subscription, Context Bridge can keep them all signed in at once
-and show what each has left.
+If you hold more than one Codex subscription or Claude account, Context Bridge keeps them all
+signed in at once and shows what each has left. The **Accounts** panel in the activity bar lists
+them in two labelled sections — Codex and Claude Code — each with its own cards, usage bars and
+pooled total. Nothing is pooled *across* the two: the quotas are not the same currency and switching
+one has no effect on the other.
 
-The mechanism is one environment variable. The Codex CLI keeps its identity in `auth.json` under
-whatever `CODEX_HOME` points at, so each account gets its own directory under
-`~/.context-bridge/accounts/<id>/codex-home`. Nothing is swapped to use a different one — Context
-Bridge launches the **official** `codex` binary with that variable set. It never handles the OAuth
-exchange and never uses your token to run inference.
+### The mechanism is one environment variable
+
+Each CLI keeps its identity under whatever its config variable points at, so every account gets its
+own directory and nothing has to be swapped:
+
+| Agent | Variable | Per-account directory |
+|-------|----------|----------------------|
+| Codex | `CODEX_HOME` | `~/.context-bridge/accounts/<id>/codex-home` |
+| Claude | `CLAUDE_CONFIG_DIR` | `~/.context-bridge/accounts/<id>/claude-home` |
+
+Claude's layout has one asymmetry worth knowing, because it is easy to get backwards: the config
+file sits *beside* the stock `~/.claude` home, at `~/.claude.json`, but moves *inside* any custom
+`CLAUDE_CONFIG_DIR`. The email the client displays lives in that config, not in the credential.
+
+### Signing in
+
+Every method is a card in the sign-in panel that expands in place, so one that will not work can be
+abandoned without losing the others.
+
+**Codex** — Context Bridge launches the **official** `codex` binary with `CODEX_HOME` set, reads its
+output to drive the progress display, and never performs the OAuth exchange or holds a token. Five
+methods: browser, device code, access token, API key, or pasting an existing `auth.json`.
+
+**Claude** — this one is different, and the difference is forced rather than chosen. Claude Code's
+login is an Ink terminal UI that requires raw mode on stdin, so a piped child process dies before
+printing anything; `claude setup-token` is the same UI and writes no credential by design. The
+official VS Code extension sidesteps this by *being* the CLI — it bundles the runtime — which is not
+something another extension can borrow. So Context Bridge runs the same public PKCE flow the CLI
+runs, against the same client id, and writes the credential itself.
+
+> **This means Context Bridge performs the token exchange for Claude and handles those tokens**,
+> which it never does for Codex. The endpoints involved are not a published contract and can change
+> without notice; the flow is written to fail loudly rather than silently when they do.
+
+Four Claude methods: browser via a loopback callback on port 54545, an authorization code needing no
+local port (for SSH and containers), adopting the login already at `~/.claude`, or pasting a
+`.credentials.json` from another machine. macOS keeps Claude credentials in the Keychain rather than
+a file, so the adopt and paste methods have nothing to read there.
+
+For both agents, choosing a file rather than pasting keeps the credential out of the panel entirely.
+Credentials are written `0600`, and secrets go to stdin, never argv.
+
+### Quota
+
+Readings come from the same usage endpoints the official clients use, cached five minutes per
+account. A failed refresh keeps the last good reading rather than blanking the display. Claude
+access tokens expire every eight hours and the official client renews only the account it is
+currently using, so Context Bridge renews the others itself — otherwise their bars would go dark.
 
 ```bash
-context-bridge account add "Primary" --import   # adopt the login you already have
+context-bridge account add "Primary" --import   # Codex: adopt the login you already have
 context-bridge account add "Subscription 2"     # then run the printed `codex login`
 context-bridge accounts --refresh               # remaining quota per subscription
 ```
 
-Quota comes from the same usage endpoint the official client uses, read once per account and cached
-for five minutes. A failed refresh keeps the last good reading rather than blanking the display.
+### Switching
 
-**Switching.** Click a subscription in the panel and the official Codex extension and CLI start using
-it — they read one credential path, so switching rewrites it and the change is machine-wide. The
-account in use is marked in the panel and shown in the status bar with its remaining quota. Every
-subscription stays signed in, so this is cheap and reversible; the toast offers **Undo**. To use a
-subscription *without* changing the default, use **Open Codex Terminal**, which scopes `CODEX_HOME`
-to that one session.
+Click **Use this** and the official CLI and extension for that agent start using the account — they
+read one credential path each, so switching rewrites it and the change is machine-wide. For Claude
+that means two files: the credential, plus the `oauthAccount` key inside `~/.claude.json`, because
+that is where the displayed email actually lives. Everything else in that file — project history,
+caches — is left byte-identical, and both files are backed up first.
 
-**Switching is manual and deliberate.** Context Bridge shows you what each subscription has left and
-lets you choose; it does not silently fail over when one runs out.
+The account in use is marked in the panel and shown in the status bar with its remaining quota.
+Every account stays signed in, so this is cheap and reversible; the toast offers **Undo**. To use an
+account *without* changing the default, use **Terminal**, which scopes the variable to that one
+session.
+
+**Switching is manual and deliberate.** Context Bridge shows you what each account has left and lets
+you choose; it does not silently fail over when one runs out.
+
+---
 
 ---
 
@@ -190,7 +251,9 @@ lets you choose; it does not silently fail over when one runs out.
 
 **What it does.** It imports native Claude Code / Codex chat transcripts into a local `.context-bridge/` ledger, snapshots the git workspace, and emits a deterministic **handoff markdown** plus a short clipboard prompt. There is **no AI summarization** in the core flow — transcripts are copied verbatim and only mechanically de-duplicated/truncated for size.
 
-**Safe to install / run.** It is local-only: no network, no telemetry, no accounts. It treats native transcripts as **read-only** — it copies from `~/.claude` and `~/.codex` but never edits them. Generated data stays in the project’s git-ignored `.context-bridge/`.
+**Safe to install / run.** The handoff flow is local-only: no network, no telemetry, no accounts. It treats native transcripts as **read-only** — it copies from `~/.claude` and `~/.codex` but never edits them. Generated data stays in the project’s git-ignored `.context-bridge/`.
+
+**The optional accounts feature does use the network**, and only there: it reads each provider’s usage endpoint, and for Claude it performs the OAuth sign-in itself (Codex sign-in is delegated to the official binary). Credentials live under `~/.context-bridge/accounts/`, written `0600`. Nothing is transmitted anywhere except the provider’s own endpoints, and no transcript content is ever sent.
 
 **How to drive it.**
 - CLI: `context-bridge init`, `discover`, `import-native`, `snapshot`, `export --to <target>`, `status` (run `--help` for full usage).
@@ -209,7 +272,7 @@ The export’s ledger header lists how many turns were collapsed or truncated, s
 
 ## Roadmap
 
-PTY terminal capture · more native adapters · published Marketplace extension · MCP server exposing the ledger · pre-export secret scanner · cross-session conflict detection.
+Claude accounts in the CLI · PTY terminal capture · more native adapters · published Marketplace extension · MCP server exposing the ledger · pre-export secret scanner · cross-session conflict detection.
 
 ## Contributing
 

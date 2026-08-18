@@ -102,3 +102,41 @@ Show ledger status.
 ```bash
 context-bridge status
 ```
+
+## Accounts
+
+> **Codex only.** The CLI's account commands read Codex paths and the Codex usage endpoint.
+> `--provider claude` will list Claude accounts but report their sign-in state and quota from the
+> wrong place, so treat it as unsupported. Manage Claude accounts from the VS Code panel until the
+> CLI catches up.
+
+Keep several Codex subscriptions signed in at once and see what each has left. The mechanism is one
+environment variable: the Codex CLI keeps its identity in `auth.json` under whatever `CODEX_HOME`
+points at, so each account gets its own directory under `~/.context-bridge/accounts/<id>/codex-home`.
+
+```bash
+context-bridge accounts                  # list, using cached quota
+context-bridge accounts --refresh        # re-read quota from the usage endpoint
+context-bridge account add "Primary" --import
+context-bridge account add "Subscription 2"
+context-bridge account use <id>
+context-bridge account remove <id> [--purge]
+```
+
+`account add --import` adopts the login already at `~/.codex` — it **copies**, so the original stays
+signed in. Without `--import` it prints the `codex login` command to run with the right
+`CODEX_HOME` already set.
+
+`account use` makes an account the machine default by writing the credential the official Codex CLI
+and VS Code extension read. It backs up what it replaces first. To use an account *without* changing
+the default, set the variable yourself for that one session:
+
+```bash
+CODEX_HOME="$HOME/.context-bridge/accounts/<id>/codex-home" codex
+```
+
+`account remove` forgets the account but leaves its credential on disk so it can be added back;
+`--purge` also deletes the directory, which cannot be undone.
+
+Quota is cached for five minutes per account. A failed refresh keeps the last good reading rather
+than blanking the display.
