@@ -83,6 +83,18 @@ Codex:
 ~/.codex/archived_sessions/rollout-*.jsonl
 ```
 
+Codex names its threads but keeps the name out of the transcript, in an append-only index read
+alongside the rollout files and joined on the thread id:
+
+```text
+~/.codex/session_index.jsonl   {"id", "thread_name", "updated_at"}
+```
+
+Codex mirrors these names into a `threads` table in `~/.codex/state_5.sqlite`, which is deliberately
+not read. Measured against a real install of 64 threads, the table named nothing the index had not
+already named and its `name` column was empty throughout, so reading it would buy a SQLite
+dependency, locked-database handling and exposure to the drift between the two stores for nothing.
+
 Adapters should:
 
 - parse JSONL line by line

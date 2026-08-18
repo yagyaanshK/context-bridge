@@ -9,6 +9,7 @@ import {
   readJsonlObjects,
   readLastJsonlObjects
 } from './common.js';
+import { readCodexThreadNames } from './codex-index.js';
 import { describeRequests, readLatestRequest } from './preview.js';
 
 export const CODEX_PROVIDER = 'openai';
@@ -36,6 +37,9 @@ export async function discoverCodexSessions(options = {}) {
     ...(await listJsonlFiles(sessionsDir)),
     ...(options.includeArchived ? await listJsonlFiles(archivedDir) : [])
   ].sort((a, b) => b.mtimeMs - a.mtimeMs);
+  // Read once for the whole scan: it is one small file keyed by thread id, and
+  // every session below asks it the same question.
+  const names = await readCodexThreadNames(options);
   const sessions = [];
 
   for (const file of files.slice(0, options.limit || 300)) {
@@ -49,15 +53,23 @@ export async function discoverCodexSessions(options = {}) {
     // enormous line yields nothing parseable. The head already holds several
     // messages, so fall back to the latest of those before giving up.
     const latest = matchesProject ? (await latestCodexRequest(file.path)) || meta.last : undefined;
+    const sessionId = meta.sessionId || sessionIdFromCodexPath(file.path);
+    // Codex's own name for the thread when it has one - the same text the app
+    // sidebar shows. Sessions it never named, such as forks and subagent runs,
+    // fall back to being described by their requests.
+    const name = names.get(sessionId);
+    const title = name || meta.first;
 
     sessions.push({
       provider: CODEX_PROVIDER,
       surface: meta.source || 'cli',
       path: file.path,
-      sessionId: meta.sessionId || sessionIdFromCodexPath(file.path),
+      sessionId,
       cwd: meta.cwd,
-      title: meta.first,
-      latest: latest && latest !== meta.preview ? latest : undefined,
+      title,
+      named: Boolean(name),
+      opening: name && meta.first !== name ? meta.first : undefined,
+      latest: latest && latest !== meta.preview && latest !== title ? latest : undefined,
       forkedFrom: meta.forkedFrom,
       modifiedAt: file.modifiedAt,
       mtimeMs: file.mtimeMs,

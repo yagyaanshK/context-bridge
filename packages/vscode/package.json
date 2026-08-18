@@ -2,7 +2,7 @@
   "name": "context-bridge-vscode",
   "displayName": "Context Bridge",
   "description": "Continue developer agent sessions across Claude, Codex, and other tools from VS Code.",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "publisher": "yagyaanshK",
   "license": "MIT",
   "type": "commonjs",

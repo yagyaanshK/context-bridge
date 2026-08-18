@@ -38,6 +38,7 @@ export async function discoverClaudeSessions(options = {}) {
       // Claude names most sessions itself, so say whether this is that name or
       // a stand-in derived from the opening request.
       named: Boolean(meta.title),
+      opening: meta.title && meta.first !== meta.title ? meta.first : undefined,
       latest: latest && latest !== title ? latest : undefined,
       modifiedAt: file.modifiedAt,
       mtimeMs: file.mtimeMs,

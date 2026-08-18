@@ -93,13 +93,17 @@ with **Open** and **Copy prompt**. The command palette entries are unchanged.
 When more than one agent session was started in the same folder, Context Bridge asks which one to
 hand off rather than taking the most recently touched. Sessions in one folder are not
 interchangeable — a long-running chat, a quick one-off and an abandoned experiment all look the same
-to a timestamp — and the last one you happened to focus is often not the one worth continuing. The picker
-names each session as well as the transcript allows. Claude Code writes a title on most sessions and
-that is used directly. Codex writes none, and its opening request is a poor stand-in: sessions forked
-from a common parent share that message word for word, so a folder of forks would render as identical
-rows. The most recent substantive request leads instead, with the opening shown beneath it, plus age,
-surface, size and whether the session was forked. Trailing replies like "yes" or "continue" are
-skipped when choosing that line, and subagent transcripts are labelled as such.
+to a timestamp — and the last one you happened to focus is often not the one worth continuing. The picker calls each
+session by the name the agent itself gave it. Claude Code writes that name into the transcript; Codex
+keeps its thread name — the one in the app sidebar, and whatever `/rename` was given — outside the
+transcript in `~/.codex/session_index.jsonl`, which Context Bridge reads and joins on the thread id.
+
+What is left unnamed is mostly machinery: forks and subagent runs, which the agent never names and
+which the app does not list. For those the opening request is a poor stand-in, because sessions
+forked from a common parent share it word for word and would render as identical rows, so the most
+recent substantive request leads instead — that is where they diverge. Trailing replies like "yes" or
+"continue" are skipped when choosing it. Every row also carries age, surface, size and whether the
+session was forked, and subagent transcripts are labelled as such.
 
 Set `contextBridge.alwaysUseLatestSession` to skip the question and always take the newest.
 

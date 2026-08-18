@@ -36,6 +36,9 @@ const INJECTED_MESSAGE = [
   /^Caveat: The messages below/i,
   // The Codex editor extension probes for tools on connect.
   /^Check whether the tool [\w.]+ is available/i,
+  // A subagent is handed its parent's transcript as its opening message. It is
+  // the same paragraph in every such session, so it names none of them.
+  /^The following is the Codex agent history/i,
   /^#\s*Context from my IDE setup:\s*$/i
 ];
 

@@ -517,13 +517,13 @@ async function resolveSourceSession(provider, root) {
 // One rendering of a session for every picker, so the same facts identify a
 // session wherever it is chosen.
 //
-// What names a session differs by agent. Claude Code writes an `aiTitle` on
-// most sessions, which is a real chat name and is used as-is. Codex writes no
-// name at all, and its opening request is a poor stand-in: sessions forked
-// from a common parent share that message exactly, so a folder full of forks
-// renders as a wall of identical rows. The most recent substantive request is
-// what actually tells them apart, so it leads when there is no real name, and
-// the opening request moves to the detail line as context.
+// Both agents name most of the sessions you started yourself, and that name
+// leads when it exists: Claude Code writes an `aiTitle` into the transcript,
+// Codex keeps its thread name in a separate index. What is left unnamed is
+// mostly machinery - forks, subagent runs - and there the opening request is a
+// poor stand-in, because sessions forked from a common parent share it word for
+// word and render as a wall of identical rows. For those the most recent
+// substantive request leads instead, since that is where they diverge.
 function pickableSessions(sessions) {
   return sessions.map((session) => {
     const opening = session.title;
@@ -532,6 +532,7 @@ function pickableSessions(sessions) {
 
     const context = [];
     if (session.named && latest) context.push(`latest: ${latest}`);
+    else if (session.named && session.opening) context.push(`started: ${session.opening}`);
     else if (latest && opening && label !== opening) context.push(`started: ${opening}`);
     if (!session.matchesProject) context.push(formatSessionFolder(session.cwd));
 
