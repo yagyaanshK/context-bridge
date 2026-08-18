@@ -43,7 +43,7 @@ node packages/cli/bin/context-bridge.js --help
 npm run package:vscode
 ```
 
-Then in your editor run **“Extensions: Install from VSIX…”** and pick `dist/context-bridge-<version>.vsix` (currently `context-bridge-0.7.3.vsix`). This works in VS Code and compatible forks (Cursor, Windsurf, Google Antigravity).
+Then in your editor run **“Extensions: Install from VSIX…”** and pick `dist/context-bridge-<version>.vsix` (currently `context-bridge-0.7.4.vsix`). This works in VS Code and compatible forks (Cursor, Windsurf, Google Antigravity).
 
 ---
 
@@ -64,9 +64,15 @@ The handoff markdown lands in `.context-bridge/exports/`. Paste it (or point the
 When more than one agent session was started in the same folder, Context Bridge asks which one to
 hand off rather than taking the most recently touched. Sessions in one folder are not
 interchangeable — a long-running chat, a quick one-off and an abandoned experiment all look the same
-to a timestamp — and the last one you happened to focus is often not the one worth continuing. The
-picker shows each session's opening message, age, surface and size. Set
-`contextBridge.alwaysUseLatestSession` to skip the question and always take the newest.
+to a timestamp — and the last one you happened to focus is often not the one worth continuing. The picker
+names each session as well as the transcript allows. Claude Code writes a title on most sessions and
+that is used directly. Codex writes none, and its opening request is a poor stand-in: sessions forked
+from a common parent share that message word for word, so a folder of forks would render as identical
+rows. The most recent substantive request leads instead, with the opening shown beneath it, plus age,
+surface, size and whether the session was forked. Trailing replies like "yes" or "continue" are
+skipped when choosing that line, and subagent transcripts are labelled as such.
+
+Set `contextBridge.alwaysUseLatestSession` to skip the question and always take the newest.
 
 ## Quick start (VS Code)
 

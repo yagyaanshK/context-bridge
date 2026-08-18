@@ -1,7 +1,15 @@
 import path from 'node:path';
 import { createTurn } from '../schema.js';
 import { writeSession } from '../store.js';
-import { homePath, listJsonlFiles, pathsSameOrNested, readFirstJsonlObjects, readJsonlObjects } from './common.js';
+import {
+  homePath,
+  listJsonlFiles,
+  pathsSameOrNested,
+  readFirstJsonlObjects,
+  readJsonlObjects,
+  readLastJsonlObjects
+} from './common.js';
+import { describeRequests, readLatestRequest } from './preview.js';
 
 export const CLAUDE_PROVIDER = 'anthropic';
 
@@ -15,13 +23,22 @@ export async function discoverClaudeSessions(options = {}) {
     const meta = await inspectClaudeFile(file.path);
     const matchesProject = meta.cwd ? pathsSameOrNested(meta.cwd, root) || pathsSameOrNested(root, meta.cwd) : false;
     if (!options.all && !matchesProject) continue;
+
+    // Only sessions that could be offered as a choice get the extra tail read.
+    const latest = matchesProject ? (await latestClaudeRequest(file.path)) || meta.last : undefined;
+    const title = meta.title || meta.first;
+
     sessions.push({
       provider: CLAUDE_PROVIDER,
       surface: 'cli',
       path: file.path,
       sessionId: meta.sessionId || path.basename(file.path, '.jsonl'),
       cwd: meta.cwd,
-      title: meta.title,
+      title,
+      // Claude names most sessions itself, so say whether this is that name or
+      // a stand-in derived from the opening request.
+      named: Boolean(meta.title),
+      latest: latest && latest !== title ? latest : undefined,
       modifiedAt: file.modifiedAt,
       mtimeMs: file.mtimeMs,
       size: file.size,
@@ -107,17 +124,38 @@ async function inspectClaudeFile(filePath) {
   let cwd;
   let sessionId;
   let title;
+  const messages = [];
 
   for (const event of objects) {
     cwd ||= event.cwd;
     sessionId ||= event.sessionId;
+    // Claude Code names most sessions itself. That is a real chat name and
+    // beats anything derived from the transcript.
     title ||= event.aiTitle;
-    if (cwd && sessionId && title) break;
+    if (event.type === 'user') messages.push(claudeMessageText(event));
   }
 
   return {
     cwd,
     sessionId: sessionId || path.basename(filePath, '.jsonl'),
-    title
+    title,
+    // Only used when the session has no name of its own.
+    ...describeRequests(messages)
   };
+}
+
+function latestClaudeRequest(filePath) {
+  return readLatestRequest(filePath, (objects) =>
+    objects.filter((event) => event.type === 'user').map(claudeMessageText)
+  );
+}
+
+function claudeMessageText(event) {
+  const content = event?.message?.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((part) => part && part.type === 'text' && typeof part.text === 'string')
+    .map((part) => part.text)
+    .join(' ');
 }

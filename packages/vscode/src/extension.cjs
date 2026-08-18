@@ -515,32 +515,41 @@ async function resolveSourceSession(provider, root) {
 }
 
 // One rendering of a session for every picker, so the same facts identify a
-// session wherever it is chosen. The preview is what actually distinguishes
-// two sessions in the same folder, so it leads.
+// session wherever it is chosen.
+//
+// What names a session differs by agent. Claude Code writes an `aiTitle` on
+// most sessions, which is a real chat name and is used as-is. Codex writes no
+// name at all, and its opening request is a poor stand-in: sessions forked
+// from a common parent share that message exactly, so a folder full of forks
+// renders as a wall of identical rows. The most recent substantive request is
+// what actually tells them apart, so it leads when there is no real name, and
+// the opening request moves to the detail line as context.
 function pickableSessions(sessions) {
-  return sessions.map((session) => ({
-    label: oneLine(session.title) || session.sessionId,
-    description: [
-      relativeTime(session.modifiedAt),
-      session.surface,
-      formatSize(session.size),
-      session.matchesProject ? undefined : 'other folder'
-    ]
-      .filter(Boolean)
-      .join(' · '),
-    detail: session.matchesProject ? session.path : `${formatSessionFolder(session.cwd)}\n${session.path}`,
-    session
-  }));
-}
+  return sessions.map((session) => {
+    const opening = session.title;
+    const latest = session.latest;
+    const label = session.named && opening ? opening : latest || opening || session.sessionId;
 
-// Session previews are the first user message, which is routinely a pasted
-// multi-line block. A QuickPick label renders one line, so flatten it here
-// rather than letting it silently truncate at the first newline.
-function oneLine(text) {
-  const flat = String(text || '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return flat.length > 90 ? `${flat.slice(0, 89)}…` : flat;
+    const context = [];
+    if (session.named && latest) context.push(`latest: ${latest}`);
+    else if (latest && opening && label !== opening) context.push(`started: ${opening}`);
+    if (!session.matchesProject) context.push(formatSessionFolder(session.cwd));
+
+    return {
+      label,
+      description: [
+        relativeTime(session.modifiedAt),
+        session.surface,
+        session.forkedFrom ? 'forked' : undefined,
+        formatSize(session.size),
+        session.matchesProject ? undefined : 'other folder'
+      ]
+        .filter(Boolean)
+        .join(' · '),
+      detail: context.join('  ·  ') || session.path,
+      session
+    };
+  });
 }
 
 function relativeTime(iso) {

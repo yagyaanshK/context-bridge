@@ -1,7 +1,15 @@
 import path from 'node:path';
 import { createTurn } from '../schema.js';
 import { writeSession } from '../store.js';
-import { homePath, listJsonlFiles, pathsSameOrNested, readFirstJsonlObjects, readJsonlObjects } from './common.js';
+import {
+  homePath,
+  listJsonlFiles,
+  pathsSameOrNested,
+  readFirstJsonlObjects,
+  readJsonlObjects,
+  readLastJsonlObjects
+} from './common.js';
+import { describeRequests, readLatestRequest } from './preview.js';
 
 export const CODEX_PROVIDER = 'openai';
 
@@ -34,13 +42,23 @@ export async function discoverCodexSessions(options = {}) {
     const meta = await inspectCodexFile(file.path);
     const matchesProject = meta.cwd ? pathsSameOrNested(meta.cwd, root) || pathsSameOrNested(root, meta.cwd) : false;
     if (!options.all && !matchesProject) continue;
+    // Only sessions that could actually be offered as a choice get the extra
+    // tail read. Scanning every transcript on the machine for this would cost
+    // hundreds of reads to decorate rows nobody is choosing between.
+    // The tail is authoritative, but a transcript whose last megabytes are one
+    // enormous line yields nothing parseable. The head already holds several
+    // messages, so fall back to the latest of those before giving up.
+    const latest = matchesProject ? (await latestCodexRequest(file.path)) || meta.last : undefined;
+
     sessions.push({
       provider: CODEX_PROVIDER,
       surface: meta.source || 'cli',
       path: file.path,
       sessionId: meta.sessionId || sessionIdFromCodexPath(file.path),
       cwd: meta.cwd,
-      title: meta.preview,
+      title: meta.first,
+      latest: latest && latest !== meta.preview ? latest : undefined,
+      forkedFrom: meta.forkedFrom,
       modifiedAt: file.modifiedAt,
       mtimeMs: file.mtimeMs,
       size: file.size,
@@ -310,31 +328,68 @@ function contentToText(value) {
   return String(value);
 }
 
+export function codexSurface(source, originator) {
+  if (typeof source === 'string' && source) return source;
+
+  if (source && typeof source === 'object') {
+    if (source.subagent) {
+      const name =
+        typeof source.subagent === 'string'
+          ? source.subagent
+          : source.subagent.other || source.subagent.name || Object.keys(source.subagent)[0];
+      return name ? `subagent · ${name}` : 'subagent';
+    }
+    const key = Object.keys(source)[0];
+    if (key) return key;
+  }
+
+  // The originator names the client that started the session, which is the next
+  // most useful thing when the source is missing or unrecognised.
+  if (typeof originator === 'string' && originator) return originator.replace(/^codex_/, '');
+  return undefined;
+}
+
 async function inspectCodexFile(filePath) {
-  const objects = await readFirstJsonlObjects(filePath, 40);
+  // Wide enough to get past the injected preamble - skills, instructions, world
+  // state - to the first message the user actually typed.
+  const objects = await readFirstJsonlObjects(filePath, 80);
   let sessionId;
   let cwd;
   let source;
-  let preview;
+  let forkedFrom;
+  const messages = [];
 
   for (const event of objects) {
     if (event.type === 'session_meta') {
       sessionId ||= event.payload?.id;
       cwd ||= event.payload?.cwd;
-      source ||= event.payload?.source;
+      source ||= codexSurface(event.payload?.source, event.payload?.originator);
+      forkedFrom ||= event.payload?.forked_from_id;
     }
+    // The event stream records the message as sent; the response stream records
+    // it again alongside the model's view of it. One is enough.
     if (event.type === 'event_msg' && event.payload?.type === 'user_message') {
-      preview ||= contentToText(event.payload.message).slice(0, 120);
+      messages.push(contentToText(event.payload.message));
     }
-    if (sessionId && cwd && preview) break;
   }
 
   return {
     sessionId,
     cwd,
     source,
-    preview
+    forkedFrom,
+    ...describeRequests(messages)
   };
+}
+
+// The most recent request in a session, read from the tail so a 400 MB
+// transcript costs the same as a small one.
+function latestCodexRequest(filePath) {
+  return readLatestRequest(filePath, (objects) =>
+    objects
+      .filter((event) => event.type === 'event_msg' && event.payload?.type === 'user_message')
+      .map((event) => contentToText(event.payload.message))
+  );
 }
 
 function sessionIdFromCodexPath(filePath) {

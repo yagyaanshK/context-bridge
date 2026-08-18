@@ -93,3 +93,46 @@ async function walk(root, files) {
     }
   }
 }
+
+// The tail of a JSONL file, without reading the whole thing.
+//
+// Session transcripts run to hundreds of megabytes, so "what was asked most
+// recently" cannot be answered by streaming from the start. Read a bounded
+// window off the end instead and parse the complete lines in it. A window that
+// lands mid-line simply yields fewer objects, which is fine: this only ever
+// enriches a label.
+export async function readLastJsonlObjects(filePath, limit = 40, maxBytes = 256 * 1024) {
+  let handle;
+  try {
+    handle = await fs.open(filePath, 'r');
+    const { size } = await handle.stat();
+    const start = Math.max(0, size - maxBytes);
+    const length = size - start;
+    if (length <= 0) return [];
+
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, start);
+
+    const lines = buffer.toString('utf8').split(/\r?\n/);
+    // When the window started mid-file the first line is a fragment - and may
+    // begin mid-character, which is the other reason to drop it.
+    if (start > 0) lines.shift();
+
+    const objects = [];
+    for (let index = lines.length - 1; index >= 0 && objects.length < limit; index--) {
+      const line = lines[index];
+      if (!line || !line.trim()) continue;
+      try {
+        objects.push(JSON.parse(line));
+      } catch {
+        // A truncated or oversized line is skipped rather than reported: this
+        // path is decorative, and a parse error here is expected at the edges.
+      }
+    }
+    return objects.reverse();
+  } catch {
+    return [];
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}

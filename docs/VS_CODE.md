@@ -93,9 +93,15 @@ with **Open** and **Copy prompt**. The command palette entries are unchanged.
 When more than one agent session was started in the same folder, Context Bridge asks which one to
 hand off rather than taking the most recently touched. Sessions in one folder are not
 interchangeable — a long-running chat, a quick one-off and an abandoned experiment all look the same
-to a timestamp — and the last one you happened to focus is often not the one worth continuing. The
-picker shows each session's opening message, age, surface and size. Set
-`contextBridge.alwaysUseLatestSession` to skip the question and always take the newest.
+to a timestamp — and the last one you happened to focus is often not the one worth continuing. The picker
+names each session as well as the transcript allows. Claude Code writes a title on most sessions and
+that is used directly. Codex writes none, and its opening request is a poor stand-in: sessions forked
+from a common parent share that message word for word, so a folder of forks would render as identical
+rows. The most recent substantive request leads instead, with the opening shown beneath it, plus age,
+surface, size and whether the session was forked. Trailing replies like "yes" or "continue" are
+skipped when choosing that line, and subagent transcripts are labelled as such.
+
+Set `contextBridge.alwaysUseLatestSession` to skip the question and always take the newest.
 
 ## How Handoff Works
 
@@ -166,7 +172,7 @@ npm run package:vscode
 This writes:
 
 ```text
-dist/context-bridge-0.7.3.vsix
+dist/context-bridge-0.7.4.vsix
 ```
 
 Install it from the Extensions view:
@@ -174,7 +180,7 @@ Install it from the Extensions view:
 1. Open Extensions.
 2. Click the `...` menu.
 3. Choose `Install from VSIX...`.
-4. Select `dist/context-bridge-0.7.3.vsix`.
+4. Select `dist/context-bridge-0.7.4.vsix`.
 
 This is the best path before marketplace publication because it works like a normal extension install.
 
