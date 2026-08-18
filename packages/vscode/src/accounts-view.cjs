@@ -22,6 +22,7 @@ class AccountsStore {
     this.core = core;
     this.usage = new Map();
     this.activeIds = {};
+    this.handoff = undefined;
     this.emitter = new vscode.EventEmitter();
     this.onDidChange = this.emitter.event;
   }
@@ -67,6 +68,13 @@ class AccountsStore {
     this.emitter.fire(await this.viewModel());
   }
 
+  // The last handoff, so the panel can offer to reopen or re-copy it. Owned by
+  // the extension (it lives in globalState), pushed in here for rendering.
+  setHandoff(latest) {
+    this.handoff = latest;
+    this.refresh().catch(() => {});
+  }
+
   // Everything the panel and the status bar draw, resolved in one place so the
   // two can never disagree about which subscription is in use.
   async viewModel() {
@@ -92,7 +100,7 @@ class AccountsStore {
       sections.push({ ...provider, rows, pooled: pool(rows) });
     }
 
-    return { sections };
+    return { sections, handoff: this.handoff };
   }
 
   row(account, provider, signedIn, resumesAt) {
@@ -186,7 +194,10 @@ class AccountsWebview {
         rename: 'contextBridge.renameAccount',
         add: 'contextBridge.addAccount',
         import: 'contextBridge.importAccount',
-        refresh: 'contextBridge.refreshAccountQuota'
+        refresh: 'contextBridge.refreshAccountQuota',
+        handoff: 'contextBridge.createHandoff',
+        openHandoff: 'contextBridge.openLatestHandoff',
+        copyHandoff: 'contextBridge.copyLatestHandoffPrompt'
       };
       const command = commands[message?.type];
       if (!command) return;
@@ -197,7 +208,9 @@ class AccountsWebview {
         provider: message.provider,
         confirmed: true,
         purge: Boolean(message.purge),
-        label: message.label
+        label: message.label,
+        target: message.target,
+        mode: message.mode
       });
     });
 
@@ -282,6 +295,7 @@ function html(webview) {
   }
   .agent[data-provider="codex"] { --edge: var(--edge-codex); }
   .agent[data-provider="claude"] { --edge: var(--edge-claude); }
+  .agent[data-provider="handoff"] { --edge: var(--vscode-charts-blue, #3794ff); }
   /* Sitting on the border so the rule reads as a titled frame, not a heading
      that happens to be above a box. */
   .agent-name {
@@ -412,9 +426,44 @@ function html(webview) {
     color: var(--vscode-foreground);
   }
   .empty { padding: 4px 2px 8px; color: var(--dim); line-height: 1.5; font-size: 0.9em; }
-  .windows { margin: 7px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
-  .windows li { display: flex; justify-content: space-between; gap: 8px; color: var(--dim); font-size: 0.85em; }
-  .windows b { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--vscode-foreground); }
+  /* One meter per limit window. A single bar could only ever show the tightest
+     one, which hides the fact that a healthy 5h window sits behind an exhausted
+     weekly one - or the reverse. */
+  .meters { display: flex; flex-direction: column; gap: 7px; margin-top: 9px; }
+  .meter-top {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+    margin-bottom: 3px;
+  }
+  .meter-label { color: var(--dim); font-size: 0.82em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meter-label b { color: var(--vscode-foreground); font-weight: 600; }
+  .meter .bar { margin-top: 0; }
+
+  /* Handoff */
+  .handoff { display: flex; flex-direction: column; gap: 10px; }
+  .handoff-lede { color: var(--dim); font-size: 0.88em; line-height: 1.45; }
+  .choice { display: flex; flex-direction: column; gap: 4px; }
+  .choice-label { color: var(--dim); font-size: 0.78em; letter-spacing: 0.04em; text-transform: uppercase; }
+  .segmented { display: flex; gap: 0; }
+  .segmented button {
+    flex: 1; border-radius: 0; margin: 0;
+    border: 1px solid var(--hairline); border-right-width: 0;
+    background: transparent; color: var(--dim);
+  }
+  .segmented button:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+  .segmented button:last-child { border-radius: 0 var(--radius) var(--radius) 0; border-right-width: 1px; }
+  .segmented button[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--edge) 18%, transparent);
+    border-color: color-mix(in srgb, var(--edge) 55%, transparent);
+    color: var(--vscode-foreground); font-weight: 600;
+  }
+  .segmented button:hover { color: var(--vscode-foreground); }
+  .go { width: 100%; padding: 7px; }
+  .last {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    padding-top: 9px; border-top: 1px solid var(--hairline);
+    color: var(--dim); font-size: 0.85em;
+  }
+  .last span { flex: 1; min-width: 0; }
   @media (prefers-reduced-motion: reduce) { .bar > i { transition: none; } }
 </style>
 </head>
@@ -476,9 +525,37 @@ function fillColor(name) {
     : 'var(--vscode-charts-green)';
 }
 
+// Bar width: a non-zero remainder must still paint something, or 0.4% and 0%
+// look identical.
+function barWidth(value) {
+  return typeof value === 'number' ? Math.max(value, value > 0 ? 2 : 0) : 0;
+}
+
+function levelOf(remaining) {
+  if (typeof remaining !== 'number') return 'ok';
+  if (remaining <= 5) return 'crit';
+  if (remaining <= 20) return 'warn';
+  return 'ok';
+}
+
+// One labelled meter for one limit window. Each is coloured by its own state,
+// not the account's: a weekly allowance at 60% should not be painted red
+// because the five-hour window beside it is spent.
+function renderMeter(window) {
+  const state = levelOf(window.remaining);
+  const reset = window.resetsAt ? until(window.resetsAt) : '';
+  return '<div class="meter">' +
+    '<div class="meter-top">' +
+      '<span class="meter-label"><b>' + esc(window.label) + '</b>' + (reset ? ' · ' + esc(reset) : '') + '</span>' +
+      '<span class="pct ' + (state === 'ok' ? '' : state) + '">' + pct(window.remaining) + '</span>' +
+    '</div>' +
+    '<div class="bar"><i style="width:' + barWidth(window.remaining) + '%;--fill:' + fillColor(state) + '"></i></div>' +
+  '</div>';
+}
+
 function renderRow(row) {
   const state = level(row);
-  const width = typeof row.remaining === 'number' ? Math.max(row.remaining, row.remaining > 0 ? 2 : 0) : 0;
+  const width = barWidth(row.remaining);
   const id = esc(row.id);
   const provider = esc(row.provider);
 
@@ -490,18 +567,19 @@ function renderRow(row) {
   else if (row.limitReached) status = 'Limit reached' + (row.resumesAt ? ' · ' + until(row.resumesAt) : '');
   else if (!row.loaded) status = 'Quota not read';
   else if (typeof row.remaining !== 'number') status = 'Quota unavailable';
-  else status = until(row.resetsAt);
-  if (!status) status = row.loaded ? 'No reset time reported' : '';
+  // The meters already carry each window's reset, so repeating the soonest here
+  // would just be the same fact twice.
+  else status = (row.windows || []).length > 0 ? '' : until(row.resetsAt);
 
   const credits = row.credits && row.credits.hasCredits
     ? (row.credits.unlimited ? ' · unlimited credits' : ' · ' + row.credits.balance + ' credits')
     : '';
 
-  const windows = (row.windows || []).length > 1
-    ? '<ul class="windows">' + row.windows.map((w) =>
-        '<li><span>' + esc(w.label) + (w.resetsAt ? ' · ' + esc(until(w.resetsAt)) : '') +
-        '</span><b>' + pct(w.remaining) + '</b></li>').join('') + '</ul>'
-    : '';
+  // Every window gets its own meter. With nothing to meter - not signed in, or
+  // never polled - fall back to one flat bar so the card keeps its shape.
+  const meters = (row.windows || []).length > 0
+    ? '<div class="meters">' + row.windows.map(renderMeter).join('') + '</div>'
+    : '<div class="bar"><i style="width:' + width + '%;--fill:' + fillColor(state) + '"></i></div>';
 
   const act = (action, text, cls) =>
     '<button class="' + (cls || '') + '" data-act="' + action + '" data-id="' + id +
@@ -526,11 +604,10 @@ function renderRow(row) {
         (row.signedIn && typeof row.remaining === 'number' ? pct(row.remaining) : '—') +
       '</span>' +
     '</div>' +
-    '<div class="bar"><i style="width:' + width + '%;--fill:' + fillColor(state) + '"></i></div>' +
+    meters +
     '<div class="meta"><span>' + status + esc(credits) + '</span>' +
       (row.active ? '<span class="badge' + (state === 'crit' ? ' crit' : '') + '">In use</span>' : '') +
     '</div>' +
-    windows +
     '<div class="actions">' +
       (row.active || !row.signedIn ? '' : act('switch', 'Use this', 'primary')) +
       (row.signedIn ? '' : act('signin', 'Sign in', 'primary')) +
@@ -575,10 +652,56 @@ function renderSection(section) {
   '</section>';
 }
 
+// Handoff, as a card rather than a command you have to remember. The palette
+// entries still work and are unchanged - this is a second door, not a
+// replacement.
+let handoffTarget = 'claude';
+let handoffMode = 'new';
+
+function segmented(name, options, current) {
+  return '<div class="segmented">' + options.map((option) =>
+    '<button data-choose="' + name + '" data-value="' + option.value + '" aria-pressed="' +
+    (option.value === current) + '">' + esc(option.label) + '</button>').join('') + '</div>';
+}
+
+function renderHandoff(latest) {
+  // You hand off *to* the other agent, so the label names where the context is
+  // going, and the source is stated rather than left to be inferred.
+  const from = handoffTarget === 'claude' ? 'Codex' : 'Claude Code';
+  const to = handoffTarget === 'claude' ? 'Claude Code' : 'Codex';
+
+  const last = latest
+    ? '<div class="last"><span>Last: to ' + esc(latest.target === 'codex' ? 'Codex' : 'Claude Code') +
+        ' · ' + esc(ago(latest.createdAt)) +
+        (latest.words ? ' · ' + latest.words + ' words' : '') + '</span>' +
+        '<button data-act="openHandoff">Open</button>' +
+        '<button data-act="copyHandoff">Copy prompt</button></div>'
+    : '';
+
+  return '<section class="agent" data-provider="handoff">' +
+    '<span class="agent-name">Handoff</span>' +
+    '<div class="handoff">' +
+      '<div class="handoff-lede">Import the latest <b>' + esc(from) + '</b> session, snapshot the workspace, ' +
+        'and copy a prompt to paste into <b>' + esc(to) + '</b>.</div>' +
+      '<div class="choice"><span class="choice-label">Hand off to</span>' +
+        segmented('target', [{ value: 'claude', label: 'Claude Code' }, { value: 'codex', label: 'Codex' }], handoffTarget) +
+      '</div>' +
+      '<div class="choice"><span class="choice-label">Into</span>' +
+        segmented('mode', [{ value: 'new', label: 'A new session' }, { value: 'existing', label: 'The open one' }], handoffMode) +
+      '</div>' +
+      '<button class="primary go" data-act="handoff">Create handoff</button>' +
+      last +
+    '</div>' +
+  '</section>';
+}
+
 function render(model) {
   const root = document.getElementById('root');
   if (!model || !model.sections) return;
-  root.innerHTML = '<div class="agents">' + model.sections.map(renderSection).join('') + '</div>';
+  root.innerHTML = '<div class="agents">' +
+    model.sections.map(renderSection).join('') +
+    renderHandoff(model.handoff) +
+    '</div>';
 }
 
 // Confirmation for a destructive action happens here, in the card, so acting on
@@ -634,6 +757,16 @@ document.addEventListener('click', (event) => {
     if (panel) panel.hidden = true;
     return;
   }
+  const choose = event.target.closest('[data-choose]');
+  if (choose) {
+    if (choose.dataset.choose === 'target') handoffTarget = choose.dataset.value;
+    else handoffMode = choose.dataset.value;
+    // Remember across a panel reload, which happens whenever the view is hidden.
+    vscode.setState({ handoffTarget, handoffMode });
+    if (lastModel) render(lastModel);
+    return;
+  }
+
   const button = event.target.closest('[data-act]');
   if (!button) return;
   const act = button.dataset.act;
@@ -641,13 +774,25 @@ document.addEventListener('click', (event) => {
     type: act,
     id: button.dataset.id,
     provider: button.dataset.provider,
-    purge: act === 'purge'
+    purge: act === 'purge',
+    target: handoffTarget,
+    mode: handoffMode
   });
 });
 
+let lastModel;
 window.addEventListener('message', (event) => {
-  if (event.data?.type === 'state') render(event.data.model);
+  if (event.data?.type === 'state') {
+    lastModel = event.data.model;
+    render(lastModel);
+  }
 });
+
+const saved = vscode.getState();
+if (saved) {
+  handoffTarget = saved.handoffTarget || handoffTarget;
+  handoffMode = saved.handoffMode || handoffMode;
+}
 </script>
 </body>
 </html>`;

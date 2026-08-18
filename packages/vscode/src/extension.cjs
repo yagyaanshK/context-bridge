@@ -42,6 +42,9 @@ async function activateExtension(context) {
     command('contextBridge.discoverCodex', () => discover('codex')),
     command('contextBridge.importLatestClaude', () => importLatest('claude')),
     command('contextBridge.importLatestCodex', () => importLatest('codex')),
+    command('contextBridge.createHandoff', (item) =>
+      handoff(item?.target === 'codex' ? 'codex' : 'claude', item?.mode === 'existing' ? 'existing' : 'new')
+    ),
     command('contextBridge.handoffToClaudeExisting', () => handoff('claude', 'existing')),
     command('contextBridge.handoffToClaudeNew', () => handoff('claude', 'new')),
     command('contextBridge.handoffToCodexExisting', () => handoff('codex', 'existing')),
@@ -53,6 +56,7 @@ async function activateExtension(context) {
   // Populate the panel and status bar from cache on activation. Offline, so
   // opening a window never costs a call to the usage endpoint.
   accountsProvider.reloadUsage({ offline: true }).catch(() => {});
+  publishHandoffState().catch(() => {});
 }
 
 function deactivate() {}
@@ -465,7 +469,25 @@ async function resolveSourceSession(provider, root) {
   if (sessions.length === 0) return { status: 'none' };
 
   const matched = sessions.filter((session) => session.matchesProject);
-  if (matched.length > 0) return { status: 'matched', session: matched[0] };
+
+  if (matched.length === 1) return { status: 'matched', session: matched[0] };
+
+  // Several sessions in one folder is normal - a long-running chat, a quick
+  // one-off, an experiment - and they are not interchangeable. Taking the most
+  // recently touched one silently hands off whichever chat happened to be
+  // focused last, which is often not the one worth continuing.
+  if (matched.length > 1) {
+    if (vscode.workspace.getConfiguration('contextBridge').get('alwaysUseLatestSession')) {
+      return { status: 'matched', session: matched[0] };
+    }
+    const picked = await vscode.window.showQuickPick(pickableSessions(matched), {
+      placeHolder: `Which ${provider} session? ${matched.length} were started in this workspace`,
+      matchOnDescription: true,
+      matchOnDetail: true
+    });
+    if (!picked) return { status: 'cancelled' };
+    return { status: 'matched', session: picked.session };
+  }
 
   const recent = sessions[0];
   const choice = await vscode.window.showWarningMessage(
@@ -477,10 +499,66 @@ async function resolveSourceSession(provider, root) {
         `Use the most recent ${provider} session instead? It was started in:\n` +
         `${formatSessionFolder(recent.cwd)}\n\nLast active: ${recent.modifiedAt}`
     },
-    'Use Most Recent'
+    'Use Most Recent',
+    'Choose Another Session'
   );
   if (choice === 'Use Most Recent') return { status: 'fallback', session: recent };
+  if (choice === 'Choose Another Session') {
+    const picked = await vscode.window.showQuickPick(pickableSessions(sessions), {
+      placeHolder: `All ${provider} sessions on this machine`,
+      matchOnDescription: true,
+      matchOnDetail: true
+    });
+    if (picked) return { status: 'fallback', session: picked.session };
+  }
   return { status: 'cancelled' };
+}
+
+// One rendering of a session for every picker, so the same facts identify a
+// session wherever it is chosen. The preview is what actually distinguishes
+// two sessions in the same folder, so it leads.
+function pickableSessions(sessions) {
+  return sessions.map((session) => ({
+    label: oneLine(session.title) || session.sessionId,
+    description: [
+      relativeTime(session.modifiedAt),
+      session.surface,
+      formatSize(session.size),
+      session.matchesProject ? undefined : 'other folder'
+    ]
+      .filter(Boolean)
+      .join(' · '),
+    detail: session.matchesProject ? session.path : `${formatSessionFolder(session.cwd)}\n${session.path}`,
+    session
+  }));
+}
+
+// Session previews are the first user message, which is routinely a pasted
+// multi-line block. A QuickPick label renders one line, so flatten it here
+// rather than letting it silently truncate at the first newline.
+function oneLine(text) {
+  const flat = String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return flat.length > 90 ? `${flat.slice(0, 89)}…` : flat;
+}
+
+function relativeTime(iso) {
+  const at = Date.parse(iso || '');
+  if (!Number.isFinite(at)) return '';
+  const minutes = Math.round((Date.now() - at) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function formatSize(bytes) {
+  if (!Number.isFinite(bytes)) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 async function discover(provider) {
@@ -507,12 +585,7 @@ async function discover(provider) {
   }
 
   const selected = await vscode.window.showQuickPick(
-    pool.map((session) => ({
-      label: session.title || session.sessionId,
-      description: `${session.modifiedAt} - ${session.surface}${session.matchesProject ? '' : ' - other folder'}`,
-      detail: `${formatSessionFolder(session.cwd)}\n${session.path}`,
-      session
-    })),
+    pickableSessions(pool),
     {
       placeHolder:
         matched.length === 0
@@ -620,6 +693,7 @@ async function handoff(target, mode) {
   const prompt = handoffPrompt(target, mode, result.path);
   await vscode.env.clipboard.writeText(prompt);
   await rememberLatest(root, target, result.path, prompt);
+  await publishHandoffState();
 
   if (openDocument) await openDocumentAt(result.path);
   if (mode === 'new') await openTarget(target);
@@ -711,6 +785,22 @@ async function withProgress(title, task) {
   return vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `Context Bridge: ${title}`, cancellable: false },
     task
+  );
+}
+
+// The panel shows the last handoff, so it has to be told when one is made -
+// and on activation, so a fresh window is not blank about work already done.
+async function publishHandoffState() {
+  const latest = await latestState();
+  accountsProvider.setHandoff(
+    latest
+      ? {
+          target: latest.target,
+          createdAt: latest.createdAt,
+          path: latest.handoffPath,
+          words: countWords(latest.prompt)
+        }
+      : undefined
   );
 }
 

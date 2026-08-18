@@ -42,9 +42,11 @@ The panel lists Codex subscriptions and Claude accounts in two labelled sections
 cards, usage bars and pooled total. Nothing is pooled across the two — the quotas are not the same
 currency, and switching one has no effect on the other.
 
-Each card shows the plan, masked email, a bar for the tightest quota window, and when it resets.
-Hovering reveals a pencil to rename; renaming changes the label only, never the directory holding
-the credential, so it cannot invalidate a login.
+Each card shows the plan, masked email, and **one labelled bar per limit window** — a five-hour and
+a weekly bar for Claude, whichever Codex reports for a subscription — each with its own colour and
+its own reset. The percentage beside the name is the tightest window, the one that will stop you
+first. Hovering reveals a pencil to rename; renaming changes the label only, never the directory
+holding the credential, so it cannot invalidate a login.
 
 | Action | Effect |
 |--------|--------|
@@ -79,6 +81,21 @@ official UI start using your choice. For Claude that is two files — the creden
 `oauthAccount` key in `~/.claude.json`, where the displayed email lives. The rest of that file is
 project history and caches and is left byte-identical. Both files are backed up first, and the
 confirmation toast offers **Undo**.
+
+## The Handoff Card
+
+The panel's bottom section runs the same handoff flow as the commands: choose the target agent,
+choose a new or existing session, press **Create handoff**. Afterwards it shows the last handoff
+with **Open** and **Copy prompt**. The command palette entries are unchanged.
+
+### Choosing which session
+
+When more than one agent session was started in the same folder, Context Bridge asks which one to
+hand off rather than taking the most recently touched. Sessions in one folder are not
+interchangeable — a long-running chat, a quick one-off and an abandoned experiment all look the same
+to a timestamp — and the last one you happened to focus is often not the one worth continuing. The
+picker shows each session's opening message, age, surface and size. Set
+`contextBridge.alwaysUseLatestSession` to skip the question and always take the newest.
 
 ## How Handoff Works
 
@@ -149,7 +166,7 @@ npm run package:vscode
 This writes:
 
 ```text
-dist/context-bridge-0.7.2.vsix
+dist/context-bridge-0.7.3.vsix
 ```
 
 Install it from the Extensions view:
@@ -157,7 +174,7 @@ Install it from the Extensions view:
 1. Open Extensions.
 2. Click the `...` menu.
 3. Choose `Install from VSIX...`.
-4. Select `dist/context-bridge-0.7.2.vsix`.
+4. Select `dist/context-bridge-0.7.3.vsix`.
 
 This is the best path before marketplace publication because it works like a normal extension install.
 

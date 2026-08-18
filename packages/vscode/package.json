@@ -2,7 +2,7 @@
   "name": "context-bridge-vscode",
   "displayName": "Context Bridge",
   "description": "Continue developer agent sessions across Claude, Codex, and other tools from VS Code.",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "publisher": "yagyaanshK",
   "license": "MIT",
   "type": "commonjs",
@@ -31,7 +31,8 @@
     "onCommand:contextBridge.addCodexAccount",
     "onCommand:contextBridge.addClaudeAccount",
     "onCommand:contextBridge.importCodexAccount",
-    "onCommand:contextBridge.importClaudeAccount"
+    "onCommand:contextBridge.importClaudeAccount",
+    "onCommand:contextBridge.createHandoff"
   ],
   "main": "./src/extension.cjs",
   "contributes": {
@@ -159,6 +160,10 @@
       {
         "command": "contextBridge.copyLatestHandoffPrompt",
         "title": "Context Bridge: Copy Latest Handoff Prompt"
+      },
+      {
+        "command": "contextBridge.createHandoff",
+        "title": "Context Bridge: Create Handoff"
       }
     ],
     "configuration": {
@@ -223,6 +228,11 @@
           "type": "string",
           "default": "",
           "description": "Optional VS Code command id used to open or focus Codex. If empty, Context Bridge tries to find a command containing 'codex'."
+        },
+        "contextBridge.alwaysUseLatestSession": {
+          "type": "boolean",
+          "default": false,
+          "description": "When several agent sessions were started in this workspace, use the most recently active one without asking. Off by default: sessions in one folder are not interchangeable, and the most recently touched is often not the one worth continuing."
         }
       }
     },
@@ -262,12 +272,16 @@
         },
         {
           "command": "contextBridge.discoverCodex"
+        },
+        {
+          "command": "contextBridge.createHandoff",
+          "when": "false"
         }
       ]
     }
   },
   "dependencies": {
-    "@context-bridge/core": "0.7.2"
+    "@context-bridge/core": "0.7.3"
   },
   "devDependencies": {
     "@types/vscode": "^1.95.0"

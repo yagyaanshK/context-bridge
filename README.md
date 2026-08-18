@@ -43,7 +43,7 @@ node packages/cli/bin/context-bridge.js --help
 npm run package:vscode
 ```
 
-Then in your editor run **“Extensions: Install from VSIX…”** and pick `dist/context-bridge-<version>.vsix` (currently `context-bridge-0.7.2.vsix`). This works in VS Code and compatible forks (Cursor, Windsurf, Google Antigravity).
+Then in your editor run **“Extensions: Install from VSIX…”** and pick `dist/context-bridge-<version>.vsix` (currently `context-bridge-0.7.3.vsix`). This works in VS Code and compatible forks (Cursor, Windsurf, Google Antigravity).
 
 ---
 
@@ -59,7 +59,19 @@ context-bridge export --to codex                     # write a handoff for Codex
 
 The handoff markdown lands in `.context-bridge/exports/`. Paste it (or point the receiving tool at the file) and keep working.
 
+### Choosing which session
+
+When more than one agent session was started in the same folder, Context Bridge asks which one to
+hand off rather than taking the most recently touched. Sessions in one folder are not
+interchangeable — a long-running chat, a quick one-off and an abandoned experiment all look the same
+to a timestamp — and the last one you happened to focus is often not the one worth continuing. The
+picker shows each session's opening message, age, surface and size. Set
+`contextBridge.alwaysUseLatestSession` to skip the question and always take the newest.
+
 ## Quick start (VS Code)
+
+Use the **Handoff** card at the bottom of the Context Bridge panel — pick the agent, pick new or
+existing, press **Create handoff** — or the command palette:
 
 1. Run **`Context Bridge: Handoff to New Claude Session`** (or Codex / “Existing”).
 2. It imports the latest session from the *other* tool, snapshots the workspace, and writes the handoff.
@@ -137,6 +149,7 @@ The extension contributes an **Accounts** panel in the activity bar (see below) 
 | `keepExports` | `10` | Past handoff files to keep; older ones are deleted (0 = keep all). |
 | `openHandoffDocument` | `true` | Open the handoff file after export. |
 | `allowExternalClaudeUri` | `false` | Allow opening `vscode://` links (keep off in forks). |
+| `alwaysUseLatestSession` | `false` | Skip the picker when several sessions match this workspace and take the newest. |
 | `claudeUri` | `vscode://anthropic.claude-code/open` | URI used to open Claude, when the setting above is on. |
 | `claudeOpenCommand` | `""` | Exact command id to open Claude. Empty means auto-detect. |
 | `codexOpenCommand` | `""` | Exact command id to open Codex. Empty means auto-detect. |
@@ -150,6 +163,14 @@ signed in at once and shows what each has left. The **Accounts** panel in the ac
 them in two labelled sections — Codex and Claude Code — each with its own cards, usage bars and
 pooled total. Nothing is pooled *across* the two: the quotas are not the same currency and switching
 one has no effect on the other.
+
+Each limit window gets **its own labelled bar** — a Claude account shows one for the five-hour
+window and one for the weekly, a Codex subscription shows whichever its API reports. Each bar is
+coloured by its own state and carries its own reset, so a healthy weekly allowance is not painted
+red because the short window beside it is spent. The percentage beside the account name stays the
+tightest window, since that is the one that will actually stop you. Codex reports a second window
+only sometimes: when an account is sitting on its weekly cap it sends `secondary_window: null` and
+there is genuinely one limit to show. **Raw Response** shows what arrived.
 
 ### The mechanism is one environment variable
 

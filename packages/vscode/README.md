@@ -53,6 +53,7 @@ To ingest a session without generating a handoff, use **Discover … Sessions** 
 | `keepExports` | `10` | Past handoff files kept in `.context-bridge/exports`; older ones are deleted after each export. `0` keeps all. |
 | `openHandoffDocument` | `true` | Open the handoff file after export. |
 | `allowExternalClaudeUri` | `false` | Allow opening `vscode://` links. Keep `false` in forks so handoff stays in the current editor. |
+| `alwaysUseLatestSession` | `false` | When several sessions were started in this workspace, use the newest without asking instead of showing a picker. |
 | `claudeUri` | `vscode://anthropic.claude-code/open` | URI used to open Claude, when the setting above is enabled. |
 | `claudeOpenCommand` | `""` | Exact VS Code command id to open Claude. Empty means auto-detect one containing "claude" or "anthropic". |
 | `codexOpenCommand` | `""` | Exact VS Code command id to open Codex. Empty means auto-detect one containing "codex". |
@@ -63,13 +64,27 @@ The budget is on by default because an unbounded handoff is not actually lossles
 
 Every handoff opens with **Where This Left Off**: the last real request and the last assistant message quoted verbatim, plus files written and recent commands pulled from recorded tool-call arguments. It is extractive, never generated, and it is built from the whole session — so the last request survives even when the budget drops the turn that carried it. The workspace snapshot below it carries the uncommitted diff and a `git log -1` check, so the receiving agent can tell whether the tree moved on before it starts editing.
 
+## Handoff from the panel
+
+The bottom of the panel carries a **Handoff** card: choose the agent to hand off to, whether it is
+going into a new session or the one already open, and press **Create handoff**. It runs exactly the
+same flow as the command palette — the palette entries are unchanged and still work — and afterwards
+the card shows the last handoff with **Open** and **Copy prompt** beside it.
+
 ## Accounts
 
 An **Accounts** panel in the activity bar lists your Codex and Claude accounts in two labelled
-sections. Each card shows the plan, masked email, a usage bar, the remaining percentage of whichever
-window is tightest, and when it resets. Each section has its own pooled bar, because the two quotas
-are not the same currency and switching one has no effect on the other. Buttons are always visible,
-so nothing needs the command palette.
+sections. Each section has its own pooled bar, because the two quotas are not the same currency and
+switching one has no effect on the other. Buttons are always visible, so nothing needs the command
+palette.
+
+Each limit window gets **its own labelled bar** — a Claude account shows one for the five-hour
+window and one for the weekly, a Codex subscription shows whichever its API reports. Each bar is
+coloured by its own state and carries its own reset, so a healthy weekly allowance is not painted
+red because the short window beside it is spent. The percentage beside the account name stays the
+tightest window, since that is the one that will actually stop you. Codex reports a second window
+only sometimes: when an account is sitting on its weekly cap it sends `secondary_window: null` and
+there is genuinely one limit to show. **Raw Response** shows what arrived.
 
 When an account is out of quota the card says **when it comes back**, not just that it is blocked.
 That time is the reset of the window actually holding you — which is not always the next reset. A

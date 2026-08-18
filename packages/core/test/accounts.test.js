@@ -572,3 +572,30 @@ test('offline mode never touches the network', async () => {
   });
   assert.equal(usage, null);
 });
+
+test('both Codex windows become separate meters, tightest first', () => {
+  // The panel draws one bar per window, so the count and the order here are
+  // what the card actually shows. A live Plus account sitting on its weekly cap
+  // reports secondary_window: null and gets one bar; an account with room
+  // reports both and gets two.
+  const usage = normalizeCodexUsage({
+    plan_type: 'plus',
+    rate_limit: {
+      allowed: true,
+      limit_reached: false,
+      primary_window: { used_percent: 42, limit_window_seconds: 18000, reset_after_seconds: 7200 },
+      secondary_window: { used_percent: 71, limit_window_seconds: 604800, reset_after_seconds: 250000 }
+    }
+  });
+
+  assert.deepEqual(
+    usage.windows.map((window) => [window.label, window.remainingPercent]),
+    [
+      ['5h', 58],
+      ['weekly', 29]
+    ]
+  );
+  // The headline stays the worst window even though it is no longer the only
+  // one on screen.
+  assert.equal(headlineRemaining(usage), 29);
+});
