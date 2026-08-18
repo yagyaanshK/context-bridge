@@ -70,7 +70,7 @@ class AccountsStore {
   // Everything the panel and the status bar draw, resolved in one place so the
   // two can never disagree about which subscription is in use.
   async viewModel() {
-    const { isSignedIn, isClaudeSignedIn } = await this.core();
+    const { isSignedIn, isClaudeSignedIn, resumesAt } = await this.core();
 
     const sections = [];
     for (const provider of PROVIDERS) {
@@ -88,14 +88,14 @@ class AccountsStore {
         await Promise.all(accounts.map(async (item) => [item.id, await check(item.id).catch(() => false)]))
       );
 
-      const rows = accounts.map((account) => this.row(account, provider, signedIn));
+      const rows = accounts.map((account) => this.row(account, provider, signedIn, resumesAt));
       sections.push({ ...provider, rows, pooled: pool(rows) });
     }
 
     return { sections };
   }
 
-  row(account, provider, signedIn) {
+  row(account, provider, signedIn, resumesAt) {
     const usage = this.usage.get(account.id);
     const windows = usage?.windows || [];
     return {
@@ -111,6 +111,9 @@ class AccountsStore {
       credits: usage?.credits,
       remaining: remainingOf(usage),
       resetsAt: nextReset(windows),
+      // When a blocked account starts working again, which is not the same as
+      // its next reset - see resumesAt() in core.
+      resumesAt: resumesAt ? resumesAt(usage) : undefined,
       fetchedAt: usage?.fetchedAt,
       staleReason: usage?.staleReason,
       loaded: Boolean(usage),
@@ -125,6 +128,7 @@ class AccountsStore {
   // The status bar shows one agent at a time. Codex wins when both are set,
   // because that is the one whose switch is machine-global and easy to forget.
   async summary() {
+    const { resumesAt } = await this.core();
     for (const provider of PROVIDERS) {
       const accounts = await this.accounts(provider.id);
       const active = accounts.find((account) => account.id === this.activeIds[provider.id]);
@@ -135,7 +139,8 @@ class AccountsStore {
         title: provider.title,
         label: active.label,
         remaining: remainingOf(usage),
-        limitReached: Boolean(usage?.limitReached)
+        limitReached: Boolean(usage?.limitReached),
+        resumesAt: resumesAt(usage)
       };
     }
     return { label: undefined };
@@ -471,10 +476,13 @@ function renderRow(row) {
   let status;
   if (!row.signedIn) status = 'Not signed in';
   else if (row.error) status = esc(row.error);
-  else if (row.limitReached) status = 'Limit reached';
+  // "Limit reached" on its own leaves the one question that matters
+  // unanswered. The resume time is the whole reason to look at the card.
+  else if (row.limitReached) status = 'Limit reached' + (row.resumesAt ? ' · ' + until(row.resumesAt) : '');
   else if (!row.loaded) status = 'Quota not read';
   else if (typeof row.remaining !== 'number') status = 'Quota unavailable';
   else status = until(row.resetsAt);
+  if (!status) status = row.loaded ? 'No reset time reported' : '';
 
   const credits = row.credits && row.credits.hasCredits
     ? (row.credits.unlimited ? ' · unlimited credits' : ' · ' + row.credits.balance + ' credits')
@@ -482,7 +490,8 @@ function renderRow(row) {
 
   const windows = (row.windows || []).length > 1
     ? '<ul class="windows">' + row.windows.map((w) =>
-        '<li><span>' + esc(w.label) + '</span><b>' + pct(w.remaining) + '</b></li>').join('') + '</ul>'
+        '<li><span>' + esc(w.label) + (w.resetsAt ? ' · ' + esc(until(w.resetsAt)) : '') +
+        '</span><b>' + pct(w.remaining) + '</b></li>').join('') + '</ul>'
     : '';
 
   const act = (action, text, cls) =>

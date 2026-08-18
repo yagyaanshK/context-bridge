@@ -43,7 +43,7 @@ node packages/cli/bin/context-bridge.js --help
 npm run package:vscode
 ```
 
-Then in your editor run **“Extensions: Install from VSIX…”** and pick `dist/context-bridge-<version>.vsix` (currently `context-bridge-0.7.0.vsix`). This works in VS Code and compatible forks (Cursor, Windsurf, Google Antigravity).
+Then in your editor run **“Extensions: Install from VSIX…”** and pick `dist/context-bridge-<version>.vsix` (currently `context-bridge-0.7.1.vsix`). This works in VS Code and compatible forks (Cursor, Windsurf, Google Antigravity).
 
 ---
 
@@ -196,7 +196,14 @@ Credentials are written `0600`, and secrets go to stdin, never argv.
 ### Quota
 
 Readings come from the same usage endpoints the official clients use, cached five minutes per
-account. A failed refresh keeps the last good reading rather than blanking the display. Claude
+account. A failed refresh keeps the last good reading rather than blanking the display.
+
+When an account is out of quota the card says **when it comes back**, not just that it is blocked.
+That time is the reset of the window actually holding you — which is not always the next reset. A
+five-hour window can clear in an hour while an exhausted weekly allowance keeps you blocked for
+days, and when several windows are exhausted you resume only once the last of them clears. Accounts
+with more than one window list each one with its own reset beneath the bar.
+ Claude
 access tokens expire every eight hours and the official client renews only the account it is
 currently using, so Context Bridge renews the others itself — otherwise their bars would go dark.
 

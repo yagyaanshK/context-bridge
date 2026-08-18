@@ -188,6 +188,10 @@ One cache path and one staleness policy for both providers, so they cannot drift
   and would otherwise survive the upgrade that fixed it
 - a failed refresh keeps the previous reading with its age, rather than blanking the display
 - the headline number is the account's **tightest** window, because that is the one that stops you
+- `resumesAt()` answers "when does this start working again", which is deliberately not the next
+  reset: a window with room can reset sooner than the one blocking you, and several exhausted
+  windows clear you only when the last of them resets. `nextResetAt()` is the plain earliest reset
+  and must never be used to answer the first question
 
 The two payloads are read differently on purpose. Codex's shape is undocumented and shifts, so the
 normalizer walks the whole payload collecting anything that looks like a usage window. Claude's

@@ -324,6 +324,43 @@ function readWindow(node, key) {
   };
 }
 
+// When a blocked account starts working again.
+//
+// This is deliberately not "the next reset". Two things make that wrong:
+//
+//   - a window with room to spare can reset sooner than the one that is
+//     actually blocking you, so the earliest reset can be an hour away while
+//     you stay blocked for days, and
+//   - when several windows are exhausted you are held by the *last* of them to
+//     clear, not the first.
+//
+// So: take the windows that are actually exhausted and report the latest reset
+// among them. If the provider says the limit is reached but no single window
+// reads as exhausted, fall back to the tightest window, which is the one that
+// stopped you.
+export function resumesAt(usage) {
+  const windows = usage?.windows || [];
+  const exhausted = windows.filter(
+    (window) => window.remainingPercent <= 0 || window.usedPercent >= 100 || window.severity === 'exceeded'
+  );
+  const blocking = exhausted.length > 0 ? exhausted : usage?.limitReached ? windows.slice(0, 1) : [];
+
+  const times = blocking
+    .map((window) => Date.parse(window.resetsAt || ''))
+    .filter((value) => Number.isFinite(value));
+  return times.length > 0 ? new Date(Math.max(...times)).toISOString() : undefined;
+}
+
+// The next time anything at all resets. Useful as a general "check back then"
+// for an account that still has room; never as the answer to "when am I
+// unblocked" - `resumesAt` answers that.
+export function nextResetAt(usage) {
+  const times = (usage?.windows || [])
+    .map((window) => Date.parse(window.resetsAt || ''))
+    .filter((value) => Number.isFinite(value));
+  return times.length > 0 ? new Date(Math.min(...times)).toISOString() : undefined;
+}
+
 // The headline number for a panel: the tightest window is the one that will
 // actually stop you, so the account's "remaining" is its worst window.
 export function headlineRemaining(usage) {

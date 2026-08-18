@@ -71,6 +71,13 @@ window is tightest, and when it resets. Each section has its own pooled bar, bec
 are not the same currency and switching one has no effect on the other. Buttons are always visible,
 so nothing needs the command palette.
 
+When an account is out of quota the card says **when it comes back**, not just that it is blocked.
+That time is the reset of the window actually holding you — which is not always the next reset. A
+five-hour window can clear in an hour while an exhausted weekly allowance keeps you blocked for
+days, and when several windows are exhausted you resume only once the last of them clears. Accounts
+with more than one window list each one with its own reset beneath the bar.
+
+
 Every account gets its own configuration directory under `~/.context-bridge/accounts/` —
 `CODEX_HOME` for Codex, `CLAUDE_CONFIG_DIR` for Claude — so they all stay signed in
 simultaneously and there is nothing to swap.

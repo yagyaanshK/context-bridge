@@ -532,3 +532,65 @@ test('a taken port fails with the alternative named', async () => {
   await assert.rejects(() => clash.listening, /already in use.*code flow/s);
   held.close();
 });
+
+// --- when a blocked account resumes ----------------------------------------
+
+const hoursFromNow = (hours) => new Date(Date.now() + hours * 3600 * 1000).toISOString();
+
+test('a blocked account reports when it actually resumes, not the next reset', async () => {
+  const { resumesAt, nextResetAt } = await import('../src/index.js');
+
+  // The weekly allowance is gone; the 5h window is fine and resets tonight.
+  // "Next reset" is two hours away, but you stay blocked for three days.
+  const usage = normalizeClaudeUsage({
+    limits: [
+      { kind: 'session', percent: 40, severity: 'normal', resets_at: hoursFromNow(2) },
+      { kind: 'weekly_all', percent: 100, severity: 'exceeded', resets_at: hoursFromNow(72) }
+    ]
+  });
+
+  assert.equal(nextResetAt(usage), new Date(Date.parse(usage.windows[0].resetsAt)).toISOString());
+  assert.equal(
+    resumesAt(usage),
+    usage.windows[1].resetsAt,
+    'showing the sooner reset of a window that is not blocking would be a lie'
+  );
+});
+
+test('with several windows exhausted, the last one to clear wins', async () => {
+  const { resumesAt } = await import('../src/index.js');
+  const usage = normalizeClaudeUsage({
+    limits: [
+      { kind: 'session', percent: 100, severity: 'exceeded', resets_at: hoursFromNow(3) },
+      { kind: 'weekly_all', percent: 100, severity: 'exceeded', resets_at: hoursFromNow(50) }
+    ]
+  });
+  // Clearing the 5h window alone does not unblock you.
+  assert.equal(resumesAt(usage), usage.windows[1].resetsAt);
+});
+
+test('a provider-reported limit with no exhausted window falls back to the tightest', async () => {
+  const { resumesAt } = await import('../src/index.js');
+  // Codex states `limit_reached` outright, and it can disagree with the
+  // percentages at the boundary.
+  const usage = {
+    limitReached: true,
+    windows: [
+      { key: '5h', remainingPercent: 0.4, usedPercent: 99.6, resetsAt: hoursFromNow(1), windowSeconds: 18000 },
+      { key: 'weekly', remainingPercent: 60, usedPercent: 40, resetsAt: hoursFromNow(80), windowSeconds: 604800 }
+    ]
+  };
+  assert.equal(resumesAt(usage), usage.windows[0].resetsAt);
+});
+
+test('an account with room to spare reports no resume time', async () => {
+  const { resumesAt } = await import('../src/index.js');
+  assert.equal(resumesAt(normalizeClaudeUsage(LIVE_USAGE)), undefined);
+});
+
+test('a blocked window with no reset time reports nothing rather than guessing', async () => {
+  const { resumesAt } = await import('../src/index.js');
+  const usage = normalizeClaudeUsage({ limits: [{ kind: 'session', percent: 100, severity: 'exceeded', resets_at: null }] });
+  assert.equal(usage.limitReached, true);
+  assert.equal(resumesAt(usage), undefined);
+});

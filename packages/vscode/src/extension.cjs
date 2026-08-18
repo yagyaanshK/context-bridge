@@ -178,12 +178,26 @@ function renderStatus(summary) {
     remaining === undefined
       ? `$(arrow-swap) ${summary.label}`
       : `$(arrow-swap) ${summary.label} ${formatPercent(remaining)}`;
-  accountStatus.tooltip = `${summary.title || 'Codex'} is using "${summary.label}". Click to switch account.`;
+  accountStatus.tooltip =
+    `${summary.title || 'Codex'} is using "${summary.label}". Click to switch account.` +
+    // Being told the limit is reached without being told when it lifts is the
+    // half of the message that is no use.
+    (summary.limitReached ? `\nLimit reached${summary.resumesAt ? ` — resumes ${describeWhen(summary.resumesAt)}` : ''}.` : '');
   accountStatus.backgroundColor =
     typeof remaining === 'number' && remaining <= 10
       ? new vscode.ThemeColor('statusBarItem.warningBackground')
       : undefined;
   accountStatus.show();
+}
+
+// "in 42m" / "in 3d", for a sentence rather than a bare label.
+function describeWhen(iso) {
+  const minutes = Math.round((Date.parse(iso) - Date.now()) / 60000);
+  if (!Number.isFinite(minutes)) return 'soon';
+  if (minutes <= 0) return 'now';
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `in ${hours}h` : `in ${Math.round(hours / 24)}d`;
 }
 
 function formatPercent(value) {

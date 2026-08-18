@@ -71,6 +71,8 @@ export {
   getClaudeUsage,
   getCodexUsage,
   headlineRemaining,
+  nextResetAt,
+  resumesAt,
   normalizeClaudeUsage,
   normalizeCodexUsage,
   readQuotaCache,
