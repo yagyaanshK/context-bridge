@@ -1,49 +1,66 @@
 const crypto = require('node:crypto');
 const vscode = require('vscode');
 
-// Codex subscriptions.
+// Subscriptions, for both agents.
 //
 // Split into a store (what we know) and a webview (how it looks). The panel is
 // a webview rather than a tree because the useful presentation here is a
 // meter: a percentage is much easier to judge against a filled bar than as a
 // number, and a TreeItem cannot render one.
+//
+// Codex and Claude are kept in separate sections rather than one merged list.
+// Their quotas are not the same currency and switching one has no effect on the
+// other, so a single pooled number across both would be meaningless.
+
+const PROVIDERS = [
+  { id: 'codex', title: 'Codex', noun: 'subscription' },
+  { id: 'claude', title: 'Claude Code', noun: 'account' }
+];
 
 class AccountsStore {
   constructor(core) {
     this.core = core;
     this.usage = new Map();
-    this.activeId = undefined;
+    this.activeIds = {};
     this.emitter = new vscode.EventEmitter();
     this.onDidChange = this.emitter.event;
   }
 
-  async accounts() {
+  async accounts(provider) {
     const { listAccounts } = await this.core();
-    return listAccounts({ provider: 'codex' });
+    return listAccounts(provider ? { provider } : {});
   }
 
-  async reloadActive(accounts) {
-    const { activeCodexAccountId } = await this.core();
-    const list = accounts || (await this.accounts());
-    this.activeId = await activeCodexAccountId(list);
-    return this.activeId;
+  async reloadActive(provider, known) {
+    const { activeCodexAccountId, activeClaudeAccountId } = await this.core();
+    const accounts = known || (await this.accounts(provider));
+    const resolve = provider === 'claude' ? activeClaudeAccountId : activeCodexAccountId;
+    this.activeIds[provider] = await resolve(accounts).catch(() => undefined);
+    return this.activeIds[provider];
   }
 
   async reloadUsage(options = {}) {
-    const { getCodexUsage } = await this.core();
-    const accounts = await this.accounts();
-    await Promise.all(
-      accounts.map(async (account) => {
-        try {
-          this.usage.set(account.id, await getCodexUsage(account.id, options));
-        } catch (error) {
-          this.usage.set(account.id, { error: error.message, windows: [] });
-        }
-      })
-    );
-    await this.reloadActive(accounts);
-    this.emitter.fire(await this.viewModel(accounts));
-    return accounts;
+    const { getCodexUsage, getClaudeUsage } = await this.core();
+    const all = [];
+
+    for (const provider of PROVIDERS) {
+      const accounts = await this.accounts(provider.id);
+      const read = provider.id === 'claude' ? getClaudeUsage : getCodexUsage;
+      await Promise.all(
+        accounts.map(async (account) => {
+          try {
+            this.usage.set(account.id, await read(account.id, options));
+          } catch (error) {
+            this.usage.set(account.id, { error: error.message, windows: [] });
+          }
+        })
+      );
+      await this.reloadActive(provider.id, accounts);
+      all.push(...accounts);
+    }
+
+    this.emitter.fire(await this.viewModel());
+    return all;
   }
 
   async refresh() {
@@ -52,71 +69,93 @@ class AccountsStore {
 
   // Everything the panel and the status bar draw, resolved in one place so the
   // two can never disagree about which subscription is in use.
-  async viewModel(known) {
-    const { isSignedIn } = await this.core();
-    const accounts = known || (await this.accounts());
-    if (this.activeId === undefined && accounts.length > 0) await this.reloadActive(accounts);
+  async viewModel() {
+    const { isSignedIn, isClaudeSignedIn } = await this.core();
 
-    // Read sign-in state from disk rather than inferring it from a quota
-    // result: a subscription that has never been polled has no usage record at
-    // all, and treating that as signed in offered "Use this" on an account that
-    // could not possibly be switched to.
-    const signedIn = new Map(
-      await Promise.all(accounts.map(async (account) => [account.id, await isSignedIn(account.id).catch(() => false)]))
-    );
-
-    const rows = accounts.map((account) => {
-      const usage = this.usage.get(account.id);
-      const windows = usage?.windows || [];
-      const remaining = remainingOf(usage);
-      return {
-        id: account.id,
-        label: account.label,
-        plan: account.plan ? planLabel(account.plan) : undefined,
-        email: usage?.email || account.email,
-        active: account.id === this.activeId,
-        signedIn: signedIn.get(account.id) === true,
-        error: usage?.error === 'not-signed-in' ? undefined : usage?.error,
-        limitReached: Boolean(usage?.limitReached),
-        credits: usage?.credits,
-        remaining,
-        resetsAt: nextReset(windows),
-        fetchedAt: usage?.fetchedAt,
-        staleReason: usage?.staleReason,
-        loaded: Boolean(usage),
-        windows: windows.map((window) => ({
-          label: window.label,
-          remaining: window.remainingPercent,
-          resetsAt: window.resetsAt
-        }))
-      };
-    });
-
-    const values = rows.map((row) => row.remaining).filter((value) => typeof value === 'number');
-    const stamps = rows.map((row) => Date.parse(row.fetchedAt || '')).filter((value) => Number.isFinite(value));
-    return {
-      rows,
-      pooled: {
-        count: rows.length,
-        // Age of the oldest reading on screen, so the panel can say how current
-        // it is rather than leaving the user to wonder.
-        updatedAt: stamps.length > 0 ? new Date(Math.min(...stamps)).toISOString() : undefined,
-        total: values.length > 0 ? values.reduce((sum, value) => sum + value, 0) : undefined,
-        // The pooled bar is an average so it stays on a 0-100 scale even as
-        // subscriptions are added; the headline number stays the sum, which is
-        // what "how much do I have across everything" actually means.
-        average: values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : undefined
+    const sections = [];
+    for (const provider of PROVIDERS) {
+      const accounts = await this.accounts(provider.id);
+      if (this.activeIds[provider.id] === undefined && accounts.length > 0) {
+        await this.reloadActive(provider.id, accounts);
       }
+
+      // Read sign-in state from disk rather than inferring it from a quota
+      // result: an account that has never been polled has no usage record at
+      // all, and treating that as signed in offered "Use this" on an account
+      // that could not possibly be switched to.
+      const check = provider.id === 'claude' ? isClaudeSignedIn : isSignedIn;
+      const signedIn = new Map(
+        await Promise.all(accounts.map(async (item) => [item.id, await check(item.id).catch(() => false)]))
+      );
+
+      const rows = accounts.map((account) => this.row(account, provider, signedIn));
+      sections.push({ ...provider, rows, pooled: pool(rows) });
+    }
+
+    return { sections };
+  }
+
+  row(account, provider, signedIn) {
+    const usage = this.usage.get(account.id);
+    const windows = usage?.windows || [];
+    return {
+      id: account.id,
+      provider: provider.id,
+      label: account.label,
+      plan: account.plan ? planLabel(account.plan) : undefined,
+      email: usage?.email || account.email,
+      active: account.id === this.activeIds[provider.id],
+      signedIn: signedIn.get(account.id) === true,
+      error: usage?.error === 'not-signed-in' ? undefined : usage?.error,
+      limitReached: Boolean(usage?.limitReached),
+      credits: usage?.credits,
+      remaining: remainingOf(usage),
+      resetsAt: nextReset(windows),
+      fetchedAt: usage?.fetchedAt,
+      staleReason: usage?.staleReason,
+      loaded: Boolean(usage),
+      windows: windows.map((window) => ({
+        label: window.label,
+        remaining: window.remainingPercent,
+        resetsAt: window.resetsAt
+      }))
     };
   }
 
+  // The status bar shows one agent at a time. Codex wins when both are set,
+  // because that is the one whose switch is machine-global and easy to forget.
   async summary() {
-    const accounts = await this.accounts();
-    const active = accounts.find((account) => account.id === this.activeId);
-    if (!active) return { label: undefined };
-    const usage = this.usage.get(active.id);
-    return { label: active.label, remaining: remainingOf(usage), limitReached: Boolean(usage?.limitReached) };
+    for (const provider of PROVIDERS) {
+      const accounts = await this.accounts(provider.id);
+      const active = accounts.find((account) => account.id === this.activeIds[provider.id]);
+      if (!active) continue;
+      const usage = this.usage.get(active.id);
+      return {
+        provider: provider.id,
+        title: provider.title,
+        label: active.label,
+        remaining: remainingOf(usage),
+        limitReached: Boolean(usage?.limitReached)
+      };
+    }
+    return { label: undefined };
   }
+}
+
+function pool(rows) {
+  const values = rows.map((row) => row.remaining).filter((value) => typeof value === 'number');
+  const stamps = rows.map((row) => Date.parse(row.fetchedAt || '')).filter((value) => Number.isFinite(value));
+  return {
+    count: rows.length,
+    // Age of the oldest reading on screen, so the panel can say how current it
+    // is rather than leaving the user to wonder.
+    updatedAt: stamps.length > 0 ? new Date(Math.min(...stamps)).toISOString() : undefined,
+    total: values.length > 0 ? values.reduce((sum, value) => sum + value, 0) : undefined,
+    // The pooled bar is an average so it stays on a 0-100 scale even as
+    // accounts are added; the headline number stays the sum, which is what
+    // "how much do I have across everything" actually means.
+    average: values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : undefined
+  };
 }
 
 class AccountsWebview {
@@ -140,20 +179,21 @@ class AccountsWebview {
         forget: 'contextBridge.forgetAccount',
         purge: 'contextBridge.forgetAccount',
         rename: 'contextBridge.renameAccount',
-        add: 'contextBridge.addCodexAccount',
-        import: 'contextBridge.importCodexAccount',
+        add: 'contextBridge.addAccount',
+        import: 'contextBridge.importAccount',
         refresh: 'contextBridge.refreshAccountQuota'
       };
       const command = commands[message?.type];
       if (!command) return;
       // `confirmed` tells the handler the panel already asked in the card, so
       // it must not raise a dialog of its own.
-      vscode.commands.executeCommand(
-        command,
-        message.id
-          ? { accountId: message.id, confirmed: true, purge: Boolean(message.purge), label: message.label }
-          : undefined
-      );
+      vscode.commands.executeCommand(command, {
+        accountId: message.id,
+        provider: message.provider,
+        confirmed: true,
+        purge: Boolean(message.purge),
+        label: message.label
+      });
     });
 
     // Reading quota when the panel is shown keeps the numbers current without a
@@ -188,9 +228,11 @@ function planLabel(plan) {
   return String(plan).replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-// All colours come from the editor's own theme tokens, so the panel follows
+// Colours come from the editor's own theme tokens, so the panel follows
 // whatever theme is active - including the high-contrast ones - instead of
-// shipping a palette that only suits the default dark.
+// shipping a palette that only suits the default dark. The two section edges
+// are the deliberate exception: they identify the agent, so they must stay
+// recognisable rather than blend in.
 function html(webview) {
   const nonce = crypto.randomBytes(16).toString('base64');
   return `<!DOCTYPE html>
@@ -204,19 +246,49 @@ function html(webview) {
     --radius: 6px;
     --hairline: var(--vscode-panel-border, rgba(128,128,128,0.25));
     --dim: var(--vscode-descriptionForeground);
+    /* Claude's own orange, which reads on both grounds, so one value serves
+       both themes. Codex has no such colour, so its edge is the theme's
+       opposite - white on dark, black on light - and is defined per theme. */
+    --edge-claude: #d97757;
+    --edge-codex: var(--vscode-foreground);
   }
+  body.vscode-dark { --edge-codex: #ffffff; }
+  body.vscode-light { --edge-codex: #000000; }
+  body.vscode-high-contrast { --edge-codex: var(--vscode-contrastBorder, #ffffff); }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    padding: var(--gap) 0 16px;
+    padding: var(--gap) 0 18px;
     font-family: var(--vscode-font-family);
     font-size: var(--vscode-font-size);
     color: var(--vscode-foreground);
     background: transparent;
   }
+  .agents { display: flex; flex-direction: column; gap: 16px; }
+  /* The section box. The edge carries the agent's identity, so it is drawn at
+     partial strength rather than full: a solid white rectangle in a dark theme
+     outweighs everything inside it. */
+  .agent {
+    position: relative;
+    margin: 0 var(--gap);
+    padding: 16px 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--edge) 55%, transparent);
+    border-radius: 9px;
+  }
+  .agent[data-provider="codex"] { --edge: var(--edge-codex); }
+  .agent[data-provider="claude"] { --edge: var(--edge-claude); }
+  /* Sitting on the border so the rule reads as a titled frame, not a heading
+     that happens to be above a box. */
+  .agent-name {
+    position: absolute; top: -0.65em; left: 12px;
+    padding: 0 7px;
+    background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+    color: var(--edge);
+    font-size: 0.72em; font-weight: 700;
+    letter-spacing: 0.09em; text-transform: uppercase;
+  }
   .pool {
-    margin: 0 var(--gap) 6px;
-    padding: 10px 12px;
+    padding: 10px 12px 11px;
     border: 1px solid var(--hairline);
     border-radius: var(--radius);
     background: var(--vscode-editorWidget-background, transparent);
@@ -225,15 +297,14 @@ function html(webview) {
   .pool-title { font-weight: 600; }
   .pool-total { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 1.1em; }
   .pool-sub { color: var(--dim); font-size: 0.9em; margin-top: 2px; }
-  .list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   .item {
-    margin: 0 var(--gap);
     padding: 9px 10px;
     border: 1px solid transparent;
     border-radius: var(--radius);
   }
   .item:hover { background: var(--vscode-list-hoverBackground); }
-  .item.active { border-color: var(--vscode-focusBorder); background: var(--vscode-list-inactiveSelectionBackground); }
+  .item.active { border-color: var(--edge); background: var(--vscode-list-inactiveSelectionBackground); }
   .head { display: flex; align-items: center; gap: 9px; }
   .avatar {
     flex: none;
@@ -323,13 +394,14 @@ function html(webview) {
   button.primary:hover { background: var(--vscode-button-hoverBackground); }
   button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
   .add {
-    margin: 8px var(--gap) 0;
-    width: calc(100% - var(--gap) * 2);
+    margin-top: 8px;
+    width: 100%;
     text-align: center; padding: 7px;
-    border: 1px dashed var(--hairline); background: transparent; color: var(--dim);
+    border: 1px dashed color-mix(in srgb, var(--edge) 45%, transparent);
+    background: transparent; color: var(--dim);
   }
   .add:hover { background: var(--vscode-list-hoverBackground); color: var(--vscode-foreground); }
-  .empty { padding: 14px var(--gap); color: var(--dim); line-height: 1.5; }
+  .empty { padding: 4px 2px 8px; color: var(--dim); line-height: 1.5; font-size: 0.9em; }
   .windows { margin: 7px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
   .windows li { display: flex; justify-content: space-between; gap: 8px; color: var(--dim); font-size: 0.85em; }
   .windows b { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--vscode-foreground); }
@@ -337,7 +409,7 @@ function html(webview) {
 </style>
 </head>
 <body>
-<div id="root"><div class="empty">Loading subscriptions…</div></div>
+<div id="root"><div class="empty" style="padding-left:12px">Loading subscriptions…</div></div>
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
 const TINTS = ['--vscode-charts-blue','--vscode-charts-purple','--vscode-charts-green','--vscode-charts-orange','--vscode-charts-red','--vscode-charts-yellow'];
@@ -393,6 +465,8 @@ function fillColor(name) {
 function renderRow(row) {
   const state = level(row);
   const width = typeof row.remaining === 'number' ? Math.max(row.remaining, row.remaining > 0 ? 2 : 0) : 0;
+  const id = esc(row.id);
+  const provider = esc(row.provider);
 
   let status;
   if (!row.signedIn) status = 'Not signed in';
@@ -411,18 +485,22 @@ function renderRow(row) {
         '<li><span>' + esc(w.label) + '</span><b>' + pct(w.remaining) + '</b></li>').join('') + '</ul>'
     : '';
 
+  const act = (action, text, cls) =>
+    '<button class="' + (cls || '') + '" data-act="' + action + '" data-id="' + id +
+    '" data-provider="' + provider + '">' + text + '</button>';
+
   return '<li class="item' + (row.active ? ' active' : '') + '">' +
     '<div class="head">' +
       '<span class="avatar" style="--tint:' + tint(row.id) + '">' + esc((row.label || '?').slice(0, 1).toUpperCase()) + '</span>' +
       '<span class="ident">' +
-        '<span class="name" data-name="' + esc(row.id) + '"><b>' + esc(row.label) + '</b>' +
+        '<span class="name" data-name="' + id + '"><b>' + esc(row.label) + '</b>' +
           (row.plan ? '<span class="plan">' + esc(row.plan) + '</span>' : '') +
-          '<button class="pencil" data-rename="' + esc(row.id) + '" title="Rename" aria-label="Rename subscription">✎</button>' +
+          '<button class="pencil" data-rename="' + id + '" title="Rename" aria-label="Rename account">✎</button>' +
         '</span>' +
-        '<span class="rename" data-editor="' + esc(row.id) + '" hidden>' +
-          '<input type="text" value="' + esc(row.label) + '" aria-label="Subscription name">' +
-          '<button data-save="' + esc(row.id) + '">Save</button>' +
-          '<button data-discard="' + esc(row.id) + '">Cancel</button>' +
+        '<span class="rename" data-editor="' + id + '" data-provider="' + provider + '" hidden>' +
+          '<input type="text" value="' + esc(row.label) + '" aria-label="Account name">' +
+          '<button data-save="' + id + '">Save</button>' +
+          '<button data-discard="' + id + '">Cancel</button>' +
         '</span>' +
         '<span class="email">' + esc(maskEmail(row.email)) + '</span>' +
       '</span>' +
@@ -436,42 +514,50 @@ function renderRow(row) {
     '</div>' +
     windows +
     '<div class="actions">' +
-      (row.active || !row.signedIn ? '' : '<button class="primary" data-act="switch" data-id="' + esc(row.id) + '">Use this</button>') +
-      (row.signedIn ? '' : '<button class="primary" data-act="signin" data-id="' + esc(row.id) + '">Sign in</button>') +
-      (row.signedIn ? '<button data-act="terminal" data-id="' + esc(row.id) + '">Terminal</button>' : '') +
-      (row.signedIn ? '<button data-act="raw" data-id="' + esc(row.id) + '">Raw Response</button>' : '') +
-      '<button data-ask="' + esc(row.id) + '">Remove</button>' +
+      (row.active || !row.signedIn ? '' : act('switch', 'Use this', 'primary')) +
+      (row.signedIn ? '' : act('signin', 'Sign in', 'primary')) +
+      (row.signedIn ? act('terminal', 'Terminal') : '') +
+      (row.signedIn ? act('raw', 'Raw Response') : '') +
+      '<button data-ask="' + id + '">Remove</button>' +
     '</div>' +
-    '<div class="confirm" id="confirm-' + esc(row.id) + '" hidden>' +
-      '<span>Remove this subscription?</span>' +
-      '<button data-act="forget" data-id="' + esc(row.id) + '">Forget</button>' +
-      '<button class="danger" data-act="purge" data-id="' + esc(row.id) + '">Delete credentials</button>' +
-      '<button data-cancel="' + esc(row.id) + '">Cancel</button>' +
+    '<div class="confirm" id="confirm-' + id + '" hidden>' +
+      '<span>Remove this account?</span>' +
+      act('forget', 'Forget') +
+      act('purge', 'Delete credentials', 'danger') +
+      '<button data-cancel="' + id + '">Cancel</button>' +
     '</div>' +
   '</li>';
 }
 
+function renderSection(section) {
+  const pooled = section.pooled;
+  const provider = esc(section.id);
+  const noun = esc(section.noun);
+
+  const body = section.rows.length === 0
+    ? '<div class="empty">No ' + esc(section.title) + ' ' + noun + 's yet.</div>'
+    : '<div class="pool">' +
+        '<div class="pool-top"><span class="pool-title">Usage remaining</span>' +
+          '<span class="pool-total">' + (pooled.total === undefined ? '—' : pct(pooled.total)) + '</span></div>' +
+        '<div class="pool-sub">' + pooled.count + ' connected ' + noun + (pooled.count === 1 ? '' : 's') + '</div>' +
+        '<div class="bar"><i style="width:' + (pooled.average || 0) + '%;--fill:var(--edge)"></i></div>' +
+        '<div class="pool-foot"><span>' + (pooled.updatedAt ? 'Updated ' + ago(pooled.updatedAt) : 'Not read yet') + '</span>' +
+          '<button class="pool-refresh" data-act="refresh" data-provider="' + provider + '">Refresh now</button></div>' +
+      '</div>' +
+      '<ul class="list">' + section.rows.map(renderRow).join('') + '</ul>';
+
+  return '<section class="agent" data-provider="' + provider + '">' +
+    '<span class="agent-name">' + esc(section.title) + '</span>' +
+    body +
+    '<button class="add" data-act="add" data-provider="' + provider + '">+ Add ' +
+      (section.rows.length === 0 ? 'a' : 'another') + ' ' + noun + '</button>' +
+  '</section>';
+}
+
 function render(model) {
   const root = document.getElementById('root');
-  if (!model || model.rows.length === 0) {
-    root.innerHTML = '<div class="empty">No Codex subscriptions yet.<br>Add one, or import the login you already have.</div>' +
-      '<button class="add" data-act="add">+ Add a subscription</button>' +
-      '<button class="add" data-act="import">Import current Codex login</button>';
-    return;
-  }
-
-  const pooled = model.pooled;
-  root.innerHTML =
-    '<div class="pool">' +
-      '<div class="pool-top"><span class="pool-title">Usage remaining</span>' +
-        '<span class="pool-total">' + (pooled.total === undefined ? '—' : pct(pooled.total)) + '</span></div>' +
-      '<div class="pool-sub">' + pooled.count + ' connected subscription' + (pooled.count === 1 ? '' : 's') + '</div>' +
-      '<div class="bar"><i style="width:' + (pooled.average || 0) + '%;--fill:var(--vscode-charts-blue)"></i></div>' +
-      '<div class="pool-foot"><span>' + (pooled.updatedAt ? 'Updated ' + ago(pooled.updatedAt) : 'Not read yet') + '</span>' +
-        '<button class="pool-refresh" data-act="refresh">Refresh now</button></div>' +
-    '</div>' +
-    '<ul class="list">' + model.rows.map(renderRow).join('') + '</ul>' +
-    '<button class="add" data-act="add">+ Add another subscription</button>';
+  if (!model || !model.sections) return;
+  root.innerHTML = '<div class="agents">' + model.sections.map(renderSection).join('') + '</div>';
 }
 
 // Confirmation for a destructive action happens here, in the card, so acting on
@@ -496,7 +582,7 @@ function commitRename(id) {
   const editor = document.querySelector('[data-editor="' + CSS.escape(id) + '"]');
   const label = editor.querySelector('input').value.trim();
   if (!label) { editor.querySelector('input').focus(); return; }
-  vscode.postMessage({ type: 'rename', id, label });
+  vscode.postMessage({ type: 'rename', id, provider: editor.dataset.provider, label });
   editing(id, false);
 }
 
@@ -530,7 +616,12 @@ document.addEventListener('click', (event) => {
   const button = event.target.closest('[data-act]');
   if (!button) return;
   const act = button.dataset.act;
-  vscode.postMessage({ type: act, id: button.dataset.id, purge: act === 'purge' });
+  vscode.postMessage({
+    type: act,
+    id: button.dataset.id,
+    provider: button.dataset.provider,
+    purge: act === 'purge'
+  });
 });
 
 window.addEventListener('message', (event) => {
@@ -541,4 +632,4 @@ window.addEventListener('message', (event) => {
 </html>`;
 }
 
-module.exports = { AccountsStore, AccountsWebview };
+module.exports = { AccountsStore, AccountsWebview, PROVIDERS };

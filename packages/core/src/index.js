@@ -66,11 +66,57 @@ export {
   CODEX_LOGIN_READS_STDIN
 } from './accounts/login.js';
 export {
+  fetchClaudeUsage,
   fetchCodexUsage,
+  getClaudeUsage,
   getCodexUsage,
   headlineRemaining,
+  normalizeClaudeUsage,
   normalizeCodexUsage,
   readQuotaCache,
+  CLAUDE_USAGE_URL,
   CODEX_USAGE_URL,
   DEFAULT_QUOTA_TTL_MS
 } from './accounts/quota.js';
+export {
+  activateClaudeAccount,
+  activeClaudeAccountId,
+  backfillClaudeProfile,
+  claudeConfigPath,
+  claudeCredentialsPath,
+  claudeEnv,
+  claudeHome,
+  defaultClaudeHome,
+  ensureClaudeAccessToken,
+  ensureClaudeHome,
+  importClaudeAuth,
+  importClaudeAuthText,
+  isClaudeSignedIn,
+  parseClaudeAuthText,
+  readClaudeAuth,
+  readClaudeProfile,
+  refreshClaudeAccountIdentity,
+  restoreClaudeBackup,
+  writeClaudeCredential,
+  CLAUDE_PROVIDER
+} from './accounts/claude.js';
+export {
+  claudeApiHeaders,
+  claudeAuthorizeUrl,
+  createPkce,
+  exchangeClaudeCode,
+  fetchClaudeProfile,
+  loopbackRedirectUri,
+  normalizeClaudeProfile,
+  parseAuthorizationCode,
+  refreshClaudeToken,
+  startLoopbackServer,
+  CLAUDE_AUTHORIZE_URL,
+  CLAUDE_CLIENT_ID,
+  CLAUDE_CONSOLE_AUTHORIZE_URL,
+  CLAUDE_DEFAULT_CALLBACK_PORT,
+  CLAUDE_MANUAL_REDIRECT_URI,
+  CLAUDE_OAUTH_MODES,
+  CLAUDE_SCOPES,
+  CLAUDE_TOKEN_URL
+} from './accounts/claude-oauth.js';

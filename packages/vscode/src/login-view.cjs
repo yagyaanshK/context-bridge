@@ -4,12 +4,25 @@ const vscode = require('vscode');
 
 // Sign-in, without handing the user a terminal.
 //
-// The official `codex` binary still performs the whole OAuth exchange and still
-// writes the credential - Context Bridge only runs it as a child process with
-// CODEX_HOME pointed at the right directory, reads its output, and presents the
-// result. We never see the authorization code and never hold a token.
+// The two agents get there very differently, and the difference is forced:
+//
+// Codex - the official `codex` binary performs the whole OAuth exchange and
+// writes the credential. Context Bridge only runs it as a child process with
+// CODEX_HOME pointed at the right directory, reads its plain-text output, and
+// presents the result. We never see the authorization code and never hold a
+// token.
+//
+// Claude - none of that is possible. `claude` and `claude setup-token` render
+// an Ink terminal UI that requires raw mode on stdin, so a piped child process
+// dies before printing anything, and `setup-token` writes no credential even
+// when it succeeds. So Context Bridge runs the same public PKCE flow the CLI
+// runs and writes the credential itself. That is a real difference in what this
+// extension handles, and it is why the Claude paths live in core with their own
+// tests rather than being a thin wrapper over a process.
 
-class CodexLoginPanel {
+const TITLES = { codex: 'Connect a Codex subscription', claude: 'Connect a Claude account' };
+
+class LoginPanel {
   constructor(context, core, store) {
     this.context = context;
     this.core = core;
@@ -17,24 +30,38 @@ class CodexLoginPanel {
     this.panel = undefined;
     this.child = undefined;
     this.target = undefined;
+    this.provider = undefined;
+    this.pending = undefined;
+    this.loopback = undefined;
   }
 
   async open(target = {}) {
+    const provider = target.provider || 'codex';
     this.target = target;
+
+    if (this.panel && this.provider !== provider) {
+      // Switching agent changes every card on the page, so the document is
+      // rebuilt rather than patched.
+      this.panel.webview.html = html(this.panel.webview, provider);
+      this.panel.title = TITLES[provider];
+    }
+    this.provider = provider;
+
     if (this.panel) {
       this.panel.reveal(vscode.ViewColumn.Active);
     } else {
       this.panel = vscode.window.createWebviewPanel(
-        'contextBridgeCodexLogin',
-        'Connect a Codex subscription',
+        'contextBridgeLogin',
+        TITLES[provider],
         vscode.ViewColumn.Active,
         { enableScripts: true, retainContextWhenHidden: true }
       );
-      this.panel.webview.html = html(this.panel.webview);
+      this.panel.webview.html = html(this.panel.webview, provider);
       this.panel.webview.onDidReceiveMessage((message) => this.onMessage(message));
       this.panel.onDidDispose(() => {
         this.cancel();
         this.panel = undefined;
+        this.provider = undefined;
       });
     }
     this.pendingLabel = target.label || '';
@@ -46,6 +73,11 @@ class CodexLoginPanel {
   }
 
   cancel() {
+    this.pending = undefined;
+    if (this.loopback) {
+      this.loopback.close();
+      this.loopback = undefined;
+    }
     if (!this.child) return;
     const child = this.child;
     this.child = undefined;
@@ -79,7 +111,7 @@ class CodexLoginPanel {
       }
       return;
     }
-    if (message?.type === 'start') {
+    if (message?.type === 'start' || message?.type === 'submit') {
       try {
         await this.start(message);
       } catch (error) {
@@ -91,10 +123,11 @@ class CodexLoginPanel {
   // Reading the file here rather than in the webview means the credential is
   // never handed to the page at all - only the outcome is.
   async adoptFromFile() {
+    const claude = this.provider === 'claude';
     const picked = await vscode.window.showOpenDialog({
-      title: 'Choose an auth.json',
+      title: claude ? 'Choose a .credentials.json' : 'Choose an auth.json',
       canSelectMany: false,
-      filters: { 'Codex credential': ['json'] },
+      filters: { 'Agent credential': ['json'] },
       openLabel: 'Use this login'
     });
     if (!picked?.length) return;
@@ -104,42 +137,178 @@ class CodexLoginPanel {
   }
 
   async adopt(text) {
-    const { importCodexAuthText } = await this.core();
+    const { importCodexAuthText, importClaudeAuthText, backfillClaudeProfile } = await this.core();
     const accountId = await this.ensureAccount();
+    const claude = this.provider === 'claude';
 
     this.post({ type: 'running', method: 'paste' });
-    const auth = await importCodexAuthText(accountId, text);
+    let auth = claude ? await importClaudeAuthText(accountId, text) : await importCodexAuthText(accountId, text);
     if (!auth) {
       this.post({ type: 'failed', method: 'paste', message: 'That credential has no access token in it.' });
       return;
     }
+    // A pasted Claude credential carries no identity - the email lives in a
+    // different file - so ask the API who it belongs to rather than showing an
+    // unlabelled card.
+    if (claude) auth = (await backfillClaudeProfile(accountId).catch(() => auth)) || auth;
+
     await this.store.reloadUsage({ force: true });
-    this.post({ type: 'done', method: 'paste', email: auth.claims?.email, label: this.target.label });
+    this.post({ type: 'done', method: 'paste', email: auth.claims?.email || auth.email, label: this.target.label });
   }
 
   // A subscription row has to exist before any method can write into it.
   async ensureAccount() {
-    const { createAccount, ensureCodexHome } = await this.core();
+    const { createAccount, ensureCodexHome, ensureClaudeHome } = await this.core();
+    const provider = this.provider || 'codex';
+    const ensureHome = provider === 'claude' ? ensureClaudeHome : ensureCodexHome;
+
     if (this.target?.accountId) {
-      await ensureCodexHome(this.target.accountId);
+      await ensureHome(this.target.accountId);
       return this.target.accountId;
     }
     const label = String(this.pendingLabel || '').trim();
-    if (!label) throw new Error('Give this subscription a name first.');
-    const account = await createAccount({ label, provider: 'codex' });
-    this.target = { accountId: account.id, label };
-    await ensureCodexHome(account.id);
+    if (!label) throw new Error('Give this account a name first.');
+    const account = await createAccount({ label, provider });
+    this.target = { ...this.target, accountId: account.id, label, provider };
+    await ensureHome(account.id);
     return account.id;
   }
 
   async start(message) {
+    if (message.method === 'paste') return this.adopt(message.secret);
+    this.pendingLabel = message.label;
+
+    if (this.provider === 'claude') return this.startClaude(message);
+    return this.startCodex(message);
+  }
+
+  // -------------------------------------------------------------------------
+  // Claude: PKCE, performed here.
+  // -------------------------------------------------------------------------
+
+  async startClaude(message) {
+    if (message.method === 'import') return this.importClaudeCurrent();
+    if (message.type === 'submit') return this.completeClaudeCode(message.secret);
+    if (message.method === 'code') return this.beginClaudeCode();
+    return this.beginClaudeBrowser();
+  }
+
+  async importClaudeCurrent() {
+    const { importClaudeAuth, defaultClaudeHome, backfillClaudeProfile } = await this.core();
+    const accountId = await this.ensureAccount();
+    this.post({ type: 'running', method: 'import' });
+
+    let auth = await importClaudeAuth(accountId, defaultClaudeHome());
+    if (!auth) throw new Error('That directory has a credential file but no access token in it.');
+    auth = (await backfillClaudeProfile(accountId).catch(() => auth)) || auth;
+
+    await this.store.reloadUsage({ force: true });
+    this.post({ type: 'done', method: 'import', email: auth.email, label: this.target.label });
+  }
+
+  // The loopback half: a local server catches the redirect, so the user only
+  // has to approve in the browser.
+  async beginClaudeBrowser() {
+    const { createPkce, claudeAuthorizeUrl, startLoopbackServer } = await this.core();
+    const accountId = await this.ensureAccount();
+    this.post({ type: 'running', method: 'browser' });
+
+    const pkce = createPkce();
+    const server = startLoopbackServer();
+    await server.listening;
+    this.loopback = server;
+
+    const url = claudeAuthorizeUrl({
+      challenge: pkce.challenge,
+      state: pkce.state,
+      redirectUri: server.redirectUri
+    });
+    // Unlike `codex login`, nothing else is going to open this for us.
+    await vscode.env.openExternal(vscode.Uri.parse(url));
+    this.post({ type: 'progress', method: 'browser', parsed: { authorizeUrl: url } });
+
+    let returned;
+    try {
+      returned = await server.result;
+    } finally {
+      server.close();
+      this.loopback = undefined;
+    }
+
+    // The state is what stops another page on this machine from feeding us a
+    // code of its own.
+    if (returned.state && returned.state !== pkce.state) {
+      throw new Error('The sign-in response did not match this request. Start again.');
+    }
+    await this.finishClaude(accountId, 'browser', {
+      code: returned.code,
+      state: pkce.state,
+      verifier: pkce.verifier,
+      redirectUri: server.redirectUri
+    });
+  }
+
+  // The no-localhost half: the authorization page displays a code to paste
+  // back. Works over SSH, in a container, and on a locked-down host.
+  async beginClaudeCode() {
+    const { createPkce, claudeAuthorizeUrl, CLAUDE_MANUAL_REDIRECT_URI } = await this.core();
+    const accountId = await this.ensureAccount();
+
+    const pkce = createPkce();
+    const url = claudeAuthorizeUrl({
+      challenge: pkce.challenge,
+      state: pkce.state,
+      redirectUri: CLAUDE_MANUAL_REDIRECT_URI
+    });
+    this.pending = { ...pkce, accountId, redirectUri: CLAUDE_MANUAL_REDIRECT_URI };
+    this.post({ type: 'progress', method: 'code', parsed: { authorizeUrl: url } });
+  }
+
+  async completeClaudeCode(secret) {
+    const { parseAuthorizationCode } = await this.core();
+    if (!this.pending) throw new Error('Start this method again to get a fresh sign-in link.');
+
+    const { code, state } = parseAuthorizationCode(secret);
+    if (state && state !== this.pending.state) {
+      throw new Error('That code came from a different sign-in attempt. Start again.');
+    }
+
+    this.post({ type: 'running', method: 'code' });
+    await this.finishClaude(this.pending.accountId, 'code', {
+      code,
+      state: this.pending.state,
+      verifier: this.pending.verifier,
+      redirectUri: this.pending.redirectUri
+    });
+    this.pending = undefined;
+  }
+
+  async finishClaude(accountId, method, exchange) {
+    const { exchangeClaudeCode, fetchClaudeProfile, writeClaudeCredential } = await this.core();
+
+    const tokens = await exchangeClaudeCode(exchange);
+    // The token response says nothing about the person, so the card would be
+    // unlabelled without this. A profile failure is not fatal: the login works.
+    const profile = await fetchClaudeProfile(tokens.accessToken).catch(() => undefined);
+    const auth = await writeClaudeCredential(accountId, tokens, profile);
+
+    await this.store.reloadUsage({ force: true });
+    this.post({
+      type: 'done',
+      method,
+      email: profile?.emailAddress || auth?.email,
+      label: this.target.label
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Codex: drive the official binary and read its output.
+  // -------------------------------------------------------------------------
+
+  async startCodex(message) {
     const { codexHome, refreshCodexAccountIdentity, codexLoginArgs } = await this.core();
 
     if (this.child) throw new Error('A sign-in is already running. Cancel it first.');
-    this.pendingLabel = message.label;
-
-    // Adopting a credential runs no process at all; it is a file copy.
-    if (message.method === 'paste') return this.adopt(message.secret);
 
     const accountId = await this.ensureAccount();
     const method = message.method;
@@ -229,148 +398,12 @@ class CodexLoginPanel {
   }
 }
 
-function html(webview) {
-  const nonce = crypto.randomBytes(16).toString('base64');
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
-<style>
-  * { box-sizing: border-box; }
-  html, body { height: 100%; }
-  body {
-    margin: 0;
-    font-family: var(--vscode-font-family);
-    color: var(--vscode-foreground);
-    background: var(--vscode-editor-background);
-    display: grid;
-    place-items: center;
-    overflow: auto;
-  }
-  #bg { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; }
-  .shell {
-    position: relative; z-index: 1;
-    width: min(560px, 92vw);
-    padding: 40px 0 56px;
-    display: flex; flex-direction: column; gap: 26px;
-  }
-  .hero { text-align: center; display: flex; flex-direction: column; gap: 10px; align-items: center; }
-  .mark {
-    width: 54px; height: 54px; border-radius: 15px;
-    display: grid; place-items: center;
-    background: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
-    font-size: 24px; font-weight: 700;
-  }
-  h1 { margin: 6px 0 0; font-size: 1.75rem; font-weight: 600; letter-spacing: -0.01em; }
-  .lede { margin: 0; color: var(--vscode-descriptionForeground); line-height: 1.55; max-width: 42ch; }
-  .field { display: flex; flex-direction: column; gap: 6px; }
-  label { font-size: 0.85rem; color: var(--vscode-descriptionForeground); }
-  input, textarea {
-    font-family: inherit; font-size: 1rem; padding: 9px 11px; border-radius: 6px;
-    background: var(--vscode-input-background); color: var(--vscode-input-foreground);
-    border: 1px solid var(--vscode-input-border, transparent);
-  }
-  textarea {
-    font-family: var(--vscode-editor-font-family, monospace); font-size: 0.85rem;
-    resize: vertical; min-height: 96px; line-height: 1.45;
-  }
-  input:focus-visible, textarea:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-  .methods { display: flex; flex-direction: column; gap: 10px; }
-  .method {
-    display: flex; align-items: center; gap: 13px; width: 100%; text-align: left;
-    padding: 14px 16px; border-radius: 9px; cursor: pointer;
-    background: var(--vscode-editorWidget-background);
-    border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.28));
-    color: inherit; font-family: inherit; font-size: 1rem;
-    transition: border-color 140ms ease, transform 140ms ease;
-  }
-  .method:hover { border-color: var(--vscode-focusBorder); transform: translateY(-1px); }
-  .method:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px; }
-  .method[disabled] { opacity: 0.5; cursor: default; transform: none; }
-  .method .glyph {
-    flex: none; width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
-    background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); font-size: 15px;
-  }
-  .method .chev { margin-left: auto; opacity: 0.6; transition: transform 160ms ease; }
-  .card.open .method .chev { transform: rotate(180deg); }
-  .card {
-    border-radius: 9px;
-    border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.28));
-    overflow: hidden;
-  }
-  .card > .method { border: none; border-radius: 0; width: 100%; }
-  .card.open { border-color: var(--vscode-focusBorder); }
-  .card .body {
-    display: flex; flex-direction: column; gap: 13px;
-    padding: 15px 16px 16px;
-    border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.28));
-    background: var(--vscode-editorWidget-background);
-  }
-  .outcome {
-    margin: 0; padding: 13px 16px; border-radius: 9px; line-height: 1.5;
-    border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.28));
-    background: var(--vscode-editorWidget-background);
-  }
-  .method.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: transparent; }
-  .method.primary .glyph { background: rgba(255,255,255,0.22); color: inherit; }
-  .method b { display: block; font-weight: 600; }
-  .method span { display: block; font-size: 0.83rem; opacity: 0.75; margin-top: 1px; }
-  .panel {
-    border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.28));
-    border-radius: 9px; padding: 18px; display: flex; flex-direction: column; gap: 14px;
-    background: var(--vscode-editorWidget-background);
-  }
-  .code {
-    font-family: var(--vscode-editor-font-family, monospace);
-    font-size: 2rem; font-weight: 700; letter-spacing: 0.16em; text-align: center;
-    padding: 14px; border-radius: 8px; user-select: all;
-    background: var(--vscode-textCodeBlock-background, rgba(128,128,128,0.14));
-  }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; }
-  button.action {
-    font-family: inherit; font-size: 0.9rem; padding: 7px 14px; border-radius: 6px; cursor: pointer;
-    border: 1px solid var(--vscode-button-border, transparent);
-    background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground);
-  }
-  button.action.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
-  button.action:hover { filter: brightness(1.12); }
-  .status { display: flex; align-items: center; gap: 10px; color: var(--vscode-descriptionForeground); font-size: 0.92rem; }
-  .spinner {
-    width: 15px; height: 15px; flex: none; border-radius: 50%;
-    border: 2px solid currentColor; border-right-color: transparent;
-    animation: spin 800ms linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .error { color: var(--vscode-errorForeground); font-size: 0.92rem; line-height: 1.5; }
-  .ok { color: var(--vscode-charts-green); font-weight: 600; }
-  .note { color: var(--vscode-descriptionForeground); font-size: 0.82rem; line-height: 1.6; }
-  .link { color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: underline; word-break: break-all; }
-  [hidden] { display: none !important; }
-  @media (prefers-reduced-motion: reduce) {
-    .spinner { animation: none; }
-    .method { transition: none; }
-  }
-</style>
-</head>
-<body>
-<canvas id="bg" aria-hidden="true"></canvas>
-<div class="shell">
-  <div class="hero">
-    <div class="mark">⇄</div>
-    <h1>Connect a Codex subscription</h1>
-    <p class="lede">Context Bridge runs the official <code>codex</code> sign-in and stores the result in
-      its own directory, so your existing login stays exactly as it is.</p>
-  </div>
+// ---------------------------------------------------------------------------
+// The page
+// ---------------------------------------------------------------------------
 
-  <div class="field" id="nameField">
-    <label for="label">Name this subscription</label>
-    <input id="label" type="text" placeholder="Subscription 2" autocomplete="off" spellcheck="false">
-  </div>
-
-  <div class="methods" id="methods">
-
+function codexCards() {
+  return `
     <section class="card" data-method="browser">
       <button class="method primary" data-open="browser">
         <span class="glyph">↗</span>
@@ -484,8 +517,250 @@ function html(webview) {
           (<code>%USERPROFILE%\\.codex\\auth.json</code> on Windows). Treat it like a password: it
           contains live access tokens. Choosing a file keeps the contents out of this page entirely.</p>
       </div>
+    </section>`;
+}
+
+function claudeCards() {
+  return `
+    <section class="card" data-method="browser">
+      <button class="method primary" data-open="browser">
+        <span class="glyph">↗</span>
+        <span><b>Sign in with Claude</b><span>Opens your browser and returns here automatically</span></span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="body" hidden>
+        <div class="status"><span class="spinner"></span><span data-status>Starting…</span></div>
+        <div data-link hidden>
+          <p class="note">Approve access in the browser. This tab updates by itself when you are done.</p>
+          <div class="row"><button class="action primary" data-verify>Open sign-in page</button></div>
+          <p class="link" data-authlink></p>
+        </div>
+        <div class="row">
+          <button class="action" data-retry="browser">Retry</button>
+          <button class="action" data-cancel>Cancel</button>
+        </div>
+        <p class="note">Uses a local callback on port 54545. If you are on SSH or in a container,
+          nothing is listening on that port there — use the authorization code instead.</p>
+      </div>
     </section>
 
+    <section class="card" data-method="code">
+      <button class="method" data-open="code">
+        <span class="glyph">⌗</span>
+        <span><b>Use an authorization code</b><span>No local port — approve anywhere, paste the code back</span></span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="body" hidden>
+        <div class="status"><span class="spinner"></span><span data-status>Preparing a sign-in link…</span></div>
+        <div data-link hidden>
+          <p class="note">Open this page, approve access, then copy the code it shows you:</p>
+          <div class="row"><button class="action primary" data-verify>Open sign-in page</button></div>
+          <p class="link" data-authlink></p>
+        </div>
+        <div class="field">
+          <label for="authCode">Authorization code</label>
+          <input id="authCode" type="text" placeholder="code#state" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="status" data-busy hidden><span class="spinner"></span><span data-status>Exchanging…</span></div>
+        <div class="row">
+          <button class="action primary" data-submit="code">Complete sign-in</button>
+          <button class="action" data-retry="code">Retry</button>
+          <button class="action" data-cancel>Cancel</button>
+        </div>
+        <p class="note">The page shows the code as <code>code#state</code> — paste the whole thing.
+          Pasting the full callback URL works too. Codes are single-use and expire within minutes.</p>
+      </div>
+    </section>
+
+    <section class="card" data-method="import">
+      <button class="method" data-open="import">
+        <span class="glyph">⇐</span>
+        <span><b>Use the login already on this machine</b><span>Adopt the account Claude Code is signed in as</span></span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="body" hidden>
+        <div class="status"><span class="spinner"></span><span data-status>Copying the current login…</span></div>
+        <div class="row">
+          <button class="action" data-retry="import">Retry</button>
+          <button class="action" data-cancel>Cancel</button>
+        </div>
+        <p class="note">Copies the credential from <code>~/.claude</code> into this account's own
+          directory. The original is left exactly as it is, so Claude Code stays signed in.</p>
+      </div>
+    </section>
+
+    <section class="card" data-method="paste">
+      <button class="method" data-open="paste">
+        <span class="glyph">⇩</span>
+        <span><b>Paste an existing login</b><span>Bring a credential across from another machine</span></span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="body" hidden>
+        <div class="field">
+          <label for="claudeCreds">Contents of <code>.credentials.json</code></label>
+          <textarea id="claudeCreds" rows="5" placeholder='{ "claudeAiOauth": { "accessToken": "..." } }'
+            autocomplete="off" spellcheck="false"></textarea>
+        </div>
+        <div class="status" data-busy hidden><span class="spinner"></span><span data-status>Adopting…</span></div>
+        <div class="row">
+          <button class="action primary" data-submit="paste">Use this login</button>
+          <button class="action" data-pick-file>Choose a file…</button>
+          <button class="action" data-retry="paste" hidden>Retry</button>
+          <button class="action" data-cancel>Cancel</button>
+        </div>
+        <p class="note">On the signed-in machine the file is at <code>~/.claude/.credentials.json</code>
+          (<code>%USERPROFILE%\\.claude\\.credentials.json</code> on Windows). Treat it like a password.
+          Choosing a file keeps the contents out of this page entirely. macOS keeps this in the
+          Keychain instead, so there is no file to copy there.</p>
+      </div>
+    </section>`;
+}
+
+const LEDE = {
+  codex: `Context Bridge runs the official <code>codex</code> sign-in and stores the result in
+      its own directory, so your existing login stays exactly as it is.`,
+  claude: `Context Bridge runs Claude's own sign-in flow and stores the result in its own
+      directory, so your existing login stays exactly as it is.`
+};
+
+function html(webview, provider) {
+  const nonce = crypto.randomBytes(16).toString('base64');
+  const claude = provider === 'claude';
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: var(--vscode-font-family);
+    color: var(--vscode-foreground);
+    background: var(--vscode-editor-background);
+    display: grid;
+    place-items: center;
+    overflow: auto;
+  }
+  #bg { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; }
+  .shell {
+    position: relative; z-index: 1;
+    width: min(560px, 92vw);
+    padding: 40px 0 56px;
+    display: flex; flex-direction: column; gap: 26px;
+  }
+  .hero { text-align: center; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+  .mark {
+    width: 54px; height: 54px; border-radius: 15px;
+    display: grid; place-items: center;
+    background: ${claude ? '#d97757' : 'var(--vscode-button-background)'};
+    color: ${claude ? '#1a1a19' : 'var(--vscode-button-foreground)'};
+    font-size: 24px; font-weight: 700;
+  }
+  h1 { margin: 6px 0 0; font-size: 1.75rem; font-weight: 600; letter-spacing: -0.01em; }
+  .lede { margin: 0; color: var(--vscode-descriptionForeground); line-height: 1.55; max-width: 42ch; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  label { font-size: 0.85rem; color: var(--vscode-descriptionForeground); }
+  input, textarea {
+    font-family: inherit; font-size: 1rem; padding: 9px 11px; border-radius: 6px;
+    background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border, transparent);
+  }
+  textarea {
+    font-family: var(--vscode-editor-font-family, monospace); font-size: 0.85rem;
+    resize: vertical; min-height: 96px; line-height: 1.45;
+  }
+  input:focus-visible, textarea:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+  .methods { display: flex; flex-direction: column; gap: 10px; }
+  .method {
+    display: flex; align-items: center; gap: 13px; width: 100%; text-align: left;
+    padding: 14px 16px; border-radius: 9px; cursor: pointer;
+    background: var(--vscode-editorWidget-background);
+    border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.28));
+    color: inherit; font-family: inherit; font-size: 1rem;
+    transition: border-color 140ms ease, transform 140ms ease;
+  }
+  .method:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .method:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .method[disabled] { opacity: 0.5; cursor: default; transform: none; }
+  .method .glyph {
+    flex: none; width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
+    background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); font-size: 15px;
+  }
+  .method .chev { margin-left: auto; opacity: 0.6; transition: transform 160ms ease; }
+  .card.open .method .chev { transform: rotate(180deg); }
+  :root { --accent: ${claude ? '#d97757' : 'var(--vscode-focusBorder)'}; }
+  .card {
+    border-radius: 9px;
+    border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.28));
+    overflow: hidden;
+  }
+  .card > .method { border: none; border-radius: 0; width: 100%; }
+  .card.open { border-color: var(--accent); }
+  .card .body {
+    display: flex; flex-direction: column; gap: 13px;
+    padding: 15px 16px 16px;
+    border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.28));
+    background: var(--vscode-editorWidget-background);
+  }
+  .outcome {
+    margin: 0; padding: 13px 16px; border-radius: 9px; line-height: 1.5;
+    border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.28));
+    background: var(--vscode-editorWidget-background);
+  }
+  .method.primary { background: ${claude ? '#d97757' : 'var(--vscode-button-background)'}; color: ${claude ? '#1a1a19' : 'var(--vscode-button-foreground)'}; border-color: transparent; }
+  .method.primary .glyph { background: rgba(0,0,0,0.16); color: inherit; }
+  .method b { display: block; font-weight: 600; }
+  .method span { display: block; font-size: 0.83rem; opacity: 0.75; margin-top: 1px; }
+  .code {
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 2rem; font-weight: 700; letter-spacing: 0.16em; text-align: center;
+    padding: 14px; border-radius: 8px; user-select: all;
+    background: var(--vscode-textCodeBlock-background, rgba(128,128,128,0.14));
+  }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button.action {
+    font-family: inherit; font-size: 0.9rem; padding: 7px 14px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--vscode-button-border, transparent);
+    background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground);
+  }
+  button.action.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  button.action:hover { filter: brightness(1.12); }
+  .status { display: flex; align-items: center; gap: 10px; color: var(--vscode-descriptionForeground); font-size: 0.92rem; }
+  .spinner {
+    width: 15px; height: 15px; flex: none; border-radius: 50%;
+    border: 2px solid currentColor; border-right-color: transparent;
+    animation: spin 800ms linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error { color: var(--vscode-errorForeground); font-size: 0.92rem; line-height: 1.5; }
+  .ok { color: var(--vscode-charts-green); font-weight: 600; }
+  .note { color: var(--vscode-descriptionForeground); font-size: 0.82rem; line-height: 1.6; }
+  .link { color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: underline; word-break: break-all; }
+  [hidden] { display: none !important; }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; }
+    .method { transition: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="bg" aria-hidden="true"></canvas>
+<div class="shell">
+  <div class="hero">
+    <div class="mark">⇄</div>
+    <h1>${claude ? 'Connect a Claude account' : 'Connect a Codex subscription'}</h1>
+    <p class="lede">${LEDE[claude ? 'claude' : 'codex']}</p>
+  </div>
+
+  <div class="field" id="nameField">
+    <label for="label">Name this account</label>
+    <input id="label" type="text" placeholder="Account 2" autocomplete="off" spellcheck="false">
+  </div>
+
+  <div class="methods" id="methods">
+${claude ? claudeCards() : codexCards()}
   </div>
 
   <p class="outcome" id="outcome" hidden></p>
@@ -494,14 +769,16 @@ function html(webview) {
 const vscode = acquireVsCodeApi();
 const $ = (id) => document.getElementById(id);
 const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const ACCENT = ${claude ? "'#d97757'" : 'null'};
 let method = 'browser';
 
-// Ambient background: slow drifting colour fields, drawn from the editor's own
-// accent so it belongs to whatever theme is active. Static under reduced motion.
+// Ambient background: slow drifting colour fields, drawn from the agent's own
+// accent so the page belongs to whatever it is signing into. Static under
+// reduced motion.
 (function background() {
   const canvas = $('bg');
   const ctx = canvas.getContext('2d');
-  const accent = getComputedStyle(document.body).getPropertyValue('--vscode-button-background').trim() || '#3b82f6';
+  const accent = ACCENT || getComputedStyle(document.body).getPropertyValue('--vscode-button-background').trim() || '#3b82f6';
   let width = 0, height = 0;
 
   function size() {
@@ -541,18 +818,23 @@ const within = (name, selector) => card(name).querySelector(selector);
 const STARTING = {
   browser: 'Opening your browser…',
   device: 'Requesting a code…',
+  code: 'Exchanging the code…',
+  import: 'Copying the current login…',
   token: 'Verifying the token…',
   apikey: 'Verifying the key…',
   paste: 'Adopting the login…'
 };
 // Methods that collect input before they can run, and where they read it from.
-const SECRET_INPUT = { token: 'accessToken', apikey: 'apiKey', paste: 'authJson' };
+const SECRET_INPUT = ${claude ? "{ code: 'authCode', paste: 'claudeCreds' }" : "{ token: 'accessToken', apikey: 'apiKey', paste: 'authJson' }"};
+// Two-step methods run something on open (to produce a link) and are completed
+// later by a submit. A one-step method with an input just waits for the value.
+const TWO_STEP = ${claude ? "{ code: true }" : '{}'};
 const secretOf = (name) => (SECRET_INPUT[name] ? $(SECRET_INPUT[name]).value.trim() : undefined);
 
 // One method runs at a time, but every method stays on screen. Opening a card
 // expands it in place and starts that flow; the others remain available so a
 // method that is not working can be abandoned without losing the panel.
-function open(name, options = {}) {
+function open(name) {
   document.querySelectorAll('.card').forEach((element) => {
     const isTarget = element.dataset.method === name;
     element.classList.toggle('open', isTarget);
@@ -561,8 +843,8 @@ function open(name, options = {}) {
   $('outcome').hidden = true;
   method = name;
   reset(name);
-  // Cards that carry a secret collect it before anything is spawned.
-  if (SECRET_INPUT[name]) { $(SECRET_INPUT[name]).focus(); return; }
+  // Cards that only carry a secret collect it before anything is started.
+  if (SECRET_INPUT[name] && !TWO_STEP[name]) { $(SECRET_INPUT[name]).focus(); return; }
   run(name);
 }
 
@@ -570,17 +852,17 @@ function reset(name) {
   const body = card(name).querySelector('.body');
   body.querySelectorAll('[data-link], [data-code-block], [data-busy]').forEach((element) => { element.hidden = true; });
   const status = within(name, '.status');
-  if (status && !SECRET_INPUT[name]) status.hidden = false;
+  if (status && (!SECRET_INPUT[name] || TWO_STEP[name])) status.hidden = false;
   const copy = within(name, '[data-copy]');
   if (copy) copy.textContent = 'Copy code';
   const retry = within(name, '[data-retry]');
-  if (retry && SECRET_INPUT[name]) retry.hidden = true;
+  if (retry && SECRET_INPUT[name] && !TWO_STEP[name]) retry.hidden = true;
 }
 
 function run(name, secret) {
   within(name, '[data-status]').textContent = STARTING[name] || 'Starting…';
   const busy = within(name, '[data-busy]');
-  if (busy) busy.hidden = false;
+  if (busy && secret !== undefined) busy.hidden = false;
   vscode.postMessage({ type: 'start', method: name, label: $('label').value, secret });
 }
 
@@ -589,6 +871,12 @@ function run(name, secret) {
 function runWithSecret(name) {
   const secret = secretOf(name);
   if (SECRET_INPUT[name] && !secret) { $(SECRET_INPUT[name]).focus(); return; }
+  if (TWO_STEP[name]) {
+    const busy = within(name, '[data-busy]');
+    if (busy) busy.hidden = false;
+    vscode.postMessage({ type: 'submit', method: name, label: $('label').value, secret });
+    return;
+  }
   run(name, secret);
 }
 
@@ -612,6 +900,9 @@ document.querySelectorAll('[data-retry]').forEach((button) =>
     vscode.postMessage({ type: 'cancel' });
     $('outcome').hidden = true;
     reset(name);
+    // Retrying a two-step method starts over from a fresh link: its code is
+    // single-use, so resubmitting the old one can only fail.
+    if (TWO_STEP[name]) { run(name); return; }
     runWithSecret(name);
   }));
 
@@ -683,6 +974,8 @@ window.addEventListener('message', (event) => {
         const verify = within(name, '[data-verify]');
         if (verify) verify.dataset.url = parsed.authorizeUrl;
       }
+      const status = within(name, '.status');
+      if (status) status.hidden = TWO_STEP[name] === true;
       within(name, '[data-status]').textContent = 'Waiting for you to finish in the browser…';
     }
     return;
@@ -726,4 +1019,4 @@ function esc(value) {
 </html>`;
 }
 
-module.exports = { CodexLoginPanel };
+module.exports = { LoginPanel, CodexLoginPanel: LoginPanel };

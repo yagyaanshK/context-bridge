@@ -2,7 +2,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const vscode = require('vscode');
 const { AccountsStore, AccountsWebview } = require('./accounts-view.cjs');
-const { CodexLoginPanel } = require('./login-view.cjs');
+const { LoginPanel } = require('./login-view.cjs');
 
 let accountsProvider;
 let accountStatus;
@@ -11,13 +11,13 @@ let loginPanel;
 async function activateExtension(context) {
   accountsProvider = new AccountsStore(core);
   const accountsWebview = new AccountsWebview(accountsProvider);
-  loginPanel = new CodexLoginPanel(context, core, accountsProvider);
+  loginPanel = new LoginPanel(context, core, accountsProvider);
 
   // The panel is only visible when its view is open, so the account in use also
   // lives in the status bar - that is where you look while actually working.
   accountStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   accountStatus.command = 'contextBridge.switchAccount';
-  accountStatus.name = 'Context Bridge: Codex subscription';
+  accountStatus.name = 'Context Bridge: active account';
   accountsProvider.onDidChange(() => accountsProvider.summary().then(renderStatus));
 
   context.subscriptions.push(
@@ -27,8 +27,12 @@ async function activateExtension(context) {
     command('contextBridge.switchAccount', (item) => switchAccount(item)),
     command('contextBridge.showRawUsage', (item) => showRawUsage(item)),
     command('contextBridge.undoAccountSwitch', () => undoAccountSwitch()),
-    command('contextBridge.addCodexAccount', () => addCodexAccount()),
-    command('contextBridge.importCodexAccount', () => importCodexAccount()),
+    command('contextBridge.addAccount', (item) => addAccount(item)),
+    command('contextBridge.importAccount', (item) => importAccount(item)),
+    command('contextBridge.addCodexAccount', () => addAccount({ provider: 'codex' })),
+    command('contextBridge.addClaudeAccount', () => addAccount({ provider: 'claude' })),
+    command('contextBridge.importCodexAccount', () => importAccount({ provider: 'codex' })),
+    command('contextBridge.importClaudeAccount', () => importAccount({ provider: 'claude' })),
     command('contextBridge.signInAccount', (item) => signInAccount(item)),
     command('contextBridge.refreshAccountQuota', () => refreshAccountQuota()),
     command('contextBridge.openAccountTerminal', (item) => openAccountTerminal(item)),
@@ -76,30 +80,39 @@ async function switchAccount(item) {
   const account = await resolveAccount(item, { excludeActive: true });
   if (!account) return;
 
-  const { activateCodexAccount } = await core();
-  await activateCodexAccount(account.id);
+  const { activateCodexAccount, activateClaudeAccount } = await core();
+  const activate = account.provider === 'claude' ? activateClaudeAccount : activateCodexAccount;
+  await activate(account.id);
   await accountsProvider.reloadUsage({ offline: true });
 
-  const summary = await accountsProvider.summary();
-  const remaining = summary.remaining === undefined ? '' : ` · ${formatPercent(summary.remaining)} left`;
+  const usage = accountsProvider.usage.get(account.id);
+  const remaining = usage?.windows?.length
+    ? ` · ${formatPercent(Math.min(...usage.windows.map((window) => window.remainingPercent)))} left`
+    : '';
 
   vscode.window
     .showInformationMessage(
-      `Codex is now using "${account.label}"${remaining}. Reload if an open Codex session does not pick it up.`,
+      `${agentName(account.provider)} is now using "${account.label}"${remaining}. Reload if an open session does not pick it up.`,
       'Reload Window',
       'Undo'
     )
     .then((choice) => {
       if (choice === 'Reload Window') vscode.commands.executeCommand('workbench.action.reloadWindow');
-      else if (choice === 'Undo') undoAccountSwitch();
+      else if (choice === 'Undo') undoAccountSwitch({ provider: account.provider });
     });
 }
 
-async function undoAccountSwitch() {
-  const { restoreCodexBackup } = await core();
-  await restoreCodexBackup();
+function agentName(provider) {
+  return provider === 'claude' ? 'Claude Code' : 'Codex';
+}
+
+async function undoAccountSwitch(item) {
+  const { restoreCodexBackup, restoreClaudeBackup } = await core();
+  const provider = item?.provider === 'claude' ? 'claude' : 'codex';
+  const restore = provider === 'claude' ? restoreClaudeBackup : restoreCodexBackup;
+  await restore();
   await accountsProvider.reloadUsage({ offline: true });
-  vscode.window.showInformationMessage('Context Bridge: restored the previous Codex login.');
+  vscode.window.showInformationMessage(`Context Bridge: restored the previous ${agentName(provider)} login.`);
 }
 
 // The usage payload is not a published contract, so when the panel cannot find
@@ -108,19 +121,26 @@ async function showRawUsage(item) {
   const account = await resolveAccount(item);
   if (!account) return;
 
-  const { readCodexAuth, codexHome, fetchCodexUsage, CODEX_USAGE_URL } = await core();
-  const auth = await readCodexAuth(codexHome(account.id));
+  const api = await core();
+  const claude = account.provider === 'claude';
+
+  const endpoint = claude ? api.CLAUDE_USAGE_URL : api.CODEX_USAGE_URL;
+  const auth = claude
+    ? await api.ensureClaudeAccessToken(account.id)
+    : await api.readCodexAuth(api.codexHome(account.id));
   if (!auth?.accessToken) throw new Error(`"${account.label}" is not signed in.`);
 
-  const raw = await withProgress(`Reading usage for ${account.label}`, async () => {
-    const response = await fetch(CODEX_USAGE_URL, {
-      headers: {
+  const headers = claude
+    ? api.claudeApiHeaders(auth.accessToken)
+    : {
         Authorization: `Bearer ${auth.accessToken}`,
         Accept: 'application/json',
         'User-Agent': 'context-bridge',
         ...(auth.accountId ? { 'ChatGPT-Account-Id': auth.accountId } : {})
-      }
-    });
+      };
+
+  const raw = await withProgress(`Reading usage for ${account.label}`, async () => {
+    const response = await fetch(endpoint, { headers });
     const text = await response.text();
     try {
       return { status: response.status, body: JSON.parse(text) };
@@ -129,13 +149,14 @@ async function showRawUsage(item) {
     }
   });
 
-  const parsed = await fetchCodexUsage(auth).catch((error) => ({ error: error.message }));
+  const parse = claude ? api.fetchClaudeUsage : api.fetchCodexUsage;
+  const parsed = await parse(auth).catch((error) => ({ error: error.message }));
   const document = await vscode.workspace.openTextDocument({
     language: 'json',
     content: JSON.stringify(
       {
-        note: 'Raw response from the Codex usage endpoint, plus how Context Bridge parsed it. No tokens are included.',
-        endpoint: CODEX_USAGE_URL,
+        note: `Raw response from the ${agentName(account.provider)} usage endpoint, plus how Context Bridge parsed it. No tokens are included.`,
+        endpoint,
         httpStatus: raw.status,
         rawResponse: raw.body,
         parsedByContextBridge: parsed
@@ -157,7 +178,7 @@ function renderStatus(summary) {
     remaining === undefined
       ? `$(arrow-swap) ${summary.label}`
       : `$(arrow-swap) ${summary.label} ${formatPercent(remaining)}`;
-  accountStatus.tooltip = `Codex is using "${summary.label}". Click to switch subscription.`;
+  accountStatus.tooltip = `${summary.title || 'Codex'} is using "${summary.label}". Click to switch account.`;
   accountStatus.backgroundColor =
     typeof remaining === 'number' && remaining <= 10
       ? new vscode.ThemeColor('statusBarItem.warningBackground')
@@ -170,58 +191,92 @@ function formatPercent(value) {
   return `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
 }
 
-// Naming and sign-in both happen in the panel, so adding a subscription is one
+// Naming and sign-in both happen in the panel, so adding an account is one
 // uninterrupted flow rather than an input box followed by a terminal.
-async function addCodexAccount() {
-  const accounts = await accountsProvider.accounts();
-  await loginPanel.open({ label: `Subscription ${accounts.length + 1}` });
+async function addAccount(item) {
+  const provider = await resolveProvider(item);
+  if (!provider) return;
+  const accounts = await accountsProvider.accounts(provider);
+  await loginPanel.open({ provider, label: `${agentName(provider)} ${accounts.length + 1}` });
 }
 
-async function importCodexAccount() {
-  const { createAccount, importCodexAuth, defaultCodexHome } = await core();
-  const source = defaultCodexHome();
-  if (!fs.existsSync(path.join(source, 'auth.json'))) {
-    throw new Error(`No existing Codex login found at ${source}. Use "Add Codex Account" to sign in instead.`);
+// The panel names the agent it was clicked in; the palette has to ask.
+async function resolveProvider(item) {
+  if (item?.provider === 'codex' || item?.provider === 'claude') return item.provider;
+  const picked = await vscode.window.showQuickPick(
+    [
+      { label: 'Codex', description: 'ChatGPT subscription or API key', provider: 'codex' },
+      { label: 'Claude Code', description: 'Claude Pro, Max, Team or Console account', provider: 'claude' }
+    ],
+    { placeHolder: 'Which agent?' }
+  );
+  return picked?.provider;
+}
+
+async function importAccount(item) {
+  const provider = await resolveProvider(item);
+  if (!provider) return;
+
+  const api = await core();
+  const claude = provider === 'claude';
+  const source = claude ? api.defaultClaudeHome() : api.defaultCodexHome();
+  const credential = claude ? '.credentials.json' : 'auth.json';
+  if (!fs.existsSync(path.join(source, credential))) {
+    throw new Error(
+      `No existing ${agentName(provider)} login found at ${source}. Sign in from the panel instead.`
+    );
   }
 
   const label = await vscode.window.showInputBox({
-    title: 'Import Current Codex Login',
+    title: `Import current ${agentName(provider)} login`,
     prompt: `Name for the account currently signed in at ${source}`,
     value: 'Primary',
     validateInput: (value) => (value.trim() ? undefined : 'Enter a name.')
   });
   if (!label) return;
 
-  const account = await createAccount({ label: label.trim(), provider: 'codex' });
-  const auth = await importCodexAuth(account.id, source);
+  const account = await api.createAccount({ label: label.trim(), provider });
+  let auth = claude
+    ? await api.importClaudeAuth(account.id, source)
+    : await api.importCodexAuth(account.id, source);
+  // A Claude credential carries no email; ask the API who it belongs to.
+  if (claude) auth = (await api.backfillClaudeProfile(account.id).catch(() => auth)) || auth;
+
   await accountsProvider.reloadUsage({ force: true });
   vscode.window.showInformationMessage(
-    `Context Bridge: imported ${auth?.claims?.email || label.trim()} as "${account.label}". The original login is untouched.`
+    `Context Bridge: imported ${auth?.claims?.email || auth?.email || label.trim()} as "${account.label}". The original login is untouched.`
   );
 }
 
 async function signInAccount(item) {
   const account = await resolveAccount(item);
-  if (account) await loginPanel.open({ accountId: account.id, label: account.label });
+  if (account) {
+    await loginPanel.open({ provider: account.provider, accountId: account.id, label: account.label });
+  }
 }
 
 async function openAccountTerminal(item) {
   const account = await resolveAccount(item);
   if (!account) return;
-  const { codexEnv, ensureCodexHome, isSignedIn } = await core();
-  if (!(await isSignedIn(account.id))) {
-    throw new Error(`"${account.label}" is not signed in yet. Use "Sign In" first.`);
-  }
-  await ensureCodexHome(account.id);
+  const api = await core();
+  const claude = account.provider === 'claude';
+
+  const signedIn = claude ? await api.isClaudeSignedIn(account.id) : await api.isSignedIn(account.id);
+  if (!signedIn) throw new Error(`"${account.label}" is not signed in yet. Use "Sign In" first.`);
+
+  if (claude) await api.ensureClaudeHome(account.id);
+  else await api.ensureCodexHome(account.id);
 
   const root = await workspaceRoot();
   const terminal = vscode.window.createTerminal({
-    name: `Codex · ${account.label}`,
+    name: `${agentName(account.provider)} · ${account.label}`,
     cwd: root,
-    env: codexEnv(account.id)
+    // One environment variable is the whole isolation mechanism: the CLI
+    // treats whatever it points at as its entire world.
+    env: claude ? api.claudeEnv(account.id) : api.codexEnv(account.id)
   });
   terminal.show();
-  terminal.sendText('codex');
+  terminal.sendText(claude ? 'claude' : 'codex');
 }
 
 // Rename changes only the display label. The account id forms the path to its
@@ -285,34 +340,45 @@ async function forgetAccount(item) {
 }
 
 async function refreshAccountQuota() {
-  const accounts = await withProgress('Reading subscription quota', () =>
+  const accounts = await withProgress('Reading account quota', () =>
     accountsProvider.reloadUsage({ force: true })
   );
   if (accounts.length === 0) {
-    vscode.window.showInformationMessage('Context Bridge: no Codex accounts yet. Use "Add Codex Account".');
+    vscode.window.showInformationMessage('Context Bridge: no accounts yet. Add one from the Context Bridge panel.');
   }
 }
 
-// Invoked from a tree row we already know the account for, or from the palette
-// and status bar where we have to ask. The picker shows remaining quota so the
-// choice can be made without opening the panel first.
+// Invoked from a panel card we already know the account for, or from the
+// palette and status bar where we have to ask. The picker spans both agents
+// and labels which is which, and shows remaining quota so the choice can be
+// made without opening the panel first.
 async function resolveAccount(item, options = {}) {
   if (item?.account) return item.account;
 
-  const accounts = await accountsProvider.accounts();
-  // Buttons in the panel identify their subscription directly; the palette and
-  // the status bar arrive with nothing and have to ask.
+  const accounts = await accountsProvider.accounts(item?.provider);
+  // Buttons in the panel identify their account directly; the palette and the
+  // status bar arrive with nothing and have to ask.
   if (item?.accountId) {
     const known = accounts.find((account) => account.id === item.accountId);
     if (known) return known;
   }
 
-  if (accounts.length === 0) throw new Error('No Codex subscriptions yet. Use "Add Codex Account" first.');
+  if (accounts.length === 0) {
+    throw new Error('No accounts yet. Add one from the Context Bridge panel first.');
+  }
 
-  const activeId = await accountsProvider.reloadActive(accounts);
-  const pool = options.excludeActive ? accounts.filter((account) => account.id !== activeId) : accounts;
+  // "Active" is per agent: switching Codex says nothing about Claude, so each
+  // agent contributes its own account to exclude.
+  const activeIds = new Set();
+  for (const provider of ['codex', 'claude']) {
+    if (!accounts.some((account) => account.provider === provider)) continue;
+    const activeId = await accountsProvider.reloadActive(provider);
+    if (activeId) activeIds.add(activeId);
+  }
+
+  const pool = options.excludeActive ? accounts.filter((account) => !activeIds.has(account.id)) : accounts;
   if (pool.length === 0) {
-    vscode.window.showInformationMessage('Context Bridge: that is your only Codex subscription.');
+    vscode.window.showInformationMessage('Context Bridge: every account is already in use by its agent.');
     return undefined;
   }
 
@@ -323,14 +389,18 @@ async function resolveAccount(item, options = {}) {
         ? Math.min(...usage.windows.map((window) => window.remainingPercent))
         : undefined;
       return {
-        label: `${account.id === activeId ? '$(check) ' : ''}${account.label}`,
-        description: [remaining === undefined ? undefined : `${formatPercent(remaining)} left`, account.email]
+        label: `${activeIds.has(account.id) ? '$(check) ' : ''}${account.label}`,
+        description: [
+          agentName(account.provider),
+          remaining === undefined ? undefined : `${formatPercent(remaining)} left`,
+          account.email
+        ]
           .filter(Boolean)
           .join(' · '),
         account
       };
     }),
-    { placeHolder: options.excludeActive ? 'Switch Codex to which subscription?' : 'Choose a Codex subscription' }
+    { placeHolder: options.excludeActive ? 'Switch to which account?' : 'Choose an account' }
   );
   return picked?.account;
 }

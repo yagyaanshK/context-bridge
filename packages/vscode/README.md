@@ -44,55 +44,91 @@ The budget is on by default because an unbounded handoff is not actually lossles
 
 Every handoff opens with **Where This Left Off**: the last real request and the last assistant message quoted verbatim, plus files written and recent commands pulled from recorded tool-call arguments. It is extractive, never generated, and it is built from the whole session — so the last request survives even when the budget drops the turn that carried it. The workspace snapshot below it carries the uncommitted diff and a `git log -1` check, so the receiving agent can tell whether the tree moved on before it starts editing.
 
-## Codex subscriptions
+## Accounts
 
-A **Context Bridge** panel in the activity bar lists your Codex subscriptions as cards: plan, masked
-email, a usage bar, the remaining percentage of whichever window is tightest, and when it resets.
-A pooled bar at the top totals what you have across all of them. Buttons appear on hover, so nothing
-needs the command palette.
+An **Accounts** panel in the activity bar lists your Codex and Claude accounts in two labelled
+sections. Each card shows the plan, masked email, a usage bar, the remaining percentage of whichever
+window is tightest, and when it resets. Each section has its own pooled bar, because the two quotas
+are not the same currency and switching one has no effect on the other. Buttons are always visible,
+so nothing needs the command palette.
 
-Each subscription gets its own `CODEX_HOME` under `~/.context-bridge/accounts/`, so they all stay
-signed in simultaneously — there is nothing to swap.
+Every account gets its own configuration directory under `~/.context-bridge/accounts/` —
+`CODEX_HOME` for Codex, `CLAUDE_CONFIG_DIR` for Claude — so they all stay signed in
+simultaneously and there is nothing to swap.
 
-**Signing in** happens in a panel offering every method the Codex CLI supports. Each is a card that
-expands in place, so a method that will not work can be abandoned without losing the others, and each
-has its own Retry.
+### Signing in
 
-| Method | Local port | Browser here | Notes |
-|--------|-----------|--------------|-------|
-| Sign in with ChatGPT | `localhost:1455` | yes | The default. Cannot complete over SSH or in a container, because nothing is listening on that port there. |
-| Device code | none | no | Approve a short code from any device. Must be enabled in your ChatGPT security settings; a workspace admin can disable it. |
-| Access token | none | no | `--with-access-token`. Workspace admins issue these for trusted scripts and CI. |
-| API key | none | no | Billed per token at API rates, not against a subscription. |
-| Paste an existing login | none | no | Bring `auth.json` across from a machine that is already signed in. Choosing a file rather than pasting keeps the credential out of the panel. |
+Each method is a card that expands in place, so one that will not work can be abandoned without
+losing the others, and each has its own Retry.
 
-Behind it, the official `codex` binary runs as a
-background process with `CODEX_HOME` pointed at that subscription's directory — Context Bridge reads
-its output to drive the progress display, but never performs the OAuth exchange and never holds a
-token. The CLI opens your browser itself; if it cannot, the panel shows the link. The credential is written by `codex`, into its own
-directory. **Your existing login at `~/.codex` is never touched by signing in or adding an
-account**; only *switching* writes there, and it backs up what it replaces first.
+**Codex** methods drive the official `codex` binary as a background process. Context Bridge reads
+its output to render progress but never performs the OAuth exchange and never holds a token.
 
-**Click a row to switch.** The official Codex extension and CLI read one credential path, so
-switching rewrites it — which is exactly what makes the *official* Codex UI start using the
-subscription you picked. The account in use is marked, and shows in the status bar with its
-remaining quota. Every subscription stays signed in, so switching back is one more click; the
-confirmation toast also offers **Undo** and **Reload Window**.
+| Method | Local port | Notes |
+|--------|-----------|-------|
+| Sign in with ChatGPT | `localhost:1455` | The default. Cannot complete over SSH or in a container. |
+| Device code | none | Approve a short code from any device. A workspace admin can disable it. |
+| Access token | none | `--with-access-token`. Issued by workspace admins for trusted scripts and CI. |
+| API key | none | Billed per token at API rates, not against a subscription. |
+| Paste an existing login | none | Bring `auth.json` from a machine that is already signed in. |
+
+**Claude** works differently, and the difference is forced rather than chosen. Claude Code's login is
+an Ink terminal UI that requires raw mode on stdin, so a piped child process dies before printing
+anything; `claude setup-token` is the same UI and, by design, writes no credential at all. The
+official VS Code extension sidesteps this by *being* the CLI — it bundles the runtime — which is not
+something another extension can borrow. So Context Bridge runs the same public PKCE flow the CLI
+runs, against the same client id, and writes the credential itself.
+
+**This means Context Bridge performs the token exchange for Claude and handles those tokens**, which
+it never does for Codex. The endpoints involved are not a published contract and can change without
+notice; the flow is written to fail loudly rather than silently when they do.
+
+| Method | Local port | Notes |
+|--------|-----------|-------|
+| Sign in with Claude | `localhost:54545` | Opens the browser and returns to the panel by itself. |
+| Authorization code | none | Approve on any device, paste the code back. Works over SSH and in containers. |
+| Use the login on this machine | none | Adopt the account Claude Code is already signed in as. |
+| Paste an existing login | none | Bring `.credentials.json` from another machine. |
+
+For both agents, choosing a file rather than pasting keeps the credential out of the panel entirely —
+the extension reads it directly. Credentials are written `0600`. **Your existing logins at
+`~/.codex` and `~/.claude` are never touched by signing in or adding an account**; only
+*switching* writes there, and it backs up what it replaces first.
+
+macOS keeps Claude credentials in the Keychain rather than a file, so there is nothing to copy or
+adopt there.
+
+### Switching
+
+**Click "Use this" to switch.** The official CLIs and extensions read one credential path each, so
+switching rewrites it — which is exactly what makes the *official* UI start using the account you
+picked. For Claude that means two files: the credential, plus the `oauthAccount` key inside
+`~/.claude.json`, because that is where the email the client displays actually lives. Everything
+else in that file — project history, caches — is left byte-identical, and both files are backed up
+first.
+
+The account in use is marked and appears in the status bar with its remaining quota. Every account
+stays signed in, so switching back is one more click; the confirmation also offers **Undo** and
+**Reload Window**.
 
 | Action | Effect |
 |--------|--------|
-| **Click a row** | Switches Codex to that subscription. |
-| **Open Codex Terminal** | Starts `codex` as that subscription without changing the machine default. |
-| **Sign In** | Opens the sign-in panel: browser, device code, or API key. |
-| **Refresh Quota** | Forces a usage read; otherwise readings are cached for five minutes. |
-| **Raw Response** | Opens the endpoint's actual JSON next to how Context Bridge parsed it. Use this if the percentages look wrong or missing. |
+| **Use this** | Points that agent's official CLI and extension at this account. |
+| **Terminal** | Starts the agent as that account without changing the machine default. |
+| **Sign in** | Opens the sign-in panel for that agent. |
+| **Refresh now** | Forces a usage read; otherwise readings are cached for five minutes. |
+| **Raw Response** | Opens the endpoint's actual JSON next to how Context Bridge parsed it. |
+| **✎** (on hover) | Renames the account. The directory holding its credential never changes, so a rename cannot invalidate a login. |
 
-Switching is manual. The panel shows what each subscription has left and lets you choose — it does
-not fail over on its own when one runs out.
+Switching is manual. The panel shows what each account has left and lets you choose — it does not
+fail over on its own when one runs out.
+
+Claude access tokens expire every eight hours, and the official client renews only the account it is
+currently using. Context Bridge renews the others itself, so their quota stays readable.
 
 **What this cannot do.** A VS Code extension cannot add UI inside another extension's panel, so the
-picker lives in the sidebar and status bar rather than inside Codex's own menu. Tools that put it
-there patch the ChatGPT desktop application itself, which pins them to an exact app build.
+picker lives in the sidebar and status bar rather than inside Codex's or Claude's own menu. Tools
+that put it there patch the desktop application itself, which pins them to an exact app build.
 
 ---
 

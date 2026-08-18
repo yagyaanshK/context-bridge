@@ -2,8 +2,11 @@ import path from 'node:path';
 import { ensureDir, pathExists, readJson, writeJson } from '../fs-utils.js';
 import { accountDir } from './store.js';
 import { codexHome, readCodexAuth } from './codex.js';
+import { ensureClaudeAccessToken } from './claude.js';
+import { claudeApiHeaders } from './claude-oauth.js';
 
 export const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
+export const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 
 // Poll slowly and cache. Provider usage endpoints are rate limited in their own
 // right, and a panel that refreshes on every render is how monitoring tools end
@@ -32,7 +35,12 @@ async function writeQuotaCache(accountId, usage, options = {}) {
 
 // Returns the cached reading unless it is older than the TTL. `force` refreshes
 // regardless; `offline` never touches the network.
-export async function getCodexUsage(accountId, options = {}) {
+//
+// Provider-agnostic: `read` resolves the account's credential and `fetch` turns
+// it into a reading. Everything about caching, staleness and failure is the
+// same either way, and having one copy of it means the two providers cannot
+// drift into behaving differently.
+async function getUsage(accountId, read, fetchUsage, options = {}) {
   const ttl = Number.isFinite(options.ttlMs) ? options.ttlMs : DEFAULT_QUOTA_TTL_MS;
   const cached = await readQuotaCache(accountId, options);
 
@@ -49,13 +57,21 @@ export async function getCodexUsage(accountId, options = {}) {
   }
   if (options.offline) return cached ? { ...cached, fromCache: true } : null;
 
-  const auth = await readCodexAuth(codexHome(accountId, options));
+  let auth;
+  try {
+    auth = await read(accountId, options);
+  } catch (error) {
+    // Renewing an expired login is part of reading it, and can fail on its own.
+    if (cached) return { ...cached, fromCache: true, staleReason: error.message };
+    return { accountId, error: error.message, fetchedAt: new Date().toISOString(), windows: [] };
+  }
+
   if (!auth?.accessToken) {
     return { accountId, error: 'not-signed-in', fetchedAt: new Date().toISOString(), windows: [] };
   }
 
   try {
-    const usage = await fetchCodexUsage(auth, options);
+    const usage = await fetchUsage(auth, options);
     await writeQuotaCache(accountId, { accountId, ...usage }, options);
     return { accountId, ...usage, fromCache: false };
   } catch (error) {
@@ -64,6 +80,116 @@ export async function getCodexUsage(accountId, options = {}) {
     if (cached) return { ...cached, fromCache: true, staleReason: error.message };
     return { accountId, error: error.message, fetchedAt: new Date().toISOString(), windows: [] };
   }
+}
+
+export async function getCodexUsage(accountId, options = {}) {
+  return getUsage(accountId, (id, opts) => readCodexAuth(codexHome(id, opts)), fetchCodexUsage, options);
+}
+
+export async function getClaudeUsage(accountId, options = {}) {
+  return getUsage(accountId, ensureClaudeAccessToken, fetchClaudeUsage, options);
+}
+
+export async function fetchClaudeUsage(auth, options = {}) {
+  const fetchImpl = options.fetch || globalThis.fetch;
+  if (typeof fetchImpl !== 'function') throw new Error('No fetch implementation available.');
+
+  const response = await fetchImpl(options.usageUrl || CLAUDE_USAGE_URL, {
+    headers: claudeApiHeaders(auth.accessToken, options)
+  });
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('This Claude login has expired. Sign in again.');
+    throw new Error(`Usage request failed: ${response.status} ${response.statusText || ''}`.trim());
+  }
+
+  return { ...normalizeClaudeUsage(await response.json()), plan: auth.plan, email: auth.email };
+}
+
+// Claude's usage payload has a known shape, so it is read directly rather than
+// walked the way Codex's is.
+//
+// `limits` is the authoritative list: it is the curated set the client itself
+// renders, already carrying a kind, a percentage, a severity and a reset. The
+// top-level keys beside it include codenamed buckets that are not limits the
+// user has - reading those generically invents windows sitting at 100%
+// remaining and drags the headline number up with them.
+const CLAUDE_WINDOW_SECONDS = { session: 5 * 3600, five_hour: 5 * 3600, weekly: 7 * 86400, seven_day: 7 * 86400 };
+
+const CLAUDE_WINDOW_LABELS = {
+  session: '5h',
+  five_hour: '5h',
+  weekly_all: 'weekly',
+  seven_day: 'weekly',
+  weekly_opus: 'weekly · Opus',
+  seven_day_opus: 'weekly · Opus',
+  weekly_sonnet: 'weekly · Sonnet',
+  seven_day_sonnet: 'weekly · Sonnet'
+};
+
+// Only the named windows are read in the fallback. Anything else in the payload
+// is deliberately ignored - see above.
+const CLAUDE_FALLBACK_KEYS = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet'];
+
+export function normalizeClaudeUsage(payload) {
+  const windows = [];
+
+  if (Array.isArray(payload?.limits) && payload.limits.length > 0) {
+    for (const limit of payload.limits) {
+      const usedPercent = firstNumber(limit?.percent, limit?.utilization);
+      if (usedPercent === undefined) continue;
+      const key = String(limit.kind || limit.group || 'window');
+      windows.push(claudeWindow(key, usedPercent, limit.resets_at, limit.severity));
+    }
+  } else {
+    for (const key of CLAUDE_FALLBACK_KEYS) {
+      const node = payload?.[key];
+      const usedPercent = firstNumber(node?.utilization);
+      if (usedPercent === undefined) continue;
+      windows.push(claudeWindow(key, usedPercent, node.resets_at));
+    }
+  }
+
+  const rank = (window) => window.windowSeconds ?? Number.MAX_SAFE_INTEGER;
+  windows.sort((a, b) => rank(a) - rank(b));
+
+  return {
+    fetchedAt: new Date().toISOString(),
+    windows,
+    // The provider states severity outright; trust it over inferring from a
+    // percentage, which disagrees at the boundary.
+    limitReached: windows.some((window) => window.usedPercent >= 100 || window.severity === 'exceeded'),
+    credits: readClaudeCredits(payload)
+  };
+}
+
+function claudeWindow(key, usedPercent, resetsAt, severity) {
+  const group = key.replace(/^weekly_.*/, 'weekly').replace(/^seven_day.*/, 'weekly');
+  return {
+    key,
+    label: CLAUDE_WINDOW_LABELS[key] || key.replace(/_/g, ' '),
+    usedPercent: clampPercent(usedPercent),
+    remainingPercent: clampPercent(100 - usedPercent),
+    resetsAt: typeof resetsAt === 'string' && Number.isFinite(Date.parse(resetsAt))
+      ? new Date(resetsAt).toISOString()
+      : undefined,
+    windowSeconds: CLAUDE_WINDOW_SECONDS[key] || CLAUDE_WINDOW_SECONDS[group],
+    severity
+  };
+}
+
+// Extra usage is a second axis, exactly as credits are for Codex: a plan can be
+// out of quota and still able to send.
+function readClaudeCredits(payload) {
+  const extra = payload?.extra_usage;
+  const spend = payload?.spend;
+  const enabled = Boolean(extra?.is_enabled ?? spend?.enabled);
+  if (!enabled) return undefined;
+  const balance = Number(spend?.balance ?? extra?.used_credits);
+  return {
+    hasCredits: enabled && !spend?.spend_limit_reached,
+    unlimited: false,
+    balance: Number.isFinite(balance) ? balance : undefined
+  };
 }
 
 export async function fetchCodexUsage(auth, options = {}) {

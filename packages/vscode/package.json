@@ -2,7 +2,7 @@
   "name": "context-bridge-vscode",
   "displayName": "Context Bridge",
   "description": "Continue developer agent sessions across Claude, Codex, and other tools from VS Code.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "yagyaanshK",
   "license": "MIT",
   "type": "commonjs",
@@ -15,8 +15,6 @@
   "activationEvents": [
     "onView:contextBridgeAccounts",
     "onCommand:contextBridge.switchAccount",
-    "onCommand:contextBridge.addCodexAccount",
-    "onCommand:contextBridge.importCodexAccount",
     "onCommand:contextBridge.refreshAccountQuota",
     "onCommand:contextBridge.discoverClaude",
     "onCommand:contextBridge.discoverCodex",
@@ -27,7 +25,13 @@
     "onCommand:contextBridge.handoffToCodexExisting",
     "onCommand:contextBridge.handoffToCodexNew",
     "onCommand:contextBridge.openLatestHandoff",
-    "onCommand:contextBridge.copyLatestHandoffPrompt"
+    "onCommand:contextBridge.copyLatestHandoffPrompt",
+    "onCommand:contextBridge.addAccount",
+    "onCommand:contextBridge.importAccount",
+    "onCommand:contextBridge.addCodexAccount",
+    "onCommand:contextBridge.addClaudeAccount",
+    "onCommand:contextBridge.importCodexAccount",
+    "onCommand:contextBridge.importClaudeAccount"
   ],
   "main": "./src/extension.cjs",
   "contributes": {
@@ -44,7 +48,7 @@
       "contextBridge": [
         {
           "id": "contextBridgeAccounts",
-          "name": "Codex Subscriptions",
+          "name": "Accounts",
           "contextualTitle": "Context Bridge",
           "type": "webview"
         }
@@ -52,8 +56,25 @@
     },
     "commands": [
       {
+        "command": "contextBridge.addAccount",
+        "title": "Context Bridge: Add Account",
+        "icon": "$(add)"
+      },
+      {
+        "command": "contextBridge.importAccount",
+        "title": "Context Bridge: Import Current Login"
+      },
+      {
+        "command": "contextBridge.addClaudeAccount",
+        "title": "Context Bridge: Add Claude Account"
+      },
+      {
+        "command": "contextBridge.importClaudeAccount",
+        "title": "Context Bridge: Import Current Claude Login"
+      },
+      {
         "command": "contextBridge.addCodexAccount",
-        "title": "Context Bridge: Add Codex Account",
+        "title": "Context Bridge: Add Codex Subscription",
         "icon": "$(add)"
       },
       {
@@ -67,22 +88,22 @@
       },
       {
         "command": "contextBridge.refreshAccountQuota",
-        "title": "Context Bridge: Refresh Subscription Quota",
+        "title": "Context Bridge: Refresh Account Quota",
         "icon": "$(refresh)"
       },
       {
         "command": "contextBridge.openAccountTerminal",
-        "title": "Context Bridge: Open Codex Terminal for Account",
+        "title": "Context Bridge: Open Terminal for Account",
         "icon": "$(terminal)"
       },
       {
         "command": "contextBridge.switchAccount",
-        "title": "Context Bridge: Switch Codex Subscription",
+        "title": "Context Bridge: Switch Account",
         "icon": "$(arrow-swap)"
       },
       {
         "command": "contextBridge.undoAccountSwitch",
-        "title": "Context Bridge: Undo Codex Subscription Switch"
+        "title": "Context Bridge: Undo Account Switch"
       },
       {
         "command": "contextBridge.showRawUsage",
@@ -91,12 +112,12 @@
       },
       {
         "command": "contextBridge.renameAccount",
-        "title": "Context Bridge: Rename Codex Subscription",
+        "title": "Context Bridge: Rename Account",
         "icon": "$(edit)"
       },
       {
         "command": "contextBridge.forgetAccount",
-        "title": "Context Bridge: Remove Codex Account",
+        "title": "Context Bridge: Remove Account",
         "icon": "$(trash)"
       },
       {
@@ -208,7 +229,7 @@
     "menus": {
       "view/title": [
         {
-          "command": "contextBridge.addCodexAccount",
+          "command": "contextBridge.addAccount",
           "when": "view == contextBridgeAccounts",
           "group": "navigation@1"
         },
@@ -218,7 +239,7 @@
           "group": "navigation@2"
         },
         {
-          "command": "contextBridge.importCodexAccount",
+          "command": "contextBridge.importAccount",
           "when": "view == contextBridgeAccounts",
           "group": "1_add"
         }
@@ -246,7 +267,7 @@
     }
   },
   "dependencies": {
-    "@context-bridge/core": "0.6.0"
+    "@context-bridge/core": "0.7.0"
   },
   "devDependencies": {
     "@types/vscode": "^1.95.0"
