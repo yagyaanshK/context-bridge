@@ -51,7 +51,8 @@ Export options:
                           Receiving agents refuse or silently truncate oversized
                           handoffs, so the budget is on by default.
   --no-dedupe             Keep consecutive duplicate turns instead of collapsing them.
-  --since-last-export     Only include turns recorded after the previous export.
+  --since-last-export     Send only what the target has not seen: its own last turn,
+                          or the last handoff aimed at it, whichever is later.
                           Off by default: a new agent session has no memory of
                           what an earlier handoff already delivered.
   --tool-max-chars <n>    Truncate tool-output turns over n chars (default 2000, 0 = off).

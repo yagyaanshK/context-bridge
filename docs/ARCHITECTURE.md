@@ -128,6 +128,31 @@ Inline media handling:
 - long bare base64 blobs are replaced with compact omission markers
 - raw native transcript files remain referenced for auditability
 
+## Round Trips
+
+A ledger that only flows one way needs none of this. One that ping-pongs does, and
+`packages/core/src/roundtrip.js` holds the three mechanics involved.
+
+**Plumbing removal.** Pasting a handoff puts the prompt into the receiving agent's transcript, and
+the prompt tells that agent to read the handoff file — so re-importing it captures both. Left alone,
+the next handoff carries a user turn that is really Context Bridge's prompt, plus a whole handoff
+document nested inside itself and truncated mid-page. `stripHandoffPlumbing` drops both. Detection
+requires two markers, each anchored to the start of a line and found within the first 4000 characters,
+so a turn that merely quotes one — which happens whenever Context Bridge is the project being worked
+on — is kept.
+
+**Per-agent watermarks.** `lastSeenBy` answers how far an agent has already seen: the later of the
+last handoff aimed at it and its own last turn in the ledger. Both halves matter. Using the newest
+export of any target loses work — hand off to Claude, refresh Claude again, return to Codex, and
+everything Claude did before the refresh falls outside the window. Ignoring the agent's own turns
+breaks the first return trip, where the agent has been sent no handoff at all but wrote half the
+ledger itself.
+
+**Origin chats.** `writeSession` records the native session id and the agent's own name for it, so
+`originChat` can say which chat a handoff should be continued in, and the VS Code session picker can
+offer it first. Only agent-assigned names are used; an unnamed session's opening request is not a
+name, and for a session started from a handoff it is Context Bridge's own prompt.
+
 ## Accounts
 
 An optional subsystem for running several Codex subscriptions and Claude accounts on one machine.

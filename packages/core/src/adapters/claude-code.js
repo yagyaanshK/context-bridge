@@ -61,7 +61,10 @@ export async function importClaudeSession(root, session) {
     provider: CLAUDE_PROVIDER,
     surface: 'cli',
     sessionId: `native-claude-${session.sessionId}`,
-    sourcePath: session.path
+    sourcePath: session.path,
+    nativeSessionId: session.sessionId,
+    title: session.title,
+    named: session.named
   });
 }
 

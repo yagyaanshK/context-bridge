@@ -2,7 +2,7 @@
   "name": "context-bridge-vscode",
   "displayName": "Context Bridge",
   "description": "Continue developer agent sessions across Claude, Codex, and other tools from VS Code.",
-  "version": "0.7.5",
+  "version": "0.8.0",
   "publisher": "yagyaanshK",
   "license": "MIT",
   "type": "commonjs",
@@ -177,7 +177,7 @@
         "contextBridge.sinceLastExport": {
           "type": "boolean",
           "default": false,
-          "description": "Only include turns recorded after the previous export. Keeps repeat handoffs small, but a new agent session has no memory of what an earlier handoff delivered, so leave this off unless you always paste every handoff into the same continuing session."
+          "description": "Send only what the receiving agent has not seen. Its watermark is its own last turn or the last handoff aimed at it, whichever is later, so a round trip delivers just the other agent's work and never re-sends an agent its own history. Leave this off if you paste handoffs into fresh sessions, which have no memory of what an earlier handoff delivered."
         },
         "contextBridge.dedupeTurns": {
           "type": "boolean",

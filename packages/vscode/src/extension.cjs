@@ -468,7 +468,8 @@ async function resolveSourceSession(provider, root) {
   );
   if (sessions.length === 0) return { status: 'none' };
 
-  const matched = sessions.filter((session) => session.matchesProject);
+  const origin = await ledgerOriginChat(root, provider === 'codex' ? 'codex' : 'claude');
+  const matched = orderByOrigin(sessions.filter((session) => session.matchesProject), origin);
 
   if (matched.length === 1) return { status: 'matched', session: matched[0] };
 
@@ -480,7 +481,7 @@ async function resolveSourceSession(provider, root) {
     if (vscode.workspace.getConfiguration('contextBridge').get('alwaysUseLatestSession')) {
       return { status: 'matched', session: matched[0] };
     }
-    const picked = await vscode.window.showQuickPick(pickableSessions(matched), {
+    const picked = await vscode.window.showQuickPick(pickableSessions(matched, origin), {
       placeHolder: `Which ${provider} session? ${matched.length} were started in this workspace`,
       matchOnDescription: true,
       matchOnDetail: true
@@ -504,7 +505,7 @@ async function resolveSourceSession(provider, root) {
   );
   if (choice === 'Use Most Recent') return { status: 'fallback', session: recent };
   if (choice === 'Choose Another Session') {
-    const picked = await vscode.window.showQuickPick(pickableSessions(sessions), {
+    const picked = await vscode.window.showQuickPick(pickableSessions(sessions, origin), {
       placeHolder: `All ${provider} sessions on this machine`,
       matchOnDescription: true,
       matchOnDetail: true
@@ -524,13 +525,37 @@ async function resolveSourceSession(provider, root) {
 // poor stand-in, because sessions forked from a common parent share it word for
 // word and render as a wall of identical rows. For those the most recent
 // substantive request leads instead, since that is where they diverge.
-function pickableSessions(sessions) {
+// Which chat the ledger in this workspace was last built from, for one agent.
+// Undefined before the first handoff, and whenever the core cannot be loaded.
+async function ledgerOriginChat(root, target) {
+  try {
+    const { readManifest, originChat } = await core();
+    return originChat(await readManifest(root), target);
+  } catch {
+    return undefined;
+  }
+}
+
+// A session already in the ledger is almost always the one meant: it is the
+// chat this workspace's handoffs have been built from. It leads the list and
+// says so, rather than being left to be found among the others.
+function orderByOrigin(sessions, origin) {
+  if (!origin?.sessionId) return sessions;
+  const index = sessions.findIndex((session) => session.sessionId === origin.sessionId);
+  if (index <= 0) return sessions;
+  return [sessions[index], ...sessions.slice(0, index), ...sessions.slice(index + 1)];
+}
+
+function pickableSessions(sessions, origin) {
   return sessions.map((session) => {
     const opening = session.title;
     const latest = session.latest;
     const label = session.named && opening ? opening : latest || opening || session.sessionId;
 
     const context = [];
+    if (origin?.sessionId && session.sessionId === origin.sessionId) {
+      context.push('already in this workspace ledger');
+    }
     if (session.named && latest) context.push(`latest: ${latest}`);
     else if (session.named && session.opening) context.push(`started: ${session.opening}`);
     else if (latest && opening && label !== opening) context.push(`started: ${opening}`);
@@ -700,9 +725,13 @@ async function handoff(target, mode) {
     });
   });
 
-  const prompt = handoffPrompt(target, mode, result.path);
+  // Which chat on the receiving side this ledger already belongs to. Naming it
+  // is what makes a return trip land in the original conversation instead of a
+  // fresh one that has to be re-explained.
+  const destination = mode === 'existing' ? await ledgerOriginChat(root, target) : undefined;
+  const prompt = handoffPrompt(target, mode, result.path, destination);
   await vscode.env.clipboard.writeText(prompt);
-  await rememberLatest(root, target, result.path, prompt);
+  await rememberLatest(root, target, result.path, prompt, destination);
   await publishHandoffState();
 
   if (openDocument) await openDocumentAt(result.path);
@@ -710,8 +739,9 @@ async function handoff(target, mode) {
 
   const targetLabel = target === 'claude' ? 'Claude' : target === 'codex' ? 'Codex' : target;
   const wordCount = countWords(prompt);
+  const into = chatLabel(destination) ? ` chat "${chatLabel(destination)}"` : '';
   vscode.window.showInformationMessage(
-    `Context Bridge: ${wordCount}-word handoff prompt copied to clipboard — paste it into ${targetLabel} to continue.`,
+    `Context Bridge: ${wordCount}-word handoff prompt copied to clipboard — paste it into ${targetLabel}${into} to continue.`,
     'Copy Prompt Again',
     'Open Handoff'
   ).then((choice) => {
@@ -772,10 +802,19 @@ async function findAgentCommand(target) {
     commands.find((item) => namePattern.test(item));
 }
 
-function handoffPrompt(target, mode, handoffPath) {
+// Only a chat the agent named itself is worth quoting back. An unnamed one is
+// identified by its opening request, which is too long for a prompt line and,
+// for forked sessions, does not identify anything.
+function chatLabel(chat) {
+  return chat?.named && chat.title ? chat.title : undefined;
+}
+
+function handoffPrompt(target, mode, handoffPath, destination) {
   const sessionText = mode === 'new' ? 'Start a new session' : 'Continue in this existing session';
+  const named = chatLabel(destination);
   return [
     `${sessionText} using this Context Bridge handoff:`,
+    ...(named && mode !== 'new' ? ['', `This is a continuation of the chat named "${named}".`] : []),
     '',
     // Backticks keep the path literal. Real project paths contain spaces,
     // parentheses and backslashes, and a bare path gets mangled by agents that
@@ -808,18 +847,20 @@ async function publishHandoffState() {
           target: latest.target,
           createdAt: latest.createdAt,
           path: latest.handoffPath,
+          chat: latest.chat,
           words: countWords(latest.prompt)
         }
       : undefined
   );
 }
 
-async function rememberLatest(root, target, handoffPath, prompt) {
+async function rememberLatest(root, target, handoffPath, prompt, destination) {
   await contextGlobalUpdate('latestHandoff', {
     root,
     target,
     handoffPath,
     prompt,
+    chat: chatLabel(destination),
     createdAt: new Date().toISOString()
   });
 }

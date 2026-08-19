@@ -1,6 +1,7 @@
 import { latestSnapshot, readAllTurns, readManifest, writeExport } from './store.js';
 import { mediaReferencesFromMetadata, sanitizeContentForHandoff } from './media.js';
 import { summarizeSession } from './summary.js';
+import { describeReturn, lastSeenBy, originChat, stripHandoffPlumbing } from './roundtrip.js';
 
 // Default caps for high-volume, low-signal roles. Tool outputs (git diffs, dir
 // listings) and system turn-context blobs dominate handoff size while the
@@ -28,11 +29,23 @@ export async function exportHandoff(root, options = {}) {
   const allTurns = await readAllTurns(root);
   const snapshot = await latestSnapshot(root);
 
-  const since = options.sinceLastExport ? lastExportTimestamp(manifest) : undefined;
-  const scoped = since ? allTurns.filter((turn) => String(turn.timestamp || '') > since) : allTurns;
+  // Our own plumbing, recorded by the agent we handed off to: the prompt that
+  // pointed it at the last handoff, and the handoff document it then read.
+  // Neither is anybody's request, and returning them wastes budget on a mangled
+  // copy of the receiver's own history.
+  const stripped = options.stripPlumbing === false ? { turns: allTurns, removed: 0 } : stripHandoffPlumbing(allTurns);
+  const ledgerTurns = stripped.turns;
+
+  // How far this target has already seen, which is its own last handoff or its
+  // own last turn - not the newest export of any kind.
+  const seenAt = lastSeenBy(manifest, ledgerTurns, target);
+  const returning = describeReturn(ledgerTurns, seenAt);
+
+  const since = options.sinceLastExport ? seenAt : undefined;
+  const scoped = since ? ledgerTurns.filter((turn) => String(turn.timestamp || '') > since) : ledgerTurns;
   // Never emit an empty handoff just because nothing happened since the last
   // export; fall back to the full ledger so the receiver still gets context.
-  const windowed = scoped.length > 0 ? scoped : allTurns;
+  const windowed = scoped.length > 0 ? scoped : ledgerTurns;
   const appliedSince = scoped.length > 0 ? since : undefined;
 
   const dedupe = options.dedupe !== false;
@@ -49,6 +62,12 @@ export async function exportHandoff(root, options = {}) {
     prepared: selection.prepared,
     omittedTurns: selection.omittedTurns,
     collapsedDuplicates: deduped.removed,
+    strippedPlumbing: stripped.removed,
+    returning,
+    // Summarize only what the target missed, so the return section speaks about
+    // the other agent's work rather than repeating the whole session.
+    returningSummary: returning ? summarizeSession(returning.turns, options) : undefined,
+    origin: originChat(manifest, target),
     maxChars,
     sinceTimestamp: appliedSince,
     truncation,
@@ -210,12 +229,6 @@ function pickCap(value, fallback) {
   return fallback;
 }
 
-function lastExportTimestamp(manifest) {
-  const entries = manifest.exports || [];
-  const stamps = entries.map((entry) => String(entry?.createdAt || '')).filter(Boolean).sort();
-  return stamps.length > 0 ? stamps[stamps.length - 1] : undefined;
-}
-
 export function renderHandoff({
   target,
   manifest,
@@ -224,6 +237,10 @@ export function renderHandoff({
   prepared,
   omittedTurns = 0,
   collapsedDuplicates = 0,
+  strippedPlumbing = 0,
+  returning,
+  returningSummary,
+  origin,
   maxChars,
   sinceTimestamp,
   truncation = {},
@@ -253,7 +270,11 @@ export function renderHandoff({
   lines.push('- Do not summarize this transcript with an AI unless the user explicitly asks.');
   lines.push('- Append future handoff-relevant work back into the Context Bridge ledger when possible.');
   lines.push('');
-  if (summary) lines.push(...renderSummary(summary));
+  if (returning) lines.push(...renderReturn({ target, returning, summary: returningSummary, origin }));
+  // When the return section already quoted the last exchange - which it does
+  // whenever the other agent had the last word - repeating it verbatim two
+  // sections later is noise the receiver has to read twice.
+  if (summary) lines.push(...renderSummary(withoutRepeatedQuotes(summary, returningSummary)));
   lines.push('## Ledger');
   lines.push('');
   lines.push(`- Schema version: ${manifest.schemaVersion}`);
@@ -265,6 +286,7 @@ export function renderHandoff({
   if (sinceTimestamp) lines.push(`- Transcript limited to turns after: ${sinceTimestamp}`);
   if (omittedTurns > 0) lines.push(`- Omitted turns due to budget: ${omittedTurns}`);
   if (collapsedDuplicates > 0) lines.push(`- Collapsed duplicate turns: ${collapsedDuplicates}`);
+  if (strippedPlumbing > 0) lines.push(`- Dropped Context Bridge handoff plumbing turns: ${strippedPlumbing}`);
   if (truncatedTurns > 0) lines.push(`- Truncated oversized turns: ${truncatedTurns} (~${truncatedChars} chars removed)`);
   lines.push('');
   lines.push('## Latest Workspace Snapshot');
@@ -311,6 +333,68 @@ export function renderHandoff({
   }
   lines.push('');
   return `${lines.join('\n')}\n`;
+}
+
+// What changed while the other agent had the work.
+//
+// This exists because a returning agent already knows the history below - it
+// wrote most of it. What it does not know is what happened after it handed off,
+// and that is the one part it must not skim.
+function renderReturn({ target, returning, summary, origin }) {
+  const lines = [];
+  lines.push('## Since You Last Saw This Session');
+  lines.push('');
+  lines.push(`- You last worked on this session at: ${returning.since}`);
+  const worked = returning.providers.map((entry) => `${entry.count} ${entry.provider}`).join(', ');
+  lines.push(`- Turns recorded since then: ${returning.turnCount} (${worked})`);
+  if (origin?.named && origin.title) {
+    // Only a chat the agent named itself is worth quoting back. An unnamed one
+    // is identified by its opening request, and when that session was itself
+    // started from a handoff the opening request is our own prompt.
+    lines.push(
+      `- This work started in your ${target} chat named "${origin.title}". Continue there rather than starting a new one.`
+    );
+  }
+  lines.push('');
+
+  if (summary?.lastUser) {
+    lines.push('### What the user asked while you were away');
+    lines.push('');
+    lines.push('```text');
+    lines.push(fence(summary.lastUser.content));
+    lines.push('```');
+    lines.push('');
+  }
+
+  if (summary?.lastAssistant) {
+    lines.push('### What the other agent says it did');
+    lines.push('');
+    lines.push('This is a claim, not verified fact. Check it against the files before building on it.');
+    lines.push('');
+    lines.push('```text');
+    lines.push(fence(summary.lastAssistant.content));
+    lines.push('```');
+    lines.push('');
+  }
+
+  if (summary?.filesWritten?.length > 0) {
+    lines.push('### Files it wrote while you were away');
+    lines.push('');
+    for (const path of summary.filesWritten) lines.push(`- ${path}`);
+    lines.push('');
+  }
+
+  return lines;
+}
+
+function withoutRepeatedQuotes(summary, shown) {
+  if (!shown) return summary;
+  const same = (left, right) => Boolean(left && right && left.content === right.content);
+  return {
+    ...summary,
+    lastUser: same(summary.lastUser, shown.lastUser) ? undefined : summary.lastUser,
+    lastAssistant: same(summary.lastAssistant, shown.lastAssistant) ? undefined : summary.lastAssistant
+  };
 }
 
 // The orientation section. Nothing here is generated: every quote is verbatim

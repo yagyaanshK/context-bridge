@@ -15,6 +15,14 @@ export {
   DEFAULT_SYSTEM_MAX_CHARS
 } from './exporter.js';
 export { summarizeSession } from './summary.js';
+export {
+  describeReturn,
+  isHandoffPlumbing,
+  lastExportTo,
+  lastSeenBy,
+  originChat,
+  stripHandoffPlumbing
+} from './roundtrip.js';
 export { captureSnapshot } from './snapshot.js';
 export { sanitizeContentForHandoff, mediaReferencesFromMetadata } from './media.js';
 export {

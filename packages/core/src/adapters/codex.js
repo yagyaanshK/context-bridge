@@ -93,7 +93,10 @@ export async function importCodexSession(root, session) {
     provider: CODEX_PROVIDER,
     surface: session.surface || 'cli',
     sessionId: `native-codex-${session.sessionId}`,
-    sourcePath: session.path
+    sourcePath: session.path,
+    nativeSessionId: session.sessionId,
+    title: session.title,
+    named: session.named
   });
 }
 

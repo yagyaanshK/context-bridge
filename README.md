@@ -126,15 +126,46 @@ The ledger header of every export reports exactly what was collapsed and truncat
 > the CLI's `--provider claude` flag reads Codex paths and will misreport them. See
 > [docs/CLI.md](docs/CLI.md#accounts).
 
-**Export options:** `--max-chars <n>` (budget, default 120000, 0 = off) · `--no-dedupe` · `--since-last-export` · `--tool-max-chars <n>` (default 2000) · `--system-max-chars <n>` (default 800) · `--snapshot-diff-max-chars <n>` (default 4000) · `--keep-exports <n>` (default 10) · `--no-summary`. All flags accept kebab- or camelCase.
+**Export options:** `--max-chars <n>` (budget, default 120000, 0 = off) · `--no-dedupe` · `--since-last-export` (per target) · `--tool-max-chars <n>` (default 2000) · `--system-max-chars <n>` (default 800) · `--snapshot-diff-max-chars <n>` (default 4000) · `--keep-exports <n>` (default 10) · `--no-summary`. All flags accept kebab- or camelCase.
+
+### Handing work back and forth
+
+Work rarely goes one way. You make progress in Codex, hand off to Claude, and later want the original
+Codex chat to pick it up again — with what Claude did, not with its own history read back to it.
+
+The ledger accumulates: each import adds a session file, and a handoff merges all of them in timestamp
+order, so the document going back to Codex carries both agents' turns, provider-tagged. Three things
+make the return trip work rather than merely function.
+
+**It names the chat to return to.** The ledger records which native chat each session came from, so a
+handoff back to Codex says *this work started in your codex chat named "job apply"* and the session
+picker offers that chat first, marked `already in this workspace ledger`. Only chats the agent named
+itself are quoted; an unnamed one is left unnamed rather than described by an opening request that,
+for a session started from a handoff, is Context Bridge's own prompt.
+
+**It leads with what changed.** A returning agent wrote most of the history below; what it does not
+know is what happened while it was away. **Since You Last Saw This Session** states when it last
+worked on the session, how many turns each agent has recorded since, what the user asked in the
+meantime, what the other agent claims it did, and which files it wrote.
+
+**It drops its own plumbing.** Pasting a handoff puts the prompt into the receiving agent's
+transcript, and the agent then reads the handoff file — so without care the next handoff carries a
+user turn that is really Context Bridge's prompt, and a whole handoff document nested inside itself,
+truncated mid-page into noise. Both are recognized and dropped, and the count is reported in the
+Ledger section. A turn that merely mentions a handoff is left alone.
+
+Turn on `sinceLastExport` to send only what the receiving agent has not seen. Its watermark is its own
+last turn or the last handoff aimed at it, whichever is later — so an agent is never re-sent its own
+history, and work never falls between two handoffs aimed at the same agent.
 
 ### What a handoff contains
 
 | Section | Purpose |
 |---------|---------|
 | Rules for the receiving agent | Treat the transcript as history, verify before editing. |
+| **Since You Last Saw This Session** | Only on a return trip: when this agent last worked on the session, what each agent recorded since, what the user asked meanwhile, what the other agent claims it did, files it wrote, and which chat to continue in. |
 | **Where This Left Off** | The last real user request and the last assistant message, verbatim; files written and recent commands, derived from recorded tool-call arguments. Extractive only — nothing is generated. |
-| Ledger | Counts, plus exactly what was collapsed, truncated, or dropped for budget. |
+| Ledger | Counts, plus exactly what was collapsed, truncated, dropped for budget, or removed as handoff plumbing. |
 | Latest Workspace Snapshot | Branch, HEAD, remote, top-level entries, `git status`, the uncommitted diff, and a `git log -1` check so the receiver can tell whether the workspace moved on. |
 | Transcript Turns | The budgeted transcript, newest activity prioritized, user turns reserved first. |
 
@@ -154,7 +185,7 @@ The extension contributes an **Accounts** panel in the activity bar (see below) 
 | `toolMaxChars` | `2000` | Truncate long tool outputs (0 = off). |
 | `systemMaxChars` | `800` | Truncate long system turns (0 = off). |
 | `maxExportChars` | `120000` | Character budget for the transcript (0 = off). User turns are reserved first, then the most recent turns fill the budget. |
-| `sinceLastExport` | `false` | Only include turns newer than the previous export. |
+| `sinceLastExport` | `false` | Send only what the receiving agent has not seen — its own last turn, or the last handoff aimed at it, whichever is later. |
 | `snapshotDiffMaxChars` | `4000` | How much uncommitted diff to embed (0 = stat only). |
 | `keepExports` | `10` | Past handoff files to keep; older ones are deleted (0 = keep all). |
 | `openHandoffDocument` | `true` | Open the handoff file after export. |

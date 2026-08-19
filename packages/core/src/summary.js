@@ -52,12 +52,19 @@ export function summarizeSession(turns, options = {}) {
 // Walk tool turns for the structured arguments the adapters preserve as
 // `Tool call: <name>\n<json>`. Anything that does not parse is skipped rather
 // than guessed at.
+//
+// The marker identifies a tool call, not the role. The two agents disagree
+// about the role: Codex records a call as its own `tool` turn, while Claude
+// Code keeps it inside the assistant message that made it, so the block
+// arrives tagged `assistant`. Gating on the role dropped every Claude tool
+// call - measured on one real transcript, all 622 of them - which is why the
+// files and commands lists were always empty for Claude sessions.
 function scanToolCalls(turns) {
   const filesWritten = [];
   const commands = [];
 
   for (const turn of turns) {
-    if (turn.role !== 'tool') continue;
+    if (turn.role === 'user') continue;
     const match = TOOL_CALL_PATTERN.exec(String(turn.content || ''));
     if (!match) continue;
     const [, toolName, body] = match;

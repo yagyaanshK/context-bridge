@@ -73,7 +73,12 @@ export async function writeSession(root, turns, options = {}) {
     path: relativePath,
     turnCount: turns.length,
     importedAt: new Date().toISOString(),
-    sourcePath: options.sourcePath
+    sourcePath: options.sourcePath,
+    // Which chat in the agent's own app this came from, so a handoff can name
+    // the one to return to rather than leaving you to find it.
+    nativeSessionId: options.nativeSessionId,
+    title: options.title,
+    named: options.named || undefined
   }, { upsertBy: 'id' });
   return { id: sessionId, path: absolutePath, relativePath, turnCount: turns.length };
 }

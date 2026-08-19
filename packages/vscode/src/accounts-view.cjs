@@ -670,8 +670,11 @@ function renderHandoff(latest) {
   const from = handoffTarget === 'claude' ? 'Codex' : 'Claude Code';
   const to = handoffTarget === 'claude' ? 'Claude Code' : 'Codex';
 
+  // Naming the chat the last handoff was aimed at is the difference between
+  // knowing where to paste and hunting through a folder of transcripts for it.
   const last = latest
     ? '<div class="last"><span>Last: to ' + esc(latest.target === 'codex' ? 'Codex' : 'Claude Code') +
+        (latest.chat ? ' · ' + esc(latest.chat) : '') +
         ' · ' + esc(ago(latest.createdAt)) +
         (latest.words ? ' · ' + latest.words + ' words' : '') + '</span>' +
         '<button data-act="openHandoff">Open</button>' +
