@@ -173,6 +173,24 @@ that put it there patch the desktop application itself, which pins them to an ex
 
 ---
 
+## What this accesses
+
+Context Bridge is a local tool. Here is exactly what it touches and why.
+
+**Reads, never modifies:**
+
+- Your agent transcripts under `~/.claude/projects/` and `~/.codex/sessions/` (plus `~/.codex/session_index.jsonl` for chat names). These are copied into the ledger; the originals are never edited.
+- Your current sign-in files (`~/.codex/auth.json`, `~/.claude/.credentials.json` and the matching config), so the accounts panel can show which account is active and how much quota remains.
+
+**Writes, only in these two places:**
+
+- The project’s git-ignored `.context-bridge/` — the merged ledger, snapshots, and handoff documents.
+- `~/.context-bridge/accounts/` — copies of the credentials for accounts you add, written owner-only (`0600`) so you can switch between them. Nothing account-related is written inside your project.
+
+**Network:** the handoff flow makes **no network calls at all**. The only requests the extension ever makes are from the optional accounts panel, and only to the providers’ own endpoints — Anthropic and OpenAI sign-in, token refresh, and usage/quota. Your credentials go to the service that issued them and nowhere else. There is **no telemetry** and no other server involved.
+
+**Credentials stay on your machine.** They are read from and written to local files only. The extension bundles no analytics and phones no home.
+
 ## For AI agents
 
 > Briefing for an AI agent evaluating or installing this extension.

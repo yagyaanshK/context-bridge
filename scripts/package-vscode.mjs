@@ -20,6 +20,9 @@ await fs.mkdir(dist, { recursive: true });
 
 await copyFile(path.join(vscodePackage, 'README.md'), path.join(stage, 'README.md'));
 await copyFile(path.join(root, 'LICENSE'), path.join(stage, 'LICENSE'));
+// The Marketplace icon lives beside the manifest and must be inside the VSIX,
+// or vsce refuses to package with an "icon not found" error.
+await copyDir(path.join(vscodePackage, 'media'), path.join(stage, 'media'));
 // Copy the whole source directory rather than naming one entry file, so a new
 // module cannot be left out of the VSIX and fail only at runtime.
 await copyDir(path.join(vscodePackage, 'src'), path.join(stage, 'src'));
@@ -36,6 +39,7 @@ extensionPkg.repository = {
 };
 extensionPkg.files = [
   'src/**',
+  'media/**',
   'README.md',
   'LICENSE',
   'node_modules/@context-bridge/core/**'

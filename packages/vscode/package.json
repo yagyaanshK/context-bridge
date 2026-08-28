@@ -6,12 +6,29 @@
   "publisher": "yagyaanshK",
   "license": "MIT",
   "type": "commonjs",
+  "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.95.0"
   },
   "categories": [
+    "AI",
     "Other"
   ],
+  "keywords": [
+    "claude",
+    "codex",
+    "handoff",
+    "agent",
+    "session"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yagyaanshK/context-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yagyaanshK/context-bridge/issues"
+  },
+  "homepage": "https://github.com/yagyaanshK/context-bridge#readme",
   "activationEvents": [
     "onView:contextBridgeAccounts",
     "onCommand:contextBridge.switchAccount",
@@ -281,7 +298,7 @@
     }
   },
   "dependencies": {
-    "@context-bridge/core": "0.7.4"
+    "@context-bridge/core": "0.8.0"
   },
   "devDependencies": {
     "@types/vscode": "^1.95.0"
