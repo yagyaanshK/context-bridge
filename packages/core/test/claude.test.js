@@ -21,12 +21,14 @@ import {
   headlineRemaining,
   importClaudeAuth,
   importClaudeAuthText,
+  isActiveClaudeAccount,
   isClaudeSignedIn,
   normalizeClaudeProfile,
   normalizeClaudeUsage,
   parseAuthorizationCode,
   parseClaudeAuthText,
   readClaudeAuth,
+  refreshClaudeToken,
   restoreClaudeBackup,
   writeClaudeCredential,
   CLAUDE_CLIENT_ID
@@ -334,6 +336,21 @@ test('a rejected code explains that codes are single-use', async () => {
   );
 });
 
+test('a rejected refresh says to sign in again, not that a code is single-use', async () => {
+  // Anthropic answers a dead refresh token with the same invalid_grant code as
+  // a stale authorization code, but the advice must be different: nothing here
+  // involves a single-use code.
+  const fetchImpl = async () => ({
+    ok: false,
+    status: 400,
+    text: async () => JSON.stringify({ error: 'invalid_grant', error_description: 'Refresh token not found or invalid' })
+  });
+  await assert.rejects(
+    () => refreshClaudeToken('rt.dead', { fetch: fetchImpl }),
+    (error) => /sign in again/i.test(error.message) && !/single-use/i.test(error.message)
+  );
+});
+
 test('a completed sign-in is written in the shape Claude Code reads', async () => {
   const { options } = await sandbox();
   const account = await createAccount({ label: 'Personal', provider: 'claude' }, options);
@@ -593,4 +610,63 @@ test('a blocked window with no reset time reports nothing rather than guessing',
   const usage = normalizeClaudeUsage({ limits: [{ kind: 'session', percent: 100, severity: 'exceeded', resets_at: null }] });
   assert.equal(usage.limitReached, true);
   assert.equal(resumesAt(usage), undefined);
+});
+
+// --- the active account is read live, not refreshed --------------------------
+
+// Make an account the active one by copying its credential into the default
+// home, then let its snapshot drift so only identity still matches - which is
+// exactly the state that produced "invalid_grant" on the account in use.
+async function makeActiveWithDriftedSnapshot(accountId, options, liveOverrides = {}) {
+  const live = defaultClaudeHome(options);
+  await fs.mkdir(live, { recursive: true });
+  await fs.writeFile(
+    claudeCredentialsPath(live),
+    JSON.stringify(credential({ accessToken: 'live-fresh-access', refreshToken: 'live-rotated-refresh', ...liveOverrides })),
+    'utf8'
+  );
+  await fs.writeFile(
+    claudeConfigPath(live, options),
+    JSON.stringify({ oauthAccount: { emailAddress: liveOverrides.email || 'dev@example.com' } }),
+    'utf8'
+  );
+}
+
+test('the active account is read from the live home, not refreshed', async () => {
+  const { options } = await sandbox();
+  const account = await createAccount({ label: 'Active', provider: 'claude' }, options);
+  // Snapshot: an expired token whose refresh token the app has since rotated.
+  await signIn(account.id, options, { accessToken: 'snapshot-stale', refreshToken: 'snapshot-old', expiresAt: Date.now() - 1000 });
+  await makeActiveWithDriftedSnapshot(account.id, options);
+
+  assert.equal(await isActiveClaudeAccount(account.id, options), true, 'identity should match even though tokens drifted');
+
+  // A refresh here would race Claude Code and is exactly what we must not do.
+  const failIfCalled = () => {
+    throw new Error('must not refresh the active account');
+  };
+  const auth = await ensureClaudeAccessToken(account.id, { ...options, fetch: failIfCalled });
+  assert.equal(auth.accessToken, 'live-fresh-access', 'the fresh live token is used, so quota works without a refresh');
+});
+
+test('an idle expired account is still refreshed', async () => {
+  const { options } = await sandbox();
+  const account = await createAccount({ label: 'Idle', provider: 'claude' }, options);
+  await signIn(account.id, options, { accessToken: 'stale', refreshToken: 'rt-old', expiresAt: Date.now() - 1000, email: 'idle@example.com' });
+  // A different account is active, so this one is not read live.
+  await makeActiveWithDriftedSnapshot('someone-else', options, { email: 'active@example.com' });
+
+  let sawRefresh = false;
+  const fetchImpl = async () => {
+    sawRefresh = true;
+    return {
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({ access_token: 'renewed', refresh_token: 'rt-new', expires_in: 28800, scope: 'user:inference' })
+    };
+  };
+  const auth = await ensureClaudeAccessToken(account.id, { ...options, fetch: fetchImpl });
+  assert.equal(sawRefresh, true, 'an idle account with no live copy is renewed the old way');
+  assert.equal(auth.accessToken, 'renewed');
 });

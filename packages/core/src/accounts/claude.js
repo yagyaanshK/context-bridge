@@ -330,6 +330,29 @@ function removeUndefined(value) {
 // is indistinguishable from one that was already dead.
 const EXPIRY_SKEW_MS = 60 * 1000;
 
+// Is this account the one Claude Code is currently signed in as?
+//
+// It matters for the same reason it does on the Codex side: the active account's
+// token lives in the default home, where the official client refreshes it and
+// Anthropic rotates the refresh token on each use. If Context Bridge refreshed
+// its own copy too, one of the two would then hold a rotated-out token and get
+// "invalid_grant". Tokens drift precisely in that case, so the match falls back
+// to identity - email and organization, which do not rotate.
+export async function isActiveClaudeAccount(accountId, options = {}) {
+  const live = await readClaudeAuth(defaultClaudeHome(options), options).catch(() => null);
+  if (!live?.accessToken && !live?.refreshToken) return false;
+  const auth = await readClaudeAuth(claudeHome(accountId, options), options).catch(() => null);
+  if (!auth) return false;
+  if (live.refreshToken && auth.refreshToken && live.refreshToken === auth.refreshToken) return true;
+  if (live.accessToken && auth.accessToken && live.accessToken === auth.accessToken) return true;
+  const sameEmail = live.email && auth.email && live.email.toLowerCase() === auth.email.toLowerCase();
+  if (!sameEmail) return false;
+  // When both know their org, require it to match too; otherwise the email is
+  // the best identity we have.
+  if (live.organizationUuid && auth.organizationUuid) return live.organizationUuid === auth.organizationUuid;
+  return true;
+}
+
 // A usable access token for this account, renewed if it has expired.
 //
 // Claude Code refreshes its own credential in place, but only for the account
@@ -339,6 +362,15 @@ const EXPIRY_SKEW_MS = 60 * 1000;
 export async function ensureClaudeAccessToken(accountId, options = {}) {
   const auth = await readClaudeAuth(claudeHome(accountId, options), options).catch(() => null);
   if (!auth?.accessToken) return null;
+
+  // For the active account, read the credential the official client keeps fresh
+  // in the default home instead of refreshing our snapshot. Refreshing it here
+  // would race Claude Code for the rotating refresh token and leave one side
+  // holding a dead one - the cause of "invalid_grant" on the account in use.
+  if (!options.offline && !options.allowActiveRefresh && (await isActiveClaudeAccount(accountId, options))) {
+    const live = await readClaudeAuth(defaultClaudeHome(options), options).catch(() => null);
+    if (live?.accessToken) return live;
+  }
 
   const expiresAt = Number(auth.expiresAt);
   const fresh = !Number.isFinite(expiresAt) || expiresAt - EXPIRY_SKEW_MS > Date.now();

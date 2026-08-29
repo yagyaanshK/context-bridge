@@ -103,6 +103,7 @@ export {
   claudeHome,
   defaultClaudeHome,
   ensureClaudeAccessToken,
+  isActiveClaudeAccount,
   ensureClaudeHome,
   importClaudeAuth,
   importClaudeAuthText,

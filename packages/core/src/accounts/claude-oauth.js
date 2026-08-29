@@ -125,7 +125,7 @@ export async function refreshClaudeToken(refreshToken, options = {}) {
     refresh_token: refreshToken,
     client_id: options.clientId || CLAUDE_CLIENT_ID
   });
-  return postToken(body, options);
+  return postToken(body, { ...options, grant: 'refresh' });
 }
 
 async function postToken(body, options = {}) {
@@ -148,7 +148,7 @@ async function postToken(body, options = {}) {
   }
 
   if (!response.ok) {
-    throw new Error(oauthErrorMessage(payload, response.status, text));
+    throw new Error(oauthErrorMessage(payload, response.status, text, options.grant));
   }
   if (!payload?.access_token) {
     throw new Error('The token endpoint returned no access token.');
@@ -158,11 +158,18 @@ async function postToken(body, options = {}) {
 
 // OAuth errors are terse and their meaning is not obvious from the wire. Say
 // what the user can actually do about the ones that are common here.
-function oauthErrorMessage(payload, status, raw) {
+function oauthErrorMessage(payload, status, raw, grant) {
   const code = payload?.error;
   const detail = payload?.error_description;
 
   if (code === 'invalid_grant') {
+    // The same error code covers two very different failures. A refresh that is
+    // rejected means the stored login is dead - usually rotated out by the
+    // official client, which invalidates the copy we hold - and the advice
+    // about single-use codes would be actively misleading.
+    if (grant === 'refresh') {
+      return 'This Claude login has expired or was renewed by Claude Code itself, so the saved token no longer works. Sign in again.';
+    }
     return `${detail || 'The authorization code was rejected.'} Codes are single-use and expire within minutes — start the sign-in again.`;
   }
   if (code === 'invalid_client') {

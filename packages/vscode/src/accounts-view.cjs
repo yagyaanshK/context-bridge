@@ -533,6 +533,11 @@ function until(iso) {
   const at = Date.parse(iso || '');
   if (!isFinite(at)) return '';
   const minutes = Math.round((at - Date.now()) / 60000);
+  // A reset time already well in the past does not mean "resetting now" — it
+  // means the reading predates it. Fresh data always resets in the future, so a
+  // past reset time is a stale reading whose percentage no longer holds; say so
+  // rather than dressing it up as an imminent reset.
+  if (minutes < -2) return 'stale · refresh';
   if (minutes <= 0) return 'resetting now';
   if (minutes < 60) return 'resets in ' + minutes + 'm';
   const hours = Math.round(minutes / 60);
