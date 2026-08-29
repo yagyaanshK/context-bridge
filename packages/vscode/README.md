@@ -157,7 +157,8 @@ stays signed in, so switching back is one more click; the confirmation also offe
 | **Use this** | Points that agent's official CLI and extension at this account. |
 | **Terminal** | Starts the agent as that account without changing the machine default. |
 | **Sign in** | Opens the sign-in panel for that agent. |
-| **Refresh now** | Forces a usage read; otherwise readings are cached for five minutes. |
+| **↻** (on each card) | Refreshes just that account — and for Codex, renews its token in the process, so it doubles as waking a stale login. |
+| **Refresh now** (on the pool) | Reads every account for that agent. Otherwise readings are cached for five minutes. |
 | **Raw Response** | Opens the endpoint's actual JSON next to how Context Bridge parsed it. |
 | **✎** (on hover) | Renames the account. The directory holding its credential never changes, so a rename cannot invalidate a login. |
 

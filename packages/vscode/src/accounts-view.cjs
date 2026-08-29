@@ -44,7 +44,10 @@ class AccountsStore {
     const { getCodexUsage, getClaudeUsage } = await this.core();
     const all = [];
 
-    for (const provider of PROVIDERS) {
+    // A refresh can be scoped to one provider, so refreshing Codex's pool does
+    // not also poll every Claude account.
+    const providers = options.providerId ? PROVIDERS.filter((p) => p.id === options.providerId) : PROVIDERS;
+    for (const provider of providers) {
       const accounts = await this.accounts(provider.id);
       const read = provider.id === 'claude' ? getClaudeUsage : getCodexUsage;
       await Promise.all(
@@ -62,6 +65,22 @@ class AccountsStore {
 
     this.emitter.fire(await this.viewModel());
     return all;
+  }
+
+  // Refresh one account's quota without touching the others. This is the read
+  // behind a card's own refresh button - and because a Codex read renews the
+  // token, it doubles as "wake this one account up" for a login gone stale.
+  async reloadUsageOne(accountId, providerId, options = {}) {
+    const { getCodexUsage, getClaudeUsage } = await this.core();
+    const read = providerId === 'claude' ? getClaudeUsage : getCodexUsage;
+    try {
+      this.usage.set(accountId, await read(accountId, options));
+    } catch (error) {
+      this.usage.set(accountId, { error: error.message, windows: [] });
+    }
+    await this.reloadActive(providerId);
+    this.emitter.fire(await this.viewModel());
+    return this.usage.get(accountId);
   }
 
   async refresh() {
@@ -344,6 +363,13 @@ function html(webview) {
   }
   .item:hover .pencil, .pencil:focus-visible { opacity: 1; }
   .pencil:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground, transparent); }
+  .card-refresh {
+    flex: none; padding: 1px 5px; line-height: 1; border-radius: 4px; font-size: 0.95em;
+    border: none; background: transparent; color: var(--dim);
+    cursor: pointer; opacity: 0; transition: opacity 120ms ease;
+  }
+  .item:hover .card-refresh, .card-refresh:focus-visible { opacity: 1; }
+  .card-refresh:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground, transparent); }
   .rename { display: flex; gap: 6px; align-items: center; }
   .rename input {
     flex: 1; min-width: 0; font-family: inherit; font-size: 0.95em; padding: 3px 7px; border-radius: 4px;
@@ -603,6 +629,10 @@ function renderRow(row) {
       '<span class="pct ' + (state === 'ok' ? '' : state) + '">' +
         (row.signedIn && typeof row.remaining === 'number' ? pct(row.remaining) : '—') +
       '</span>' +
+      (row.signedIn
+        ? '<button class="card-refresh" data-act="refresh" data-id="' + id + '" data-provider="' + provider +
+            '" title="Refresh this account’s usage" aria-label="Refresh this account’s usage">↻</button>'
+        : '') +
     '</div>' +
     meters +
     '<div class="meta"><span>' + status + esc(credits) + '</span>' +

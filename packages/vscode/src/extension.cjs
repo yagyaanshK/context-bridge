@@ -34,7 +34,7 @@ async function activateExtension(context) {
     command('contextBridge.importCodexAccount', () => importAccount({ provider: 'codex' })),
     command('contextBridge.importClaudeAccount', () => importAccount({ provider: 'claude' })),
     command('contextBridge.signInAccount', (item) => signInAccount(item)),
-    command('contextBridge.refreshAccountQuota', () => refreshAccountQuota()),
+    command('contextBridge.refreshAccountQuota', (item) => refreshAccountQuota(item)),
     command('contextBridge.openAccountTerminal', (item) => openAccountTerminal(item)),
     command('contextBridge.renameAccount', (item) => renameAccount(item)),
     command('contextBridge.forgetAccount', (item) => forgetAccount(item)),
@@ -378,7 +378,25 @@ async function forgetAccount(item) {
   );
 }
 
-async function refreshAccountQuota() {
+async function refreshAccountQuota(item) {
+  // A card's own refresh button identifies its account, so refresh just that
+  // one. A pool "Refresh now" carries only its provider. The palette and the
+  // title-bar button carry neither and refresh everything.
+  if (item?.accountId && item?.provider) {
+    const usage = await withProgress(`Refreshing ${agentName(item.provider)} quota`, () =>
+      accountsProvider.reloadUsageOne(item.accountId, item.provider, { force: true })
+    );
+    if (usage?.error) {
+      vscode.window.showWarningMessage(`Context Bridge: could not read that account's usage — ${usage.error}`);
+    }
+    return;
+  }
+  if (item?.provider) {
+    await withProgress(`Reading ${agentName(item.provider)} quota`, () =>
+      accountsProvider.reloadUsage({ force: true, providerId: item.provider })
+    );
+    return;
+  }
   const accounts = await withProgress('Reading account quota', () =>
     accountsProvider.reloadUsage({ force: true })
   );
