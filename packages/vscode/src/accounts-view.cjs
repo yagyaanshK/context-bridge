@@ -366,9 +366,8 @@ function html(webview) {
   .card-refresh {
     flex: none; padding: 1px 5px; line-height: 1; border-radius: 4px; font-size: 0.95em;
     border: none; background: transparent; color: var(--dim);
-    cursor: pointer; opacity: 0; transition: opacity 120ms ease;
+    cursor: pointer; opacity: 1;
   }
-  .item:hover .card-refresh, .card-refresh:focus-visible { opacity: 1; }
   .card-refresh:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground, transparent); }
   .rename { display: flex; gap: 6px; align-items: center; }
   .rename input {
