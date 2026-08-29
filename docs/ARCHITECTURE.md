@@ -183,6 +183,33 @@ the stock `~/.claude` home, at `~/.claude.json`, but moves *inside* any custom
 `CLAUDE_CONFIG_DIR`. Both facts were verified on disk; getting either backwards means writing
 identity into a file nothing reads.
 
+### Credential sources, and what Context Bridge does not touch
+
+`~/.codex` is shared by more than one program, and they do not all authenticate the same way. This
+matters because it bounds what switching an account can and cannot affect.
+
+- The **Codex CLI** and the **Codex IDE extension** (VS Code, Cursor, and forks) read the OAuth
+  credential at `~/.codex/auth.json`. This is the only credential Context Bridge reads, renews, or
+  rewrites when you switch a Codex account.
+- The **Codex/ChatGPT desktop app** keeps its *working data* in `~/.codex` as well — a thread
+  database (`state_5.sqlite`), a session index (`session_index.jsonl`), logs, and an Electron state
+  file (`.codex-global-state.json`) — but it does **not** authenticate through `auth.json`. Its
+  account is selected by an id recorded in `.codex-global-state.json`, with no token stored beside
+  it; the actual credential lives in the app's own protected session, separate from `auth.json`.
+  (Observed on a real install: with `auth.json` holding one account, the desktop app ran a different
+  one; no plaintext token, OS credential-manager entry, or browser session store for it could be
+  found on disk.) OpenAI's desktop apps follow the usual Electron pattern — sign in with OAuth 2.0 +
+  PKCE through the system browser, then store the session with the OS-backed keystore (Electron
+  `safeStorage`, which wraps DPAPI on Windows and Keychain on macOS) and/or the OS credential
+  manager — which is precisely why the token is not a readable file. The classic ChatGPT desktop app
+  keeps its data under `%APPDATA%\OpenAI\ChatGPT\` (macOS: `~/Library/Application Support/ChatGPT/`);
+  the newer Codex desktop app uses `~/.codex` together with `%LOCALAPPDATA%\OpenAI\Codex`.
+
+The consequence is the useful part: switching a Codex account in Context Bridge rewrites `auth.json`
+and so moves the **CLI and IDE extension**, and nothing else. The desktop app is unaffected and can
+stay signed in as a different account at the same time. The reverse holds too — the desktop app
+never changes `auth.json` — which is why the two can run different accounts simultaneously.
+
 ### Sign-in
 
 The two agents are handled differently, and the difference is forced by what their CLIs are:
