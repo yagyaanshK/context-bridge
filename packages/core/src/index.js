@@ -49,20 +49,25 @@ export {
 export {
   activateCodexAccount,
   activeCodexAccountId,
+  codexAccessTokenExpiry,
   codexAuthPath,
   codexEnv,
   codexHome,
   decodeJwtClaims,
   defaultCodexHome,
+  ensureCodexAccessToken,
   ensureCodexHome,
   importCodexAuth,
   importCodexAuthText,
+  isActiveCodexAccount,
   parseCodexAuthText,
   isSignedIn,
   readCodexAuth,
   refreshCodexAccountIdentity,
-  restoreCodexBackup
+  restoreCodexBackup,
+  writeCodexTokens
 } from './accounts/codex.js';
+export { refreshCodexToken, CODEX_CLIENT_ID, CODEX_TOKEN_URL } from './accounts/codex-oauth.js';
 export {
   codexLoginArgs,
   codexLoginFailureReason,

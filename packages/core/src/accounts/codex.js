@@ -2,7 +2,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { ensureDir, pathExists, readJson } from '../fs-utils.js';
-import { accountDir, updateAccount } from './store.js';
+import { accountDir, listAccounts, updateAccount } from './store.js';
+import { refreshCodexToken } from './codex-oauth.js';
 
 export const CODEX_PROVIDER = 'codex';
 
@@ -85,14 +86,107 @@ export async function importCodexAuth(accountId, sourceHome, options = {}) {
   return auth;
 }
 
+// Sixty seconds of slack, matching the Claude path: a token that lapses while
+// the request is in flight is indistinguishable from one already dead.
+const EXPIRY_SKEW_MS = 60 * 1000;
+
+// Read the expiry out of an access token. It is a JWT whose payload carries a
+// standard `exp` in seconds; we decode, never verify, since this only decides
+// whether to refresh.
+export function codexAccessTokenExpiry(accessToken) {
+  const part = String(accessToken || '').split('.')[1];
+  if (!part) return undefined;
+  try {
+    const json = Buffer.from(part.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    const exp = JSON.parse(json).exp;
+    return Number.isFinite(exp) ? exp * 1000 : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Is this account the one the live Codex is using right now?
+//
+// It matters because that account's refresh token is also sitting in the default
+// home, where the real Codex CLI will rotate it on its own next use. If Context
+// Bridge refreshed it too, one of the two would present an already-used token
+// and the server would revoke the pair. So the active account is left alone; the
+// live tooling keeps it fresh, and only genuinely idle accounts are renewed here.
+export async function isActiveCodexAccount(accountId, options = {}) {
+  const live = await readCodexAuth(defaultCodexHome(options)).catch(() => null);
+  if (!live?.refreshToken && !live?.accessToken) return false;
+  const auth = await readCodexAuth(codexHome(accountId, options)).catch(() => null);
+  if (!auth) return false;
+  if (live.refreshToken && auth.refreshToken) return live.refreshToken === auth.refreshToken;
+  return Boolean(live.accessToken && auth.accessToken && live.accessToken === auth.accessToken);
+}
+
+// Merge refreshed tokens back into an account's stored auth.json, preserving the
+// on-disk shape Codex expects and everything we are not replacing.
+export async function writeCodexTokens(home, tokens, options = {}) {
+  const file = codexAuthPath(home);
+  let current = {};
+  if (await pathExists(file)) {
+    try {
+      current = await readJson(file);
+    } catch {
+      current = {};
+    }
+  }
+  const merged = {
+    ...current,
+    tokens: {
+      ...(current.tokens || {}),
+      access_token: tokens.accessToken,
+      refresh_token: tokens.refreshToken,
+      ...(tokens.idToken ? { id_token: tokens.idToken } : {})
+    },
+    last_refresh: new Date().toISOString()
+  };
+  await fs.writeFile(file, `${JSON.stringify(merged, null, 2)}
+`, { encoding: 'utf8', mode: 0o600 });
+  try {
+    await fs.chmod(file, 0o600);
+  } catch {
+    // POSIX modes are a no-op on Windows.
+  }
+  return readCodexAuth(home);
+}
+
+// A usable access token for an account, renewed if it has expired.
+//
+// Mirrors ensureClaudeAccessToken so the panel can show quota for every
+// subscription, not just the active one - the whole point of listing them. The
+// one difference is the guard above: the account the live Codex owns is never
+// refreshed here, because the two refreshing the same rotating token would
+// revoke it. That account stays fresh through normal Codex use instead.
+export async function ensureCodexAccessToken(accountId, options = {}) {
+  const home = codexHome(accountId, options);
+  const auth = await readCodexAuth(home).catch(() => null);
+  if (!auth?.accessToken) return auth;
+
+  const expiresAt = codexAccessTokenExpiry(auth.accessToken);
+  const skew = Number.isFinite(options.refreshSkewMs) ? options.refreshSkewMs : EXPIRY_SKEW_MS;
+  const fresh = !Number.isFinite(expiresAt) || expiresAt - skew > Date.now();
+  if (fresh || options.offline) return auth;
+  if (!auth.refreshToken) return auth;
+
+  // Refreshing the live account would race Codex for its rotating token.
+  if (!options.allowActiveRefresh && (await isActiveCodexAccount(accountId, options))) return auth;
+
+  const tokens = await refreshCodexToken(auth.refreshToken, options);
+  const updated = await writeCodexTokens(home, tokens, options);
+  await updateAccount(accountId, { lastRefreshedAt: new Date().toISOString() }, options).catch(() => {});
+  return updated;
+}
+
 // Point the *official* Codex CLI and VS Code extension at this account by
 // writing its credential into the default home. This is the one operation that
 // is machine-global rather than per-session: the official tooling reads only
 // the default directory, so making an account "default" is the only way to
 // reach it. The previous credential is kept beside it so the swap is reversible.
 export async function activateCodexAccount(accountId, options = {}) {
-  const source = codexAuthPath(codexHome(accountId, options));
-  if (!(await pathExists(source))) {
+  if (!(await pathExists(codexAuthPath(codexHome(accountId, options))))) {
     throw new Error(`Account "${accountId}" is not signed in yet.`);
   }
 
@@ -100,15 +194,39 @@ export async function activateCodexAccount(accountId, options = {}) {
   await ensureDir(target);
   const targetAuth = codexAuthPath(target);
 
+  // Capture whatever the live Codex has been refreshing back into its own
+  // account's snapshot before we overwrite it. Without this, every token Codex
+  // rotated while the account was active is lost the moment you switch away,
+  // and switching back later installs a stale credential - which is exactly the
+  // failure that made a just-switched account come up expired.
+  if (await pathExists(targetAuth)) {
+    const outgoing = await activeCodexAccountId(await listAccounts({ ...options, provider: CODEX_PROVIDER }), options).catch(() => undefined);
+    if (outgoing && outgoing !== accountId) {
+      await copyCredential(targetAuth, codexAuthPath(codexHome(outgoing, options))).catch(() => {});
+    }
+  }
+
   let backup;
   if (await pathExists(targetAuth)) {
     backup = path.join(target, 'auth.context-bridge-backup.json');
     await fs.copyFile(targetAuth, backup);
   }
 
-  await copyCredential(source, targetAuth);
+  // Renew the incoming account before installing it, so a switch never lands on
+  // an expired token. Safe to refresh here: the account is not active yet, so
+  // nothing else is rotating its refresh token. If renewal is impossible - the
+  // saved login has lapsed past recovery - report it rather than silently
+  // installing a dead credential.
+  let staleReason;
+  try {
+    await ensureCodexAccessToken(accountId, options);
+  } catch (error) {
+    staleReason = error.message;
+  }
+
+  await copyCredential(codexAuthPath(codexHome(accountId, options)), targetAuth);
   await updateAccount(accountId, { lastUsedAt: new Date().toISOString() }, options);
-  return { target: targetAuth, backup };
+  return { target: targetAuth, backup, staleReason };
 }
 
 // auth.json is a live credential. Write it 0600 so activating an account does

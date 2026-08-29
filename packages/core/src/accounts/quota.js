@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { ensureDir, pathExists, readJson, writeJson } from '../fs-utils.js';
 import { accountDir } from './store.js';
-import { codexHome, readCodexAuth } from './codex.js';
+import { ensureCodexAccessToken } from './codex.js';
 import { ensureClaudeAccessToken } from './claude.js';
 import { claudeApiHeaders } from './claude-oauth.js';
 
@@ -13,6 +13,16 @@ export const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 // up permanently 429'd. Nothing here is time critical: a quota reading minutes
 // old is still a good basis for choosing an account.
 export const DEFAULT_QUOTA_TTL_MS = 5 * 60 * 1000;
+
+// How long before a Codex access token expires to renew it proactively during a
+// usage check. The token lasts ~10 days; refreshing inside its final stretch
+// means an idle subscription is kept alive by the ordinary act of showing its
+// quota, well before it can 401. The gap between this and the token lifetime is
+// how often the rotating refresh token turns over - roughly weekly - so this
+// stays comfortably under the lifetime to avoid churning it on every poll.
+// (This can only run while VS Code is open to poll; an app left closed past the
+// refresh token’s own lifetime still needs a fresh sign-in.)
+export const CODEX_PROACTIVE_REFRESH_MS = 3 * 24 * 60 * 60 * 1000;
 
 export function quotaCachePath(accountId, options = {}) {
   return path.join(accountDir(accountId, options), 'quota.json');
@@ -83,7 +93,14 @@ async function getUsage(accountId, read, fetchUsage, options = {}) {
 }
 
 export async function getCodexUsage(accountId, options = {}) {
-  return getUsage(accountId, (id, opts) => readCodexAuth(codexHome(id, opts)), fetchCodexUsage, options);
+  // Renew before reading, exactly as the Claude path does. Checking a
+  // subscription's quota is also what keeps its token from going stale: an idle
+  // account refreshed here never reaches the ten-day expiry that made a switch
+  // land on a dead token. The active account is left for Codex to refresh.
+  // Renew inside the proactive window so checking quota also keeps the token
+  // alive; a caller can still override refreshSkewMs.
+  const read = (id, opts) => ensureCodexAccessToken(id, { refreshSkewMs: CODEX_PROACTIVE_REFRESH_MS, ...opts });
+  return getUsage(accountId, read, fetchCodexUsage, options);
 }
 
 export async function getClaudeUsage(accountId, options = {}) {

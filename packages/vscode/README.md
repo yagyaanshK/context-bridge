@@ -164,8 +164,19 @@ stays signed in, so switching back is one more click; the confirmation also offe
 Switching is manual. The panel shows what each account has left and lets you choose — it does not
 fail over on its own when one runs out.
 
-Claude access tokens expire every eight hours, and the official client renews only the account it is
-currently using. Context Bridge renews the others itself, so their quota stays readable.
+Access tokens expire — Claude's every eight hours, Codex's after about ten days — and each official
+client renews only the account it is *currently* using. Context Bridge renews the others itself so
+their quota stays readable, and so a switch never lands on an expired login: checking a Codex
+subscription's usage also refreshes its token while there are still a few days of life left, which
+keeps an idle account alive through the ordinary act of showing its quota.
+
+Two rules keep this safe. The **active** Codex account is never refreshed here — the live Codex CLI
+owns its token, and OpenAI rotates the refresh token on every use, so two refreshers would revoke
+each other. And **switching away** first saves whatever the live client last refreshed back into that
+account's stored copy, so its snapshot never falls behind. The catch is that this only runs while VS
+Code is open to poll: an account left unused with the app closed past its refresh token's own
+lifetime still needs a fresh sign-in, and the switch will tell you so rather than installing a dead
+token.
 
 **What this cannot do.** A VS Code extension cannot add UI inside another extension's panel, so the
 picker lives in the sidebar and status bar rather than inside Codex's or Claude's own menu. Tools

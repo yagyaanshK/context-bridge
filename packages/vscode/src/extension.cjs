@@ -86,8 +86,29 @@ async function switchAccount(item) {
 
   const { activateCodexAccount, activateClaudeAccount } = await core();
   const activate = account.provider === 'claude' ? activateClaudeAccount : activateCodexAccount;
-  await activate(account.id);
+  const result = await activate(account.id).catch((error) => ({ error: error.message }));
+  if (result?.error) {
+    vscode.window.showErrorMessage(`Context Bridge: could not switch to "${account.label}" — ${result.error}`);
+    return;
+  }
   await accountsProvider.reloadUsage({ offline: true });
+
+  // The saved login had lapsed past what a refresh could recover, so the account
+  // is now active but its token is dead. Say so plainly - the fix is a re-login,
+  // not a retry - rather than letting it surface later as a usage error.
+  if (result?.staleReason) {
+    vscode.window
+      .showWarningMessage(
+        `${agentName(account.provider)} is now on "${account.label}", but its saved login has expired: ${result.staleReason}`,
+        'Sign In Again',
+        'Undo'
+      )
+      .then((choice) => {
+        if (choice === 'Sign In Again') vscode.commands.executeCommand('contextBridge.signInAccount', account);
+        else if (choice === 'Undo') undoAccountSwitch({ provider: account.provider });
+      });
+    return;
+  }
 
   const usage = accountsProvider.usage.get(account.id);
   const remaining = usage?.windows?.length

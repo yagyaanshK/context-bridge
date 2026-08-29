@@ -265,9 +265,14 @@ That time is the reset of the window actually holding you — which is not alway
 five-hour window can clear in an hour while an exhausted weekly allowance keeps you blocked for
 days, and when several windows are exhausted you resume only once the last of them clears. Accounts
 with more than one window list each one with its own reset beneath the bar.
- Claude
-access tokens expire every eight hours and the official client renews only the account it is
-currently using, so Context Bridge renews the others itself — otherwise their bars would go dark.
+ Access tokens
+expire — Claude's every eight hours, Codex's after about ten days — and each official client renews
+only the account it is currently using, so Context Bridge renews the others itself, otherwise their
+bars would go dark. For Codex this doubles as keep-alive: reading an idle subscription's quota
+refreshes its token while a few days of life remain, so a later switch never lands on an expired
+login. The account the live Codex is using is left alone — OpenAI rotates the refresh token on each
+use and two refreshers would revoke each other — and switching away first saves the live client's
+latest token back into that account's snapshot so it never falls behind.
 
 ```bash
 context-bridge account add "Primary" --import   # Codex: adopt the login you already have

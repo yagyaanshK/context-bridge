@@ -1,0 +1,204 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import {
+  activateCodexAccount,
+  codexHome,
+  createAccount,
+  ensureCodexAccessToken,
+  isActiveCodexAccount,
+  readCodexAuth,
+  refreshCodexToken,
+  CODEX_CLIENT_ID,
+  CODEX_TOKEN_URL
+} from '../src/index.js';
+
+// All fetch here is mocked. A real refresh rotates OpenAI's refresh token and
+// would invalidate a live login, so these tests never touch the network or a
+// real account - the whole reason this code needs to exist is that rotation.
+function b64url(value) {
+  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+}
+function accessToken(expEpochSec) {
+  return `${b64url({ alg: 'none' })}.${b64url({ exp: expEpochSec, client_id: CODEX_CLIENT_ID })}.sig`;
+}
+const past = () => Math.floor(Date.now() / 1000) - 3600;
+const future = () => Math.floor(Date.now() / 1000) + 3600;
+
+function okFetch(payload, capture) {
+  return async (url, init) => {
+    if (capture) {
+      capture.url = url;
+      capture.init = init;
+    }
+    return { ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify(payload) };
+  };
+}
+function errFetch(status, payload) {
+  return async () => ({ ok: false, status, statusText: 'Bad Request', text: async () => JSON.stringify(payload) });
+}
+const failIfCalled = () => {
+  throw new Error('refresh must not be called');
+};
+
+async function sandbox() {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-refresh-'));
+  return { home, defaultCodexHome: path.join(home, 'live-codex') };
+}
+async function signIn(id, options, tokens) {
+  const dir = codexHome(id, options);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(
+    path.join(dir, 'auth.json'),
+    JSON.stringify({
+      auth_mode: 'oauth',
+      OPENAI_API_KEY: null,
+      tokens: {
+        access_token: tokens.access,
+        refresh_token: tokens.refresh,
+        id_token: `${b64url({ alg: 'none' })}.${b64url({ email: 'dev@example.com' })}.sig`,
+        account_id: 'acct_123'
+      },
+      last_refresh: '2026-08-01T00:00:00.000Z'
+    }),
+    'utf8'
+  );
+  return dir;
+}
+
+test('refreshCodexToken posts the OpenAI refresh grant and reads rotated tokens', async () => {
+  const capture = {};
+  const result = await refreshCodexToken('rt.old', {
+    fetch: okFetch({ access_token: 'at.new', refresh_token: 'rt.new', id_token: 'id.new', expires_in: 864000 }, capture)
+  });
+  assert.equal(capture.url, CODEX_TOKEN_URL);
+  assert.equal(capture.init.method, 'POST');
+  assert.equal(capture.init.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(capture.init.body), {
+    client_id: CODEX_CLIENT_ID,
+    grant_type: 'refresh_token',
+    refresh_token: 'rt.old',
+    scope: 'openid profile email'
+  });
+  assert.equal(result.accessToken, 'at.new');
+  assert.equal(result.refreshToken, 'rt.new');
+});
+
+test('a response without a new refresh token keeps the one we sent', async () => {
+  const result = await refreshCodexToken('rt.keep', { fetch: okFetch({ access_token: 'at.new' }) });
+  assert.equal(result.refreshToken, 'rt.keep');
+});
+
+test('a reused or revoked refresh token asks for a fresh sign-in, not a retry', async () => {
+  await assert.rejects(
+    refreshCodexToken('rt.used', {
+      fetch: errFetch(400, { error: 'invalid_grant', error_description: 'refresh token reused' })
+    }),
+    /sign in again/i
+  );
+});
+
+test('a fresh token is used as-is, with no refresh call', async () => {
+  const options = await sandbox();
+  const account = await createAccount({ label: 'Fresh', provider: 'codex' }, options);
+  await signIn(account.id, options, { access: accessToken(future()), refresh: 'rt.fresh' });
+  const auth = await ensureCodexAccessToken(account.id, { ...options, fetch: failIfCalled });
+  assert.equal(auth.refreshToken, 'rt.fresh');
+});
+
+test('an expired idle account is refreshed and its rotated token written back', async () => {
+  const options = await sandbox();
+  const account = await createAccount({ label: 'Idle', provider: 'codex' }, options);
+  await signIn(account.id, options, { access: accessToken(past()), refresh: 'rt.old' });
+
+  const auth = await ensureCodexAccessToken(account.id, {
+    ...options,
+    fetch: okFetch({ access_token: accessToken(future()), refresh_token: 'rt.rotated', id_token: 'id.new' })
+  });
+
+  assert.equal(auth.refreshToken, 'rt.rotated', 'the rotated token must replace the old one on disk');
+  const onDisk = await readCodexAuth(codexHome(account.id, options));
+  assert.equal(onDisk.refreshToken, 'rt.rotated', 'and it must be persisted, not only returned');
+});
+
+test('the active account is never refreshed here - Codex owns its rotating token', async () => {
+  const options = await sandbox();
+  const account = await createAccount({ label: 'Active', provider: 'codex' }, options);
+  const home = await signIn(account.id, options, { access: accessToken(past()), refresh: 'rt.shared' });
+
+  // Make it the live account: the same credential in the default Codex home.
+  await fs.mkdir(options.defaultCodexHome, { recursive: true });
+  await fs.copyFile(path.join(home, 'auth.json'), path.join(options.defaultCodexHome, 'auth.json'));
+
+  assert.equal(await isActiveCodexAccount(account.id, options), true);
+  // Even expired, refreshing it would race the live Codex for the shared token.
+  const auth = await ensureCodexAccessToken(account.id, { ...options, fetch: failIfCalled });
+  assert.equal(auth.refreshToken, 'rt.shared');
+});
+
+test('switching syncs the outgoing login and renews the incoming one', async () => {
+  const options = await sandbox();
+  const outgoing = await createAccount({ label: 'Outgoing', provider: 'codex' }, options);
+  const incoming = await createAccount({ label: 'Incoming', provider: 'codex' }, options);
+  const outHome = await signIn(outgoing.id, options, { access: accessToken(future()), refresh: 'rt.out' });
+  await signIn(incoming.id, options, { access: accessToken(past()), refresh: 'rt.in-old' });
+
+  // The live home is the outgoing account, but freshly rotated by Codex since we
+  // last snapshotted it - a newer token than the snapshot holds.
+  await fs.mkdir(options.defaultCodexHome, { recursive: true });
+  const live = JSON.parse(await fs.readFile(path.join(outHome, 'auth.json'), 'utf8'));
+  live.tokens.access_token = accessToken(future());
+  live.tokens.refresh_token = 'rt.out-live';
+  await fs.writeFile(path.join(options.defaultCodexHome, 'auth.json'), JSON.stringify(live), 'utf8');
+
+  const result = await activateCodexAccount(incoming.id, {
+    ...options,
+    fetch: okFetch({ access_token: accessToken(future()), refresh_token: 'rt.in-new' })
+  });
+  assert.equal(result.staleReason, undefined);
+
+  // The outgoing snapshot captured the newer live token instead of losing it.
+  const outSnap = await readCodexAuth(codexHome(outgoing.id, options));
+  assert.equal(outSnap.refreshToken, 'rt.out-live');
+  // The incoming account was renewed before install, so the live home is fresh.
+  const installed = await readCodexAuth(options.defaultCodexHome);
+  assert.equal(installed.refreshToken, 'rt.in-new');
+});
+
+test('switching to an unrecoverable login reports it rather than installing a dead token silently', async () => {
+  const options = await sandbox();
+  const incoming = await createAccount({ label: 'Dead', provider: 'codex' }, options);
+  await signIn(incoming.id, options, { access: accessToken(past()), refresh: 'rt.dead' });
+
+  const result = await activateCodexAccount(incoming.id, {
+    ...options,
+    fetch: errFetch(400, { error: 'invalid_grant', error_description: 'refresh token reused' })
+  });
+  assert.match(result.staleReason, /sign in again/i);
+  // It still becomes active - so Codex can attempt its own recovery - but the
+  // caller was told, so it can prompt for a re-login.
+  const installed = await readCodexAuth(options.defaultCodexHome);
+  assert.equal(installed.refreshToken, 'rt.dead');
+});
+
+test('the proactive window renews a token that has not expired yet', async () => {
+  const options = await sandbox();
+  const account = await createAccount({ label: 'Soon', provider: 'codex' }, options);
+  // Two days of life left - not expired, but inside a three-day proactive window.
+  const twoDays = Math.floor(Date.now() / 1000) + 2 * 24 * 3600;
+  await signIn(account.id, options, { access: accessToken(twoDays), refresh: 'rt.soon' });
+
+  // With the default 60s slack it is still fresh and untouched...
+  const untouched = await ensureCodexAccessToken(account.id, { ...options, fetch: failIfCalled });
+  assert.equal(untouched.refreshToken, 'rt.soon');
+
+  // ...but the usage path passes a wider window, which renews it early.
+  const renewed = await ensureCodexAccessToken(account.id, {
+    ...options,
+    refreshSkewMs: 3 * 24 * 60 * 60 * 1000,
+    fetch: okFetch({ access_token: accessToken(future()), refresh_token: 'rt.soon-new' })
+  });
+  assert.equal(renewed.refreshToken, 'rt.soon-new');
+});
