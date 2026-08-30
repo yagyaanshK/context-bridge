@@ -115,13 +115,19 @@ export async function withFileLock(filePath, operation, options = {}) {
   }
 }
 
-export async function listFiles(dir, extension) {
+export async function listFiles(dir, extension, options = {}) {
   if (!(await pathExists(dir))) return [];
-  const entries = await fs.readdir(dir, { withFileTypes: true });
-  return entries
-    .filter((entry) => entry.isFile() && (!extension || entry.name.endsWith(extension)))
-    .map((entry) => path.join(dir, entry.name))
-    .sort();
+  const maxEntries = options.maxEntries ?? 10000;
+  const files = [];
+  const directory = await fs.opendir(dir);
+  let seen = 0;
+  for await (const entry of directory) {
+    options.signal?.throwIfAborted();
+    seen++;
+    if (seen > maxEntries) throw new Error(`Directory contains more than the ${maxEntries}-entry safety limit: ${dir}`);
+    if (entry.isFile() && (!extension || entry.name.endsWith(extension))) files.push(path.join(dir, entry.name));
+  }
+  return files.sort();
 }
 
 function isPathInside(root, target) {

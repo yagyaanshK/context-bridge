@@ -2,7 +2,9 @@ import path from 'node:path';
 import { createTurn } from '../schema.js';
 import { writeSession } from '../store.js';
 import {
+  createBoundedTurnCollector,
   homePath,
+  jsonlFileInfo,
   listJsonlFiles,
   pathsSameOrNested,
   readFirstJsonlObjects,
@@ -33,17 +35,30 @@ export async function discoverCodexSessions(options = {}) {
   const root = options.root || process.cwd();
   const sessionsDir = options.sessionsDir || homePath('.codex', 'sessions');
   const archivedDir = options.archivedDir || homePath('.codex', 'archived_sessions');
-  const files = [
-    ...(await listJsonlFiles(sessionsDir)),
-    ...(options.includeArchived ? await listJsonlFiles(archivedDir) : [])
-  ].sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const files = options.path
+    ? [await jsonlFileInfo(options.path)]
+    : [
+        ...(await listJsonlFiles(sessionsDir, {
+          signal: options.signal,
+          maxFiles: options.maxDiscoveryFiles,
+          maxEntries: options.maxDiscoveryEntries
+        })),
+        ...(options.includeArchived
+          ? await listJsonlFiles(archivedDir, {
+              signal: options.signal,
+              maxFiles: options.maxDiscoveryFiles,
+              maxEntries: options.maxDiscoveryEntries
+            })
+          : [])
+      ].sort((a, b) => b.mtimeMs - a.mtimeMs);
   // Read once for the whole scan: it is one small file keyed by thread id, and
   // every session below asks it the same question.
   const names = await readCodexThreadNames(options);
   const sessions = [];
 
   for (const file of files.slice(0, options.limit || 300)) {
-    const meta = await inspectCodexFile(file.path);
+    options.signal?.throwIfAborted();
+    const meta = await inspectCodexFile(file.path, options);
     const matchesProject = meta.cwd ? pathsSameOrNested(meta.cwd, root) || pathsSameOrNested(root, meta.cwd) : false;
     if (!options.all && !matchesProject) continue;
     // Only sessions that could actually be offered as a choice get the extra
@@ -52,7 +67,7 @@ export async function discoverCodexSessions(options = {}) {
     // The tail is authoritative, but a transcript whose last megabytes are one
     // enormous line yields nothing parseable. The head already holds several
     // messages, so fall back to the latest of those before giving up.
-    const latest = matchesProject ? (await latestCodexRequest(file.path)) || meta.last : undefined;
+    const latest = matchesProject ? (await latestCodexRequest(file.path, options)) || meta.last : undefined;
     const sessionId = meta.sessionId || sessionIdFromCodexPath(file.path);
     // Codex's own name for the thread when it has one - the same text the app
     // sidebar shows. Sessions it never named, such as forks and subagent runs,
@@ -81,12 +96,13 @@ export async function discoverCodexSessions(options = {}) {
   return sessions;
 }
 
-export async function importCodexSession(root, session) {
-  const turns = [];
+export async function importCodexSession(root, session, options = {}) {
+  const collector = createBoundedTurnCollector(options);
   await readJsonlObjects(session.path, (event, lineNumber) => {
     const turn = codexEventToTurn(event, session, lineNumber);
-    if (turn) turns.push(turn);
-  });
+    collector.push(turn);
+  }, options);
+  const { turns } = collector;
   if (turns.length === 0) throw new Error(`No importable Codex turns found in ${session.path}`);
   const collapsed = collapseCodexStreamDuplicates(turns);
   return writeSession(root, collapsed.turns, {
@@ -364,10 +380,10 @@ export function codexSurface(source, originator) {
   return undefined;
 }
 
-async function inspectCodexFile(filePath) {
+async function inspectCodexFile(filePath, options) {
   // Wide enough to get past the injected preamble - skills, instructions, world
   // state - to the first message the user actually typed.
-  const objects = await readFirstJsonlObjects(filePath, 80);
+  const objects = await readFirstJsonlObjects(filePath, 80, options);
   let sessionId;
   let cwd;
   let source;
@@ -399,11 +415,14 @@ async function inspectCodexFile(filePath) {
 
 // The most recent request in a session, read from the tail so a 400 MB
 // transcript costs the same as a small one.
-function latestCodexRequest(filePath) {
-  return readLatestRequest(filePath, (objects) =>
-    objects
-      .filter((event) => event.type === 'event_msg' && event.payload?.type === 'user_message')
-      .map((event) => contentToText(event.payload.message))
+function latestCodexRequest(filePath, options) {
+  return readLatestRequest(
+    filePath,
+    (objects) =>
+      objects
+        .filter((event) => event.type === 'event_msg' && event.payload?.type === 'user_message')
+        .map((event) => contentToText(event.payload.message)),
+    options
   );
 }
 

@@ -19,8 +19,8 @@ export async function importNativeSession(root, provider, options = {}) {
   if (!session) {
     throw new Error(`No ${normalized} native session matched the requested filters.`);
   }
-  if (normalized === 'claude') return importClaudeSession(root, session);
-  if (normalized === 'codex') return importCodexSession(root, session);
+  if (normalized === 'claude') return importClaudeSession(root, session, options);
+  if (normalized === 'codex') return importCodexSession(root, session, options);
   throw new Error(`Unsupported native provider: ${provider}`);
 }
 

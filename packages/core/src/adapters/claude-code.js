@@ -2,7 +2,9 @@ import path from 'node:path';
 import { createTurn } from '../schema.js';
 import { writeSession } from '../store.js';
 import {
+  createBoundedTurnCollector,
   homePath,
+  jsonlFileInfo,
   listJsonlFiles,
   pathsSameOrNested,
   readFirstJsonlObjects,
@@ -16,16 +18,23 @@ export const CLAUDE_PROVIDER = 'anthropic';
 export async function discoverClaudeSessions(options = {}) {
   const root = options.root || process.cwd();
   const projectsDir = options.projectsDir || homePath('.claude', 'projects');
-  const files = await listJsonlFiles(projectsDir);
+  const files = options.path
+    ? [await jsonlFileInfo(options.path)]
+    : await listJsonlFiles(projectsDir, {
+        signal: options.signal,
+        maxFiles: options.maxDiscoveryFiles,
+        maxEntries: options.maxDiscoveryEntries
+      });
   const sessions = [];
 
   for (const file of files.slice(0, options.limit || 200)) {
-    const meta = await inspectClaudeFile(file.path);
+    options.signal?.throwIfAborted();
+    const meta = await inspectClaudeFile(file.path, options);
     const matchesProject = meta.cwd ? pathsSameOrNested(meta.cwd, root) || pathsSameOrNested(root, meta.cwd) : false;
     if (!options.all && !matchesProject) continue;
 
     // Only sessions that could be offered as a choice get the extra tail read.
-    const latest = matchesProject ? (await latestClaudeRequest(file.path)) || meta.last : undefined;
+    const latest = matchesProject ? (await latestClaudeRequest(file.path, options)) || meta.last : undefined;
     const title = meta.title || meta.first;
 
     sessions.push({
@@ -50,12 +59,13 @@ export async function discoverClaudeSessions(options = {}) {
   return sessions;
 }
 
-export async function importClaudeSession(root, session) {
-  const turns = [];
+export async function importClaudeSession(root, session, options = {}) {
+  const collector = createBoundedTurnCollector(options);
   await readJsonlObjects(session.path, (event, lineNumber) => {
     const turn = claudeEventToTurn(event, session, lineNumber);
-    if (turn) turns.push(turn);
-  });
+    collector.push(turn);
+  }, options);
+  const { turns } = collector;
   if (turns.length === 0) throw new Error(`No importable Claude turns found in ${session.path}`);
   return writeSession(root, turns, {
     provider: CLAUDE_PROVIDER,
@@ -123,8 +133,8 @@ function contentBlocksToText(value) {
   return String(value);
 }
 
-async function inspectClaudeFile(filePath) {
-  const objects = await readFirstJsonlObjects(filePath, 80);
+async function inspectClaudeFile(filePath, options) {
+  const objects = await readFirstJsonlObjects(filePath, 80, options);
   let cwd;
   let sessionId;
   let title;
@@ -148,9 +158,11 @@ async function inspectClaudeFile(filePath) {
   };
 }
 
-function latestClaudeRequest(filePath) {
-  return readLatestRequest(filePath, (objects) =>
-    objects.filter((event) => event.type === 'user').map(claudeMessageText)
+function latestClaudeRequest(filePath, options) {
+  return readLatestRequest(
+    filePath,
+    (objects) => objects.filter((event) => event.type === 'user').map(claudeMessageText),
+    options
   );
 }
 

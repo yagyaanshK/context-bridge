@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { readJsonlObjects } from './adapters/common.js';
 import {
   ensureDir,
   listFiles,
@@ -101,16 +102,35 @@ export async function writeSession(root, turns, options = {}) {
   return { id: sessionId, path: absolutePath, relativePath, turnCount: turns.length };
 }
 
-export async function readAllTurns(root) {
+export const DEFAULT_MAX_LEDGER_TURNS = 50000;
+export const DEFAULT_MAX_LEDGER_CHARS = 64 * 1024 * 1024;
+
+export async function readAllTurns(root, options = {}) {
   const ledger = resolveLedger(root);
-  const sessionFiles = await listFiles(path.join(ledger, 'sessions'), '.jsonl');
+  const sessionFiles = await listFiles(path.join(ledger, 'sessions'), '.jsonl', {
+    signal: options.signal,
+    maxEntries: options.maxSessionFiles || 10000
+  });
+  const maxTurns = positiveLimit(options.maxLedgerTurns, DEFAULT_MAX_LEDGER_TURNS);
+  const maxChars = positiveLimit(options.maxLedgerChars, DEFAULT_MAX_LEDGER_CHARS);
   const turns = [];
+  let chars = 0;
   for (const filePath of sessionFiles) {
-    const text = await fs.readFile(filePath, 'utf8');
-    for (const line of text.split(/\r?\n/)) {
-      if (!line.trim()) continue;
-      turns.push(JSON.parse(line));
-    }
+    options.signal?.throwIfAborted();
+    await readJsonlObjects(
+      filePath,
+      (turn) => {
+        chars += String(turn.content || '').length;
+        if (turns.length + 1 > maxTurns || chars > maxChars) {
+          throw new Error(
+            `Ledger exceeds the export safety limit (${maxTurns} turns or ${maxChars} content characters). ` +
+              'Raise maxLedgerTurns/maxLedgerChars deliberately or prune obsolete imported sessions.'
+          );
+        }
+        turns.push(turn);
+      },
+      options
+    );
   }
   return turns.sort((a, b) => String(a.timestamp || '').localeCompare(String(b.timestamp || '')));
 }
@@ -214,4 +234,8 @@ function manifestFile(root) {
 
 function safeIdPart(value) {
   return String(value || 'unknown').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24) || 'unknown';
+}
+
+function positiveLimit(value, fallback) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }

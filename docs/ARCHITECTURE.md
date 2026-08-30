@@ -115,11 +115,13 @@ The exporter never asks an AI to summarize. It builds a markdown handoff from:
 
 If a budget is provided, the exporter includes turns by a deterministic priority order:
 
-1. all user turns
+1. user turns, newest first; an oversized latest request is truncated into the budget rather than dropped
 2. most recent assistant/tool/system turns
 3. older assistant/tool/system turns while budget remains
 
 Raw sessions remain available on disk even when not fully embedded.
+
+JSONL parsing is streaming and line-bounded. Discovery retains a bounded newest candidate set, and import/export enforce explicit turn and content ceilings. These limits bound memory without modifying the native source or the complete sessions already stored in the ledger; callers can deliberately raise them for unusually large workspaces. Core loops accept an abort signal, which the VS Code progress notification wires to its Cancel action.
 
 Inline media handling:
 

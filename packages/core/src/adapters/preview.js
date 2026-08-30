@@ -134,7 +134,8 @@ export async function readLatestRequest(filePath, extractMessages, options = {})
   let fallback;
 
   for (const maxBytes of options.windows || [512 * 1024, 4 * 1024 * 1024]) {
-    const objects = await readLastJsonlObjects(filePath, 400, maxBytes);
+    options.signal?.throwIfAborted();
+    const objects = await readLastJsonlObjects(filePath, 400, maxBytes, options);
     const described = describeRequests(extractMessages(objects), options);
     const candidate = described.last || described.first;
     if (candidate && isSubstantive(candidate)) return candidate;

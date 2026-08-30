@@ -1,11 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createBoundedTurnCollector, readJsonlObjects } from './adapters/common.js';
 import { createTurn, normalizeProvider, normalizeSurface } from './schema.js';
 import { writeSession } from './store.js';
 
+export const DEFAULT_MAX_NON_JSONL_IMPORT_BYTES = 32 * 1024 * 1024;
+
 export async function importTranscript(root, sourcePath, options = {}) {
   const absoluteSource = path.resolve(root, sourcePath);
-  const text = await fs.readFile(absoluteSource, 'utf8');
+  options.signal?.throwIfAborted();
   const provider = normalizeProvider(options.provider);
   const surface = normalizeSurface(options.surface);
   const defaults = {
@@ -15,8 +18,33 @@ export async function importTranscript(root, sourcePath, options = {}) {
       sourcePath: path.relative(root, absoluteSource).replaceAll('\\', '/')
     }
   };
-  const rawTurns = parseTranscript(text, path.extname(sourcePath).toLowerCase());
-  const turns = rawTurns.map((turn) => createTurn(turn, defaults)).filter((turn) => turn.content.trim().length > 0);
+  const extension = path.extname(sourcePath).toLowerCase();
+  const collector = createBoundedTurnCollector(options);
+  if (extension === '.jsonl') {
+    await readJsonlObjects(
+      absoluteSource,
+      (raw) => {
+        const turn = createTurn(raw, defaults);
+        if (turn.content.trim()) collector.push(turn);
+      },
+      options
+    );
+  } else {
+    const stat = await fs.stat(absoluteSource);
+    const maxBytes = positiveLimit(options.maxNonJsonlImportBytes, DEFAULT_MAX_NON_JSONL_IMPORT_BYTES);
+    if (stat.size > maxBytes) {
+      throw new Error(
+        `Import file is ${stat.size} bytes, above the ${maxBytes}-byte safety limit for ${extension || 'text'} files. ` +
+          'Convert it to JSONL for streaming or raise maxNonJsonlImportBytes deliberately.'
+      );
+    }
+    const text = await fs.readFile(absoluteSource, 'utf8');
+    for (const raw of parseTranscript(text, extension)) {
+      const turn = createTurn(raw, defaults);
+      if (turn.content.trim()) collector.push(turn);
+    }
+  }
+  const { turns } = collector;
   if (turns.length === 0) {
     throw new Error(`No importable turns found in ${sourcePath}`);
   }
@@ -25,6 +53,10 @@ export async function importTranscript(root, sourcePath, options = {}) {
     surface,
     sourcePath: defaults.metadata.sourcePath
   });
+}
+
+function positiveLimit(value, fallback) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
 export function parseTranscript(text, extension = '') {

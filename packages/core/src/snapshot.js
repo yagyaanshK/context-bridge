@@ -16,26 +16,26 @@ export async function captureSnapshot(root, options = {}) {
     schemaVersion: 1,
     createdAt: new Date().toISOString(),
     root: path.resolve(root),
-    git: await gitSnapshot(root),
-    topLevelFiles: await topLevelFiles(root)
+    git: await gitSnapshot(root, options),
+    topLevelFiles: await topLevelFiles(root, options)
   };
   return writeSnapshot(root, snapshot, { keep: options.keepSnapshots });
 }
 
-async function gitSnapshot(root) {
-  const inside = await git(root, ['rev-parse', '--is-inside-work-tree']);
+async function gitSnapshot(root, options) {
+  const inside = await git(root, ['rev-parse', '--is-inside-work-tree'], options);
   if (inside.exitCode !== 0 || inside.stdout.trim() !== 'true') {
     return { available: false };
   }
   // `git diff HEAD` covers staged and unstaged changes together, which is what
   // "work in progress that is not committed yet" actually means to a reader.
   const [branch, status, head, remotes, diffStat, diff] = await Promise.all([
-    git(root, ['branch', '--show-current']),
-    git(root, ['status', '--short', '--branch']),
-    git(root, ['log', '-1', '--oneline']),
-    git(root, ['remote', '-v']),
-    git(root, ['diff', 'HEAD', '--stat']),
-    git(root, ['diff', 'HEAD'])
+    git(root, ['branch', '--show-current'], options),
+    git(root, ['status', '--short', '--branch'], options),
+    git(root, ['log', '-1', '--oneline'], options),
+    git(root, ['remote', '-v'], options),
+    git(root, ['diff', 'HEAD', '--stat'], options),
+    git(root, ['diff', 'HEAD'], options)
   ]);
 
   const diffText = diff.stdout.trimEnd();
@@ -53,11 +53,12 @@ async function gitSnapshot(root) {
   };
 }
 
-async function git(root, args) {
+async function git(root, args, options = {}) {
   try {
-    const { stdout, stderr } = await execFileAsync('git', args, { cwd: root, timeout: 10000 });
+    const { stdout, stderr } = await execFileAsync('git', args, { cwd: root, timeout: 10000, signal: options.signal });
     return { exitCode: 0, stdout, stderr };
   } catch (error) {
+    if (error.name === 'AbortError') throw error;
     return {
       exitCode: typeof error.code === 'number' ? error.code : 1,
       stdout: error.stdout || '',
@@ -66,7 +67,8 @@ async function git(root, args) {
   }
 }
 
-async function topLevelFiles(root) {
+async function topLevelFiles(root, options = {}) {
+  options.signal?.throwIfAborted();
   const entries = await fs.readdir(root, { withFileTypes: true });
   return entries
     .filter((entry) => entry.name !== '.git' && entry.name !== '.context-bridge' && entry.name !== 'node_modules')

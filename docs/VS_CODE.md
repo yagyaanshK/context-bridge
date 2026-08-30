@@ -92,7 +92,8 @@ already-active account is allowed because it does not replace the credential.
 
 The panel's bottom section runs the same handoff flow as the commands: choose the target agent,
 choose a new or existing session, press **Create handoff**. Afterwards it shows the last handoff
-with **Open** and **Copy prompt**. The command palette entries are unchanged.
+with **Open** and **Copy prompt**. This remembered handoff is stored per workspace and is shown only
+when its recorded project root matches the current workspace. The command palette entries are unchanged.
 
 ### Choosing which session
 
@@ -120,6 +121,8 @@ Context Bridge generates the same deterministic handoff whether you paste it int
 When handing off to Claude, the extension imports the latest Codex native transcript for the workspace, captures a workspace snapshot, generates a handoff markdown file, and copies a concise prompt to the clipboard.
 
 When handing off to Codex, the extension imports the latest Claude native transcript for the workspace, captures a workspace snapshot, generates a handoff markdown file, and copies a concise prompt to the clipboard.
+
+Discovery, import, and handoff progress notifications have a **Cancel** action. Cancellation propagates through provider-directory walking, JSONL parsing, snapshot commands, and ledger export rather than leaving background work in the extension host.
 
 The receiving prompt points at the handoff file instead of pasting a giant transcript into the chat box:
 

@@ -104,6 +104,8 @@ A raw multi-tool session can be megabytes. Context Bridge shrinks the **export**
 
 The ledger header of every export reports exactly what was collapsed and truncated.
 
+JSONL sources are streamed rather than loaded as one string. Discovery, individual lines, imported turn counts, and the ledger window used by one export have explicit safety limits with actionable errors instead of consuming unbounded extension-host memory. VS Code discovery/import/handoff notifications are cancellable. If the newest user request alone is larger than the export budget, Context Bridge includes a head-and-tail truncation of that request rather than dropping it behind assistant output.
+
 ---
 
 ## CLI reference

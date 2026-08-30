@@ -2,6 +2,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const vscode = require('vscode');
 const { AccountsStore, AccountsWebview } = require('./accounts-view.cjs');
+const { handoffForRoot } = require('./handoff-state.cjs');
 const { LoginPanel } = require('./login-view.cjs');
 
 let accountsProvider;
@@ -476,6 +477,7 @@ function command(name, handler) {
     try {
       await handler(...args);
     } catch (error) {
+      if (error?.name === 'AbortError' || error?.name === 'Canceled') return;
       vscode.window.showErrorMessage(`Context Bridge: ${error.message}`);
     }
   });
@@ -502,8 +504,8 @@ async function workspaceRoot() {
 // another folder, showing its cwd so the choice is informed.
 async function resolveSourceSession(provider, root) {
   const { discoverNativeSessions } = await core();
-  const sessions = await withProgress(`Discovering ${provider} sessions`, () =>
-    discoverNativeSessions(provider, { root, all: true, includeArchived: true })
+  const sessions = await withProgress(`Discovering ${provider} sessions`, ({ signal }) =>
+    discoverNativeSessions(provider, { root, all: true, includeArchived: true, signal })
   );
   if (sessions.length === 0) return { status: 'none' };
 
@@ -638,8 +640,8 @@ function formatSize(bytes) {
 async function discover(provider) {
   const root = await workspaceRoot();
   const { discoverNativeSessions } = await core();
-  const sessions = await withProgress(`Discovering ${provider} sessions`, () =>
-    discoverNativeSessions(provider, { root, all: true, includeArchived: true })
+  const sessions = await withProgress(`Discovering ${provider} sessions`, ({ signal }) =>
+    discoverNativeSessions(provider, { root, all: true, includeArchived: true, signal })
   );
 
   if (sessions.length === 0) {
@@ -687,9 +689,9 @@ async function importLatest(provider) {
     vscode.window.showWarningMessage(`Context Bridge: no ${provider} sessions were found anywhere on this machine.`);
     return;
   }
-  const result = await withProgress(`Importing ${provider} session`, async () => {
+  const result = await withProgress(`Importing ${provider} session`, async ({ signal }) => {
     await initStore(root);
-    return importNativeSession(root, provider, { path: resolved.session.path, includeArchived: true });
+    return importNativeSession(root, provider, { path: resolved.session.path, includeArchived: true, signal });
   });
   await reportImport(provider, result);
 }
@@ -697,9 +699,9 @@ async function importLatest(provider) {
 async function importSession(provider, session) {
   const root = await workspaceRoot();
   const { initStore, importNativeSession } = await core();
-  const result = await withProgress(`Importing ${provider} session`, async () => {
+  const result = await withProgress(`Importing ${provider} session`, async ({ signal }) => {
     await initStore(root);
-    return importNativeSession(root, provider, { path: session.path, includeArchived: true });
+    return importNativeSession(root, provider, { path: session.path, includeArchived: true, signal });
   });
   await reportImport(provider, result);
 }
@@ -746,12 +748,12 @@ async function handoff(target, mode) {
     if (choice !== 'Continue Without Import') return;
   }
 
-  const result = await withProgress(`Creating handoff to ${target}`, async () => {
+  const result = await withProgress(`Creating handoff to ${target}`, async ({ signal }) => {
     await initStore(root);
     if (resolved.session) {
-      await importNativeSession(root, source, { path: resolved.session.path, includeArchived: true });
+      await importNativeSession(root, source, { path: resolved.session.path, includeArchived: true, signal });
     }
-    await captureSnapshot(root);
+    await captureSnapshot(root, { signal });
     return exportHandoff(root, {
       target,
       maxChars,
@@ -760,7 +762,8 @@ async function handoff(target, mode) {
       toolMaxChars,
       systemMaxChars,
       snapshotDiffMaxChars,
-      keepExports
+      keepExports,
+      signal
     });
   });
 
@@ -771,7 +774,7 @@ async function handoff(target, mode) {
   const prompt = handoffPrompt(target, mode, result.path, destination);
   await vscode.env.clipboard.writeText(prompt);
   await rememberLatest(root, target, result.path, prompt, destination);
-  await publishHandoffState();
+  await publishHandoffState(root);
 
   if (openDocument) await openDocumentAt(result.path);
   if (mode === 'new') await openTarget(target);
@@ -795,13 +798,13 @@ function countWords(text) {
 }
 
 async function openLatestHandoff() {
-  const latest = await latestState();
+  const latest = await latestState(await workspaceRoot());
   if (!latest?.handoffPath) throw new Error('No latest handoff recorded in this VS Code window.');
   await openDocumentAt(latest.handoffPath);
 }
 
 async function copyLatestHandoffPrompt() {
-  const latest = await latestState();
+  const latest = await latestState(await workspaceRoot());
   if (!latest?.prompt) throw new Error('No latest handoff prompt recorded in this VS Code window.');
   await vscode.env.clipboard.writeText(latest.prompt);
   vscode.window.showInformationMessage(
@@ -871,15 +874,23 @@ async function openDocumentAt(filePath) {
 
 async function withProgress(title, task) {
   return vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: `Context Bridge: ${title}`, cancellable: false },
-    task
+    { location: vscode.ProgressLocation.Notification, title: `Context Bridge: ${title}`, cancellable: true },
+    async (progress, token) => {
+      const controller = new AbortController();
+      const disposable = token.onCancellationRequested(() => controller.abort());
+      try {
+        return await task({ progress, signal: controller.signal });
+      } finally {
+        disposable.dispose();
+      }
+    }
   );
 }
 
 // The panel shows the last handoff, so it has to be told when one is made -
 // and on activation, so a fresh window is not blank about work already done.
-async function publishHandoffState() {
-  const latest = await latestState();
+async function publishHandoffState(root) {
+  const latest = await latestState(root);
   accountsProvider.setHandoff(
     latest
       ? {
@@ -894,7 +905,7 @@ async function publishHandoffState() {
 }
 
 async function rememberLatest(root, target, handoffPath, prompt, destination) {
-  await contextGlobalUpdate('latestHandoff', {
+  await extensionContext.workspaceState.update('latestHandoff', {
     root,
     target,
     handoffPath,
@@ -905,12 +916,10 @@ async function rememberLatest(root, target, handoffPath, prompt, destination) {
 }
 
 let extensionContext;
-async function contextGlobalUpdate(key, value) {
-  await extensionContext.globalState.update(key, value);
-}
-
-async function latestState() {
-  return extensionContext.globalState.get('latestHandoff');
+async function latestState(root) {
+  const latest = extensionContext.workspaceState.get('latestHandoff');
+  const activeRoot = root || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  return handoffForRoot(latest, activeRoot);
 }
 
 module.exports = {

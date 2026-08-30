@@ -26,7 +26,7 @@ export const DEFAULT_SNAPSHOT_DIFF_MAX_CHARS = 4000;
 export async function exportHandoff(root, options = {}) {
   const target = normalizeTarget(options.target || 'unknown');
   const manifest = await readManifest(root);
-  const allTurns = await readAllTurns(root);
+  const allTurns = await readAllTurns(root, options);
   const snapshot = await latestSnapshot(root);
 
   // Our own plumbing, recorded by the agent we handed off to: the prompt that
@@ -149,13 +149,12 @@ function prepareTurn(turn, truncation) {
     lines.push('');
   }
 
-  const truncated = truncateTurnContent(sanitized.content, truncation[turn.role]);
-  lines.push('```text');
-  lines.push(truncated.content.replaceAll('```', '` ` `'));
-  lines.push('```');
-  lines.push('');
+  return buildPreparedTurn(turn, lines, sanitized.content, truncation[turn.role]);
+}
 
-  const block = lines.join('\n');
+function buildPreparedTurn(turn, headerLines, sanitizedContent, maxContentChars) {
+  const truncated = truncateTurnContent(sanitizedContent, maxContentChars);
+  const block = [...headerLines, '```text', truncated.content.replaceAll('```', '` ` `'), '```', ''].join('\n');
   return {
     turn,
     role: turn.role,
@@ -163,7 +162,9 @@ function prepareTurn(turn, truncation) {
     block,
     // +1 for the newline that joins this block to the next one.
     size: block.length + 1,
-    truncatedChars: truncated.removed
+    truncatedChars: truncated.removed,
+    headerLines,
+    sanitizedContent
   };
 }
 
@@ -188,24 +189,51 @@ function prepareTurn(turn, truncation) {
 export function selectPreparedTurns(prepared, maxChars) {
   if (!maxChars || maxChars <= 0) return { prepared, omittedTurns: 0 };
 
-  const selected = new Set();
-  let used = 0;
+  const candidates = [...prepared];
+  let forcedUser;
+  const latestUserIndex = candidates.findLastIndex((item) => item.role === 'user');
+  if (latestUserIndex >= 0 && candidates[latestUserIndex].size > maxChars) {
+    const fitted = fitPreparedTurn(candidates[latestUserIndex], maxChars);
+    candidates[latestUserIndex] = fitted;
+    if (fitted.size > maxChars) forcedUser = fitted;
+  }
+
+  const selected = new Set(forcedUser ? [forcedUser] : []);
+  let used = forcedUser?.size || 0;
 
   const fillNewestFirst = (items) => {
     for (let i = items.length - 1; i >= 0; i--) {
       const item = items[i];
+      if (selected.has(item)) continue;
       if (used + item.size > maxChars) break;
       selected.add(item);
       used += item.size;
     }
   };
 
-  fillNewestFirst(prepared.filter((item) => item.role === 'user'));
-  fillNewestFirst(prepared.filter((item) => item.role !== 'user'));
+  fillNewestFirst(candidates.filter((item) => item.role === 'user'));
+  fillNewestFirst(candidates.filter((item) => item.role !== 'user'));
 
   // `prepared` is already chronological, so filtering restores reading order.
-  const kept = prepared.filter((item) => selected.has(item));
-  return { prepared: kept, omittedTurns: prepared.length - kept.length };
+  const kept = candidates.filter((item) => selected.has(item));
+  return { prepared: kept, omittedTurns: candidates.length - kept.length };
+}
+
+function fitPreparedTurn(item, maxChars) {
+  let low = 1;
+  let high = Math.min(item.sanitizedContent.length, maxChars);
+  let best;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = buildPreparedTurn(item.turn, item.headerLines, item.sanitizedContent, middle);
+    if (candidate.size <= maxChars) {
+      best = candidate;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return best || buildPreparedTurn(item.turn, item.headerLines, item.sanitizedContent, 1);
 }
 
 export function selectTurns(turns, maxChars, truncation = {}) {
