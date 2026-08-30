@@ -161,6 +161,7 @@ stays signed in, so switching back is one more click; the confirmation also offe
 | **Refresh now** (on the pool) | Reads every account for that agent. Otherwise readings are cached for five minutes. |
 | **Raw Response** | Opens the endpoint's actual JSON next to how Context Bridge parsed it. |
 | **✎** (on hover) | Renames the account. The directory holding its credential never changes, so a rename cannot invalidate a login. |
+| **Remove** | Forgets an account, or permanently deletes its managed login and active default login after the provider stops. |
 
 Switching is manual. The panel shows what each account has left and lets you choose — it does not
 fail over on its own when one runs out.
@@ -178,6 +179,9 @@ account's stored copy, so its snapshot never falls behind. The catch is that thi
 Code is open to poll: an account left unused with the app closed past its refresh token's own
 lifetime still needs a fresh sign-in, and the switch will tell you so rather than installing a dead
 token.
+
+API-key Codex accounts can be activated and launched normally. They do not have subscription quota,
+so the panel reports quota as unavailable instead of treating the account as signed out.
 
 **What this cannot do.** A VS Code extension cannot add UI inside another extension's panel, so the
 picker lives in the sidebar and status bar rather than inside Codex's or Claude's own menu. Tools

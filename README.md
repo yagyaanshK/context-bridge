@@ -123,7 +123,7 @@ JSONL sources are streamed rather than loaded as one string. Discovery, individu
 | `accounts [--refresh]` | List Codex subscriptions with remaining quota. |
 | `account add <label> [--import]` | Register a subscription; `--import` adopts your current login. |
 | `account use <id>` | Make a subscription the machine default for the official CLI. |
-| `account remove <id> [--purge]` | Forget a subscription; `--purge` also deletes its credentials. |
+| `account remove <id> [--purge]` | Forget a subscription; `--purge` deletes managed credentials and its live default login when active. |
 
 > **The `account` commands are Codex-only.** Claude accounts are managed from the VS Code panel;
 > the CLI's `--provider claude` flag reads Codex paths and will misreport them. See

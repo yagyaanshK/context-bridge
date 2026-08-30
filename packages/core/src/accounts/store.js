@@ -113,6 +113,9 @@ export async function updateAccount(id, patch, options = {}) {
 // Forgetting an account without `purge` leaves its login on disk and recoverable.
 export async function removeAccount(id, options = {}) {
   validatePathSegment(id, 'Account id');
+  const before = (await readRegistry(options)).accounts.find((item) => item.id === id);
+  if (!before) throw new Error(`No account with id "${id}".`);
+  const livePurged = options.purge ? await purgeActiveProviderLogin(before, options) : false;
   const account = await withFileLock(registryPath(options), async () => {
     const registry = await readRegistry(options);
     const found = registry.accounts.find((item) => item.id === id);
@@ -122,16 +125,28 @@ export async function removeAccount(id, options = {}) {
     return found;
   }, options);
 
-  if (!options.purge) return { removed: account, purged: false };
+  if (!options.purge) return { removed: account, purged: false, livePurged: false };
 
   const dir = path.resolve(accountDir(id, options));
   const root = path.resolve(accountsRoot(options));
   // Never delete outside the accounts tree, whatever the registry claims.
   if (dir !== root && dir.startsWith(`${root}${path.sep}`)) {
     await fs.rm(dir, { recursive: true, force: true });
-    return { removed: account, purged: true };
+    return { removed: account, purged: true, livePurged };
   }
-  return { removed: account, purged: false };
+  return { removed: account, purged: false, livePurged };
+}
+
+async function purgeActiveProviderLogin(account, options) {
+  if (account.provider === 'claude') {
+    const { purgeActiveClaudeAccount } = await import('./claude.js');
+    return purgeActiveClaudeAccount(account.id, options);
+  }
+  if (account.provider === 'codex') {
+    const { purgeActiveCodexAccount } = await import('./codex.js');
+    return purgeActiveCodexAccount(account.id, options);
+  }
+  return false;
 }
 
 function uniqueId(label, accounts) {

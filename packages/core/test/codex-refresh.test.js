@@ -177,7 +177,7 @@ test('switching syncs the outgoing login and renews the incoming one', async () 
     ...options,
     fetch: okFetch({ access_token: accessToken(future(), 'incoming-refreshed'), refresh_token: 'rt.in-new' })
   });
-  assert.equal(result.staleReason, undefined);
+  assert.ok(result.target);
 
   // The outgoing snapshot captured the newer live token instead of losing it.
   const outSnap = await readCodexAuth(codexHome(outgoing.id, options));
@@ -187,20 +187,24 @@ test('switching syncs the outgoing login and renews the incoming one', async () 
   assert.equal(installed.refreshToken, 'rt.in-new');
 });
 
-test('switching to an unrecoverable login reports it rather than installing a dead token silently', async () => {
+test('switching to an unrecoverable login leaves the live credential unchanged', async () => {
   const options = await sandbox();
+  const active = await createAccount({ label: 'Active', provider: 'codex' }, options);
   const incoming = await createAccount({ label: 'Dead', provider: 'codex' }, options);
+  await signIn(active.id, options, { access: accessToken(future()), refresh: 'rt.active' });
   await signIn(incoming.id, options, { access: accessToken(past()), refresh: 'rt.dead' });
+  await activateCodexAccount(active.id, options);
 
-  const result = await activateCodexAccount(incoming.id, {
-    ...options,
-    fetch: errFetch(400, { error: 'invalid_grant', error_description: 'refresh token reused' })
-  });
-  assert.match(result.staleReason, /sign in again/i);
-  // It still becomes active - so Codex can attempt its own recovery - but the
-  // caller was told, so it can prompt for a re-login.
+  await assert.rejects(
+    activateCodexAccount(incoming.id, {
+      ...options,
+      fetch: errFetch(400, { error: 'invalid_grant', error_description: 'refresh token reused' })
+    }),
+    /sign in again/i
+  );
   const installed = await readCodexAuth(options.defaultCodexHome);
-  assert.equal(installed.refreshToken, 'rt.dead');
+  assert.equal(installed.refreshToken, 'rt.active');
+  assert.equal((await readCodexAuth(codexHome(incoming.id, options))).refreshToken, 'rt.dead');
 });
 
 test('the proactive window renews a token that has not expired yet', async () => {

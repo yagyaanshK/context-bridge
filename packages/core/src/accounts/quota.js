@@ -77,7 +77,12 @@ async function getUsage(accountId, read, fetchUsage, options = {}) {
   }
 
   if (!auth?.accessToken) {
-    return { accountId, error: 'not-signed-in', fetchedAt: new Date().toISOString(), windows: [] };
+    return {
+      accountId,
+      error: auth?.apiKey ? 'Quota is unavailable for API-key authentication.' : 'not-signed-in',
+      fetchedAt: new Date().toISOString(),
+      windows: []
+    };
   }
 
   try {

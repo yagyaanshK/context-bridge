@@ -151,11 +151,30 @@ test('a pasted auth.json is adopted and its identity recorded', async () => {
 });
 
 test('an API-key auth.json is accepted too', async () => {
-  const { options } = await sandbox();
+  const { home, options } = await sandbox();
+  const defaultHome = path.join(home, '.codex');
+  const scoped = { ...options, defaultCodexHome: defaultHome };
   const account = await createAccount({ label: 'Key', provider: 'codex' }, options);
   await importCodexAuthText(account.id, JSON.stringify({ OPENAI_API_KEY: 'sk-test' }), options);
   const written = JSON.parse(await fs.readFile(path.join(codexHome(account.id, options), 'auth.json'), 'utf8'));
   assert.equal(written.OPENAI_API_KEY, 'sk-test');
+  assert.equal((await readCodexAuth(codexHome(account.id, options))).apiKey, 'sk-test');
+  assert.equal(await isSignedIn(account.id, options), true);
+
+  await activateCodexAccount(account.id, scoped);
+  assert.equal((await readCodexAuth(defaultHome)).apiKey, 'sk-test');
+  assert.equal(await activeCodexAccountId([account], scoped), account.id);
+
+  let fetched = false;
+  const usage = await getCodexUsage(account.id, {
+    ...options,
+    fetch: async () => {
+      fetched = true;
+      throw new Error('must not fetch quota for an API key');
+    }
+  });
+  assert.match(usage.error, /unavailable for API-key authentication/i);
+  assert.equal(fetched, false);
 });
 
 test('pasted content is rejected with a reason that says what is wrong', () => {
@@ -326,6 +345,43 @@ test('forgetting an account leaves credentials unless purge is requested', async
   const purged = await removeAccount(restored.id, { ...options, purge: true });
   assert.equal(purged.purged, true);
   assert.equal(await readCodexAuth(codexHome(restored.id, options)), null);
+});
+
+test('purging an active Codex account removes both managed and live credentials', async () => {
+  const { home, options } = await sandbox();
+  const defaultHome = path.join(home, '.codex');
+  const scoped = { ...options, defaultCodexHome: defaultHome };
+  const account = await createAccount({ label: 'Active', provider: 'codex' }, options);
+  await signIn(account.id, options);
+  await activateCodexAccount(account.id, scoped);
+
+  const result = await removeAccount(account.id, { ...scoped, purge: true });
+  assert.equal(result.purged, true);
+  assert.equal(result.livePurged, true);
+  assert.equal(await readCodexAuth(codexHome(account.id, options)), null);
+  assert.equal(await readCodexAuth(defaultHome), null);
+  assert.equal(await getAccount(account.id, options), undefined);
+});
+
+test('a blocked active Codex purge leaves the registry and both credentials intact', async () => {
+  const { home, options } = await sandbox();
+  const defaultHome = path.join(home, '.codex');
+  const scoped = { ...options, defaultCodexHome: defaultHome };
+  const account = await createAccount({ label: 'Busy', provider: 'codex' }, options);
+  await signIn(account.id, options);
+  await activateCodexAccount(account.id, scoped);
+
+  await assert.rejects(
+    removeAccount(account.id, {
+      ...scoped,
+      purge: true,
+      agentProcesses: [{ pid: 99, name: 'codex.exe' }]
+    }),
+    /Codex is still running/i
+  );
+  assert.ok(await getAccount(account.id, options));
+  assert.ok(await readCodexAuth(codexHome(account.id, options)));
+  assert.ok(await readCodexAuth(defaultHome));
 });
 
 test('usage request carries the account header and bearer token', async () => {

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { ensureDir, pathExists, readJson } from '../fs-utils.js';
+import { ensureDir, pathExists, readJson, writeJson } from '../fs-utils.js';
 import { accountDir, listAccounts, updateAccount } from './store.js';
 import { fetchClaudeProfile, refreshClaudeToken } from './claude-oauth.js';
 import { assertAgentStopped } from './processes.js';
@@ -157,6 +157,10 @@ export async function activateClaudeAccount(accountId, options = {}) {
   }
   await assertAgentStopped(CLAUDE_PROVIDER, options);
 
+  const profile = await readClaudeProfile(claudeHome(accountId, options), options);
+  const config = claudeConfigPath(target, options);
+  const preparedConfig = profile ? await claudeConfigWithProfile(config, profile) : undefined;
+
   // The official client refreshes the active credential in place. Capture that
   // live state before replacing it, otherwise switching away strands a stale
   // refresh token in the managed account.
@@ -181,21 +185,31 @@ export async function activateClaudeAccount(accountId, options = {}) {
     backup = claudeCredentialsBackupPath(target);
     await fs.copyFile(targetCredentials, backup);
   }
-  await copyCredential(source, targetCredentials);
 
-  const profile = await readClaudeProfile(claudeHome(accountId, options), options);
   let configBackup;
-  if (profile) {
-    const config = claudeConfigPath(target, options);
+  if (preparedConfig) {
     if (await pathExists(config)) {
       configBackup = claudeConfigBackupPath(config);
       await fs.copyFile(config, configBackup);
     }
-    await writeClaudeProfile(config, profile);
   }
+  await copyCredential(source, targetCredentials);
+  if (preparedConfig) await writeJson(config, preparedConfig);
 
   await updateAccount(accountId, { lastUsedAt: new Date().toISOString() }, options);
   return { target: targetCredentials, backup, configBackup };
+}
+
+export async function purgeActiveClaudeAccount(accountId, options = {}) {
+  if (!(await isActiveClaudeAccount(accountId, options))) return false;
+  await assertAgentStopped(CLAUDE_PROVIDER, options);
+  const target = defaultClaudeHome(options);
+  const configPath = claudeConfigPath(target, options);
+  const config = (await pathExists(configPath)) ? await readClaudeConfig(configPath) : undefined;
+  if (config) delete config.oauthAccount;
+  await fs.rm(claudeCredentialsPath(target), { force: true });
+  if (config) await writeJson(configPath, config);
+  return true;
 }
 
 export async function restoreClaudeBackup(options = {}) {
@@ -441,18 +455,28 @@ export async function backfillClaudeProfile(accountId, options = {}) {
 // have nothing to do with which account is in use, so the file is read, one key
 // replaced, and written back rather than rewritten from scratch.
 async function writeClaudeProfile(file, profile) {
-  let config = {};
-  if (await pathExists(file)) {
-    try {
-      config = await readJson(file);
-    } catch {
-      // Unparseable config: start a fresh one rather than refusing to sign in.
-      config = {};
-    }
-  }
+  const config = await claudeConfigWithProfile(file, profile);
   await ensureDir(path.dirname(file));
+  await writeJson(file, config);
+}
+
+async function claudeConfigWithProfile(file, profile) {
+  const config = (await pathExists(file)) ? await readClaudeConfig(file) : {};
   config.oauthAccount = profile;
-  await fs.writeFile(file, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  return config;
+}
+
+async function readClaudeConfig(file) {
+  let config;
+  try {
+    config = await readJson(file);
+  } catch (error) {
+    throw new Error(`Could not parse ${file}: ${error.message}. Context Bridge left it unchanged.`);
+  }
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    throw new Error(`Could not update ${file}: the Claude config must be a JSON object. Context Bridge left it unchanged.`);
+  }
+  return config;
 }
 
 // The credential is live. Write it 0600 so activating an account does not

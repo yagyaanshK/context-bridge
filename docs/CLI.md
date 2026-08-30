@@ -140,8 +140,13 @@ running `account use`. Context Bridge checks the process list and refuses to rep
 while a Codex process is active, because that process could later write its previous account back
 over the new default.
 
-`account remove` forgets the account but leaves its credential on disk so it can be added back;
-`--purge` also deletes the directory, which cannot be undone.
+`account remove` forgets the account but leaves its credential on disk so it can be added back.
+`--purge` deletes the managed directory and, when that account is currently active, the default
+Codex login too. Stop Codex before purging an active account. Deletion cannot be undone.
+
+Codex API-key `auth.json` files are valid accounts and can be activated or launched normally.
+Subscription quota is unavailable for API-key authentication, so those accounts show that explicit
+state instead of appearing signed out.
 
 Quota is cached for five minutes per account. A failed refresh keeps the last good reading rather
 than blanking the display.

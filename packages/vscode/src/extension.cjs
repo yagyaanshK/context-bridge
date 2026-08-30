@@ -94,23 +94,6 @@ async function switchAccount(item) {
   }
   await accountsProvider.reloadUsage({ offline: true });
 
-  // The saved login had lapsed past what a refresh could recover, so the account
-  // is now active but its token is dead. Say so plainly - the fix is a re-login,
-  // not a retry - rather than letting it surface later as a usage error.
-  if (result?.staleReason) {
-    vscode.window
-      .showWarningMessage(
-        `${agentName(account.provider)} is now on "${account.label}", but its saved login has expired: ${result.staleReason}`,
-        'Sign In Again',
-        'Undo'
-      )
-      .then((choice) => {
-        if (choice === 'Sign In Again') vscode.commands.executeCommand('contextBridge.signInAccount', account);
-        else if (choice === 'Undo') undoAccountSwitch({ provider: account.provider });
-      });
-    return;
-  }
-
   const usage = accountsProvider.usage.get(account.id);
   const remaining = usage?.windows?.length
     ? ` · ${formatPercent(Math.min(...usage.windows.map((window) => window.remainingPercent)))} left`
@@ -154,7 +137,12 @@ async function showRawUsage(item) {
   const auth = claude
     ? await api.ensureClaudeAccessToken(account.id)
     : await api.readCodexAuth(api.codexHome(account.id));
-  if (!auth?.accessToken) throw new Error(`"${account.label}" is not signed in.`);
+  if (!auth?.accessToken) {
+    if (!claude && auth?.apiKey) {
+      throw new Error('Raw subscription quota is unavailable for Codex API-key authentication.');
+    }
+    throw new Error(`"${account.label}" is not signed in.`);
+  }
 
   const headers = claude
     ? api.claudeApiHeaders(auth.accessToken)
@@ -361,7 +349,8 @@ async function forgetAccount(item) {
         modal: true,
         detail:
           `"Forget" removes it from this list but leaves its login on disk at ${account.dir}, so it can be added back.\n\n` +
-          `"Delete Credentials" also erases that directory. That cannot be undone.`
+          `"Delete Credentials" also erases that directory and, if this account is active, its live ${agentName(account.provider)} login. ` +
+          `Stop ${agentName(account.provider)} first. This cannot be undone.`
       },
       'Forget',
       'Delete Credentials'

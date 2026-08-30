@@ -29,6 +29,7 @@ import {
   parseClaudeAuthText,
   readClaudeAuth,
   refreshClaudeToken,
+  removeAccount,
   restoreClaudeBackup,
   writeClaudeCredential,
   CLAUDE_CLIENT_ID
@@ -202,6 +203,54 @@ test('switching writes the credential and patches only oauthAccount', async () =
   assert.equal(config.oauthAccount.emailAddress, 'work@example.com', 'the displayed account must follow the credential');
   assert.equal(config.machineID, 'abc123', 'unrelated keys must survive the patch');
   assert.deepEqual(config.projects['/some/repo'].history, [1, 2, 3]);
+});
+
+test('switching leaves malformed live Claude configuration and credentials unchanged', async () => {
+  const { options } = await sandbox();
+  const target = defaultClaudeHome(options);
+  const liveCredential = JSON.stringify(credential({
+    accessToken: 'sk-ant-oat01-live',
+    refreshToken: 'sk-ant-ort01-live'
+  }));
+  const malformedConfig = '{ "projects": { "keep": true },';
+  await fs.mkdir(target, { recursive: true });
+  await fs.writeFile(claudeCredentialsPath(target), liveCredential, 'utf8');
+  await fs.writeFile(claudeConfigPath(target, options), malformedConfig, 'utf8');
+
+  const incoming = await createAccount({ label: 'Incoming', provider: 'claude' }, options);
+  await signIn(incoming.id, options, {
+    accessToken: 'sk-ant-oat01-incoming',
+    refreshToken: 'sk-ant-ort01-incoming',
+    email: 'incoming@example.com'
+  });
+
+  await assert.rejects(() => activateClaudeAccount(incoming.id, options), /left it unchanged/i);
+  assert.equal(await fs.readFile(claudeCredentialsPath(target), 'utf8'), liveCredential);
+  assert.equal(await fs.readFile(claudeConfigPath(target, options), 'utf8'), malformedConfig);
+});
+
+test('purging an active Claude account removes its live login without erasing unrelated config', async () => {
+  const { options } = await sandbox();
+  const account = await createAccount({ label: 'Active', provider: 'claude' }, options);
+  await signIn(account.id, options, { email: 'active@example.com' });
+  await activateClaudeAccount(account.id, options);
+
+  const target = defaultClaudeHome(options);
+  const configPath = claudeConfigPath(target, options);
+  const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
+  config.projects = { '/keep/me': { history: [1, 2] } };
+  config.machineID = 'keep-me';
+  await fs.writeFile(configPath, JSON.stringify(config), 'utf8');
+
+  const result = await removeAccount(account.id, { ...options, purge: true });
+  assert.equal(result.purged, true);
+  assert.equal(result.livePurged, true);
+  assert.equal(await readClaudeAuth(target, options), null);
+  assert.equal(await readClaudeAuth(claudeHome(account.id, options), options), null);
+  const remaining = JSON.parse(await fs.readFile(configPath, 'utf8'));
+  assert.equal(remaining.oauthAccount, undefined);
+  assert.equal(remaining.machineID, 'keep-me');
+  assert.deepEqual(remaining.projects['/keep/me'].history, [1, 2]);
 });
 
 test('an undone switch restores both files', async () => {

@@ -44,7 +44,8 @@ Account options:
   --refresh               Force a quota read instead of using the cache.
   --use <id>              Print the shell export needed to run codex as an
                           account without changing the machine default.
-  --purge                 Also delete the account's credential directory.
+  --purge                 Delete the managed credential and the live default
+                          login when this account is active.
 
 Export options:
   --max-chars <n>         Character budget for the transcript (default 120000, 0 = off).
@@ -214,7 +215,11 @@ export async function runCli(argv, io = process) {
       const id = args[1];
       if (!id) throw new Error('account remove requires an account id');
       const result = await removeAccount(id, { purge: Boolean(flags.purge) });
-      io.stdout.write(`Removed ${id}${result.purged ? ' and deleted its credentials' : ' (credentials kept on disk)'}\n`);
+      io.stdout.write(
+        `Removed ${id}${result.purged ? ' and deleted its credentials' : ' (credentials kept on disk)'}` +
+          (result.livePurged ? ', including the active default login' : '') +
+          '\n'
+      );
       return;
     }
 

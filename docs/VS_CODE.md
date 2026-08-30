@@ -55,7 +55,7 @@ holding the credential, so it cannot invalidate a login.
 | **Sign in** | Opens the sign-in panel for that agent. |
 | **Refresh now** | Forces a usage read; otherwise readings are cached for five minutes. |
 | **Raw Response** | Shows the endpoint's actual JSON next to how Context Bridge parsed it. |
-| **Remove** | Forget the account, or also delete its credentials. Confirmed inline. |
+| **Remove** | Forget the account, or delete its managed credentials and active default login. Confirmed inline. |
 
 ### Signing in
 
@@ -70,6 +70,11 @@ cannot borrow. So Context Bridge runs the same public PKCE flow the CLI runs and
 credential itself — meaning **it handles Claude tokens, which it never does for Codex**. Methods:
 browser (loopback on port 54545), authorization code (no local port, for SSH and containers), adopt
 the login at `~/.claude`, or paste a `.credentials.json`.
+
+Deleting credentials is destructive. If the account is currently in use, Context Bridge also
+removes the live default provider login after confirming the provider is stopped; unrelated Claude
+configuration such as project history is preserved. A malformed Claude config is never replaced
+during switching or deletion: the operation stops and leaves both live files unchanged.
 
 On macOS Claude keeps credentials in the Keychain rather than a file, so the adopt and paste methods
 have nothing to read there; the two OAuth methods work everywhere.

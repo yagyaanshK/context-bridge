@@ -53,6 +53,7 @@ export async function readCodexAuth(home) {
   const tokens = raw.tokens || {};
   return {
     path: file,
+    apiKey: raw.OPENAI_API_KEY || raw.openai_api_key,
     accessToken: tokens.access_token || tokens.accessToken,
     refreshToken: tokens.refresh_token || tokens.refreshToken,
     idToken: tokens.id_token || tokens.idToken,
@@ -64,7 +65,7 @@ export async function readCodexAuth(home) {
 
 export async function isSignedIn(accountId, options = {}) {
   const auth = await readCodexAuth(codexHome(accountId, options));
-  return Boolean(auth?.accessToken);
+  return Boolean(auth?.accessToken || auth?.apiKey);
 }
 
 // Copy an existing login into an account home. Used for "I already ran
@@ -115,7 +116,7 @@ export function codexAccessTokenExpiry(accessToken) {
 // live tooling keeps it fresh, and only genuinely idle accounts are renewed here.
 export async function isActiveCodexAccount(accountId, options = {}) {
   const live = await readCodexAuth(defaultCodexHome(options)).catch(() => null);
-  if (!live?.refreshToken && !live?.accessToken) return false;
+  if (!live?.refreshToken && !live?.accessToken && !live?.apiKey) return false;
   const auth = await readCodexAuth(codexHome(accountId, options)).catch(() => null);
   return sameCodexIdentity(live, auth);
 }
@@ -128,6 +129,7 @@ function sameCodexIdentity(left, right) {
   if (left.accountId && right.accountId) return left.accountId === right.accountId;
   if (left.claims?.sub && right.claims?.sub) return left.claims.sub === right.claims.sub;
   if (left.refreshToken && right.refreshToken) return left.refreshToken === right.refreshToken;
+  if (left.apiKey && right.apiKey) return left.apiKey === right.apiKey;
   return Boolean(left.accessToken && right.accessToken && left.accessToken === right.accessToken);
 }
 
@@ -223,28 +225,35 @@ export async function activateCodexAccount(accountId, options = {}) {
     }
   }
 
+  // Renew the incoming account before installing it, so a switch never lands on
+  // an expired token. Safe to refresh here: the account is not active yet, so
+  // nothing else is rotating its refresh token. If renewal is impossible - the
+  // saved login has lapsed past recovery - report it rather than silently
+  // installing a dead credential.
+  const incoming = await ensureCodexAccessToken(accountId, options);
+  if (!incoming?.accessToken && !incoming?.apiKey) throw new Error(`Account "${accountId}" is not signed in yet.`);
+  const expiresAt = codexAccessTokenExpiry(incoming.accessToken);
+  if (incoming.accessToken && Number.isFinite(expiresAt) && expiresAt - EXPIRY_SKEW_MS <= Date.now()) {
+    throw new Error(`Account "${accountId}" has expired and cannot be renewed. Sign in again.`);
+  }
+
   let backup;
   if (await pathExists(targetAuth)) {
     backup = path.join(target, 'auth.context-bridge-backup.json');
     await fs.copyFile(targetAuth, backup);
   }
 
-  // Renew the incoming account before installing it, so a switch never lands on
-  // an expired token. Safe to refresh here: the account is not active yet, so
-  // nothing else is rotating its refresh token. If renewal is impossible - the
-  // saved login has lapsed past recovery - report it rather than silently
-  // installing a dead credential.
-  let staleReason;
-  try {
-    await ensureCodexAccessToken(accountId, options);
-  } catch (error) {
-    staleReason = error.message;
-  }
-
   await assertAgentStopped(CODEX_PROVIDER, options);
   await copyCredential(codexAuthPath(codexHome(accountId, options)), targetAuth);
   await updateAccount(accountId, { lastUsedAt: new Date().toISOString() }, options);
-  return { target: targetAuth, backup, staleReason };
+  return { target: targetAuth, backup };
+}
+
+export async function purgeActiveCodexAccount(accountId, options = {}) {
+  if (!(await isActiveCodexAccount(accountId, options))) return false;
+  await assertAgentStopped(CODEX_PROVIDER, options);
+  await fs.rm(codexAuthPath(defaultCodexHome(options)), { force: true });
+  return true;
 }
 
 // auth.json is a live credential. Write it 0600 so activating an account does
