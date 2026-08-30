@@ -115,15 +115,44 @@ export async function readFirstJsonlObjects(filePath, limit = 80, options = {}) 
   return objects;
 }
 
-export function pathsSameOrNested(candidate, root) {
+export async function pathsSameOrNested(candidate, root, options = {}) {
   if (!candidate || !root) return false;
-  const resolvedCandidate = normalizePath(candidate);
-  const resolvedRoot = normalizePath(root);
-  return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`);
+  const [resolvedCandidate, resolvedRoot] = await Promise.all([
+    normalizePath(candidate, options),
+    normalizePath(root, options)
+  ]);
+  return isSameOrNested(resolvedCandidate, resolvedRoot, options.platform);
 }
 
-export function normalizePath(value) {
-  return path.resolve(String(value)).replace(/[\\/]+/g, path.sep).toLowerCase();
+export async function pathsOverlap(left, right, options = {}) {
+  if (!left || !right) return false;
+  const [resolvedLeft, resolvedRight] = await Promise.all([
+    normalizePath(left, options),
+    normalizePath(right, options)
+  ]);
+  return isSameOrNested(resolvedLeft, resolvedRight, options.platform) ||
+    isSameOrNested(resolvedRight, resolvedLeft, options.platform);
+}
+
+export async function normalizePath(value, options = {}) {
+  const platform = options.platform || process.platform;
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  const resolved = pathApi.resolve(String(value));
+  let canonical = resolved;
+  try {
+    canonical = await (options.realpath || fs.realpath)(resolved);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  const normalized = pathApi.normalize(canonical);
+  return platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function isSameOrNested(candidate, root, platform = process.platform) {
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  const relative = pathApi.relative(root, candidate);
+  return relative === '' ||
+    (relative !== '..' && !relative.startsWith(`..${pathApi.sep}`) && !pathApi.isAbsolute(relative));
 }
 
 async function walk(root, files, state, depth) {

@@ -1,4 +1,6 @@
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import {
   activateCodexAccount,
   captureSnapshot,
@@ -312,16 +314,89 @@ export async function runNativeCli(cwd, provider, nativeArgs = [], io = process)
   return { exitCode, imported };
 }
 
-function spawnInteractive(command, args, cwd) {
+export async function spawnInteractive(command, args, cwd, options = {}) {
+  const platform = options.platform || process.platform;
+  const resolved = platform === 'win32'
+    ? await (options.resolveWindows || resolveWindowsExecutable)(command, args, options)
+    : { command, args };
+  const spawnImpl = options.spawn || spawn;
+  const parent = options.parentProcess || process;
+
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawnImpl(resolved.command, resolved.args, {
       cwd,
       stdio: 'inherit',
-      shell: process.platform === 'win32'
+      shell: false
     });
-    child.on('error', reject);
-    child.on('exit', (code) => resolve(code ?? 0));
+    let settled = false;
+    const forwarded = ['SIGINT', 'SIGTERM'];
+    const handlers = new Map(forwarded.map((signal) => [signal, () => {
+      try {
+        child.kill(signal);
+      } catch {
+        // The child already exited.
+      }
+    }]));
+    for (const [signal, handler] of handlers) parent.once(signal, handler);
+
+    const cleanup = () => {
+      for (const [signal, handler] of handlers) parent.removeListener(signal, handler);
+    };
+    child.once('error', (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    });
+    child.once('exit', (code, signal) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(code === null ? signalExitCode(signal) : code);
+    });
   });
+}
+
+async function resolveWindowsExecutable(command, args, options = {}) {
+  const candidates = await windowsCommandCandidates(command, options);
+  const direct = candidates.find((candidate) => /\.(?:exe|com)$/i.test(candidate));
+  if (direct) return { command: direct, args };
+
+  const shim = candidates.find((candidate) => /\.(?:cmd|bat)$/i.test(candidate));
+  const powerShellShim = candidates.find((candidate) => /\.ps1$/i.test(candidate)) ||
+    (shim ? shim.replace(/\.(?:cmd|bat)$/i, '.ps1') : undefined);
+  if (powerShellShim && fs.existsSync(powerShellShim)) {
+    return {
+      command: options.powerShell || 'powershell.exe',
+      args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', powerShellShim, ...args]
+    };
+  }
+  if (shim) {
+    throw new Error(`Cannot safely launch Windows command shim ${shim}: no sibling PowerShell shim was found.`);
+  }
+  throw new Error(`Command not found: ${command}`);
+}
+
+async function windowsCommandCandidates(command, options = {}) {
+  if (options.windowsCandidates) return options.windowsCandidates;
+  if (path.isAbsolute(command) || /[\\/]/.test(command)) return [path.resolve(command)];
+  return new Promise((resolve, reject) => {
+    const child = spawn(options.whereCommand || 'where.exe', [command], { shell: false, windowsHide: true });
+    let output = '';
+    child.stdout?.on('data', (chunk) => {
+      output = `${output}${chunk}`.slice(-64 * 1024);
+    });
+    child.once('error', reject);
+    child.once('close', (code) => {
+      if (code !== 0) return resolve([]);
+      resolve(output.split(/\r?\n/).map((item) => item.trim()).filter(Boolean));
+    });
+  });
+}
+
+function signalExitCode(signal) {
+  const number = os.constants.signals[signal];
+  return Number.isInteger(number) ? 128 + number : 1;
 }
 
 function renderSessions(sessions) {

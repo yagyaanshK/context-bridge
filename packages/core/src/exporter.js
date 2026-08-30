@@ -1,7 +1,7 @@
 import { latestSnapshot, readAllTurns, readManifest, writeExport } from './store.js';
 import { mediaReferencesFromMetadata, safeMetadataValue, sanitizeContentForHandoff } from './media.js';
 import { summarizeSession } from './summary.js';
-import { describeReturn, lastSeenBy, originChat, stripHandoffPlumbing } from './roundtrip.js';
+import { describeReturn, lastSeenBy, originChat, stripHandoffPlumbing, turnsAfter } from './roundtrip.js';
 
 // Default caps for high-volume, low-signal roles. Tool outputs (git diffs, dir
 // listings) and system turn-context blobs dominate handoff size while the
@@ -42,7 +42,7 @@ export async function exportHandoff(root, options = {}) {
   const returning = describeReturn(ledgerTurns, seenAt);
 
   const since = options.sinceLastExport ? seenAt : undefined;
-  const scoped = since ? ledgerTurns.filter((turn) => String(turn.timestamp || '') > since) : ledgerTurns;
+  const scoped = since ? turnsAfter(ledgerTurns, since) : ledgerTurns;
   // Never emit an empty handoff just because nothing happened since the last
   // export; fall back to the full ledger so the receiver still gets context.
   const windowed = scoped.length > 0 ? scoped : ledgerTurns;

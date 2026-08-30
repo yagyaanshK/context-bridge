@@ -21,9 +21,15 @@ export {
   lastExportTo,
   lastSeenBy,
   originChat,
-  stripHandoffPlumbing
+  stripHandoffPlumbing,
+  turnsAfter
 } from './roundtrip.js';
-export { captureSnapshot } from './snapshot.js';
+export {
+  captureSnapshot,
+  DEFAULT_GIT_MAX_BUFFER,
+  DEFAULT_MAX_UNTRACKED_FILES,
+  SNAPSHOT_DIFF_MAX_CHARS
+} from './snapshot.js';
 export { sanitizeContentForHandoff, mediaReferencesFromMetadata, redactSecrets, safeMetadataValue } from './media.js';
 export {
   initStore,

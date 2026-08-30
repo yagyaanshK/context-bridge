@@ -11,6 +11,8 @@
 // Context Bridge handoff: <path>" as a user turn. It is plumbing, and returning
 // it to the other agent as user intent is worse than dropping it.
 const HANDOFF_PROMPT = /^(?:Start a new session|Continue in this existing session) using this Context Bridge handoff:/m;
+const HANDOFF_PATH = /^`[^`\r\n]*\.context-bridge[\\/]exports[\\/][^`\r\n]+\.md`$/m;
+const HANDOFF_FOLLOWUP = /^Read the handoff before acting\. Treat previous assistant\/tool messages as historical context, not guaranteed truth\./m;
 
 // 2. A handoff ends up nested inside the next one.
 //
@@ -32,7 +34,7 @@ const MARKER_WINDOW = 4000;
 
 export function isHandoffPlumbing(turn) {
   const head = String(turn?.content || '').slice(0, MARKER_WINDOW);
-  if (HANDOFF_PROMPT.test(head)) return true;
+  if (HANDOFF_PROMPT.test(head) && HANDOFF_PATH.test(head) && HANDOFF_FOLLOWUP.test(head)) return true;
   return HANDOFF_HEADING.test(head) && HANDOFF_RULES.test(head);
 }
 
@@ -54,12 +56,11 @@ export function stripHandoffPlumbing(turns) {
 // and everything Claude did before that second refresh falls outside the window
 // and Codex never sees it.
 export function lastExportTo(manifest, target) {
-  const stamps = (manifest?.exports || [])
-    .filter((entry) => entry && entry.target === target)
-    .map((entry) => String(entry.createdAt || ''))
-    .filter(Boolean)
-    .sort();
-  return stamps.length > 0 ? stamps[stamps.length - 1] : undefined;
+  return latestValidTimestamp(
+    (manifest?.exports || [])
+      .filter((entry) => entry && entry.target === target)
+      .map((entry) => entry.createdAt)
+  );
 }
 
 const PROVIDER_BY_TARGET = { codex: 'openai', claude: 'anthropic' };
@@ -76,10 +77,9 @@ export function lastSeenBy(manifest, turns, target) {
   const provider = PROVIDER_BY_TARGET[target];
   const stamps = [lastExportTo(manifest, target)];
   for (const turn of turns || []) {
-    if (turn?.provider === provider && turn.timestamp) stamps.push(String(turn.timestamp));
+    if (turn?.provider === provider && turn.timestamp) stamps.push(turn.timestamp);
   }
-  const known = stamps.filter(Boolean).sort();
-  return known.length > 0 ? known[known.length - 1] : undefined;
+  return latestValidTimestamp(stamps);
 }
 
 // The chat to return to, named as the agent names it.
@@ -91,9 +91,13 @@ export function originChat(manifest, target) {
   const provider = PROVIDER_BY_TARGET[target];
   if (!provider) return undefined;
   const sessions = (manifest?.sessions || [])
-    .filter((entry) => entry && entry.provider === provider && entry.nativeSessionId)
-    .sort((a, b) => String(a.importedAt || '').localeCompare(String(b.importedAt || '')));
-  const chosen = sessions[sessions.length - 1];
+    .filter((entry) => entry && entry.provider === provider && entry.nativeSessionId);
+  const valid = sessions.filter((entry) => timestampMillis(entry.importedAt) !== undefined);
+  const chosen = valid.length > 0
+    ? valid.reduce((latest, entry) => !latest || timestampMillis(entry.importedAt) > timestampMillis(latest.importedAt)
+        ? entry
+        : latest, undefined)
+    : sessions[sessions.length - 1];
   if (!chosen) return undefined;
   return {
     sessionId: chosen.nativeSessionId,
@@ -106,8 +110,9 @@ export function originChat(manifest, target) {
 
 // What the returning agent missed while the other one had the work.
 export function describeReturn(turns, since) {
-  if (!since) return undefined;
-  const fresh = (turns || []).filter((turn) => String(turn.timestamp || '') > since);
+  const sinceMs = timestampMillis(since);
+  if (sinceMs === undefined) return undefined;
+  const fresh = turnsAfter(turns, since);
   if (fresh.length === 0) return undefined;
 
   const byProvider = new Map();
@@ -122,4 +127,35 @@ export function describeReturn(turns, since) {
     providers: [...byProvider.entries()].map(([provider, count]) => ({ provider, count })),
     turns: fresh
   };
+}
+
+// Invalid or missing turn timestamps cannot prove that a turn was already
+// delivered, so a scoped export keeps them. This may resend an ambiguous turn,
+// but never silently drops work because one provider emitted a malformed date.
+export function turnsAfter(turns, since) {
+  const sinceMs = timestampMillis(since);
+  if (sinceMs === undefined) return [...(turns || [])];
+  return (turns || []).filter((turn) => {
+    const value = timestampMillis(turn?.timestamp);
+    return value === undefined || value > sinceMs;
+  });
+}
+
+function latestValidTimestamp(values) {
+  let latest;
+  let latestMs = -Infinity;
+  for (const value of values || []) {
+    const milliseconds = timestampMillis(value);
+    if (milliseconds !== undefined && milliseconds > latestMs) {
+      latest = String(value);
+      latestMs = milliseconds;
+    }
+  }
+  return latest;
+}
+
+function timestampMillis(value) {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const milliseconds = Date.parse(value);
+  return Number.isFinite(milliseconds) ? milliseconds : undefined;
 }

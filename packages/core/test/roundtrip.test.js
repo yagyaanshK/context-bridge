@@ -6,8 +6,17 @@ import {
   lastExportTo,
   lastSeenBy,
   originChat,
-  stripHandoffPlumbing
+  stripHandoffPlumbing,
+  turnsAfter
 } from '../src/roundtrip.js';
+
+const HANDOFF_PROMPT = [
+  'Continue in this existing session using this Context Bridge handoff:',
+  '',
+  '`/tmp/project/.context-bridge/exports/2026-08-19-to-codex.md`',
+  '',
+  'Read the handoff before acting. Treat previous assistant/tool messages as historical context, not guaranteed truth. Verify current files before editing.'
+].join('\n');
 
 const HANDOFF_DOCUMENT = [
   '# Context Bridge Handoff: claude',
@@ -22,11 +31,11 @@ test('the prompt that started the other session is not a request', () => {
   // next import records it as though the user had typed it.
   assert.equal(
     isHandoffPlumbing({
-      content: 'Continue in this existing session using this Context Bridge handoff:\n\n`/tmp/x.md`'
+      content: HANDOFF_PROMPT
     }),
     true
   );
-  assert.equal(isHandoffPlumbing({ content: 'Start a new session using this Context Bridge handoff:\n\n`/tmp/x.md`' }), true);
+  assert.equal(isHandoffPlumbing({ content: HANDOFF_PROMPT.replace('Continue in this existing session', 'Start a new session') }), true);
 });
 
 test('a handoff document read back is not carried into the next handoff', () => {
@@ -40,6 +49,13 @@ test('talking about handoffs is not plumbing', () => {
   // turn quoting one marker must not be mistaken for a handoff.
   assert.equal(isHandoffPlumbing({ content: 'The export starts with "# Context Bridge Handoff: codex" as its heading.' }), false);
   assert.equal(isHandoffPlumbing({ content: 'why does the prompt say Context Bridge handoff twice?' }), false);
+  assert.equal(
+    isHandoffPlumbing({
+      content: 'Continue in this existing session using this Context Bridge handoff:\n\nPlease design a different handoff format.'
+    }),
+    false,
+    'a real request beginning with the reserved phrase is not enough to discard it'
+  );
   assert.equal(isHandoffPlumbing({ content: '' }), false);
 });
 
@@ -51,7 +67,7 @@ test('a mention buried deep in a long turn does not make it plumbing', () => {
 test('stripping reports what it removed and keeps the rest in order', () => {
   const result = stripHandoffPlumbing([
     { content: 'add a retry helper' },
-    { content: 'Start a new session using this Context Bridge handoff:\n\n`/tmp/x.md`' },
+    { content: HANDOFF_PROMPT.replace('Continue in this existing session', 'Start a new session') },
     { content: HANDOFF_DOCUMENT },
     { content: 'now add jitter' }
   ]);
@@ -73,6 +89,24 @@ test('the watermark is the last export to that target, not the newest export', (
   assert.equal(lastExportTo(manifest, 'codex'), '2026-08-19T10:30:00Z');
   assert.equal(lastExportTo(manifest, 'claude'), '2026-08-19T11:00:00Z');
   assert.equal(lastExportTo(manifest, 'gemini'), undefined);
+});
+
+test('watermarks compare parsed instants and ignore invalid timestamps', () => {
+  const manifest = {
+    exports: [
+      { target: 'codex', createdAt: '2026-08-19T12:00:00+02:00' },
+      { target: 'codex', createdAt: 'not-a-date' },
+      { target: 'codex', createdAt: '2026-08-19T10:30:00Z' }
+    ]
+  };
+  assert.equal(lastExportTo(manifest, 'codex'), '2026-08-19T10:30:00Z');
+
+  const turns = [
+    { provider: 'openai', timestamp: '2026-08-19T13:00:00+03:00' },
+    { provider: 'openai', timestamp: 'invalid' },
+    { provider: 'openai', timestamp: '2026-08-19T10:45:00Z' }
+  ];
+  assert.equal(lastSeenBy(manifest, turns, 'codex'), '2026-08-19T10:45:00Z');
 });
 
 test('an agent has also seen its own work, which matters on the first trip back', () => {
@@ -127,6 +161,20 @@ test('the return section covers only what arrived after the watermark', () => {
   // Nothing new means no section rather than an empty one.
   assert.equal(describeReturn(turns, '2026-08-19T23:00:00Z'), undefined);
   assert.equal(describeReturn(turns, undefined), undefined);
+});
+
+test('scoped round trips compare instants and retain turns with unknown time', () => {
+  const turns = [
+    { id: 'same-instant', timestamp: '2026-08-19T12:00:00+02:00' },
+    { id: 'newer', timestamp: '2026-08-19T10:30:00Z' },
+    { id: 'invalid', timestamp: 'not-a-date' },
+    { id: 'missing' }
+  ];
+  assert.deepEqual(
+    turnsAfter(turns, '2026-08-19T10:00:00Z').map((turn) => turn.id),
+    ['newer', 'invalid', 'missing']
+  );
+  assert.deepEqual(turnsAfter(turns, 'bad-watermark'), turns, 'an invalid watermark must not drop the ledger');
 });
 
 test('tool calls are found wherever the agent records them', async () => {

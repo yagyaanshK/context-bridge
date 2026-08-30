@@ -104,6 +104,17 @@ Adapters should:
 - never rewrite native session files
 - store source path and line number in metadata
 
+Project matching canonicalizes existing paths through `realpath`, compares path segments rather than
+string prefixes, and folds case only on Windows. This lets symlinked or junction-backed workspaces
+match their native transcript while preserving case-sensitive behavior on Linux and macOS.
+
+## Workspace Snapshots
+
+Snapshots include staged, unstaged, and untracked work, including repositories that do not yet have
+a first commit. Git subprocess output, the untracked file count, and the rendered diff all have hard
+bounds before they enter memory or a handoff. Credential-bearing remote URLs are redacted in the
+snapshot; binary untracked content is identified but not embedded.
+
 ## Deterministic Packaging
 
 The exporter never asks an AI to summarize. It builds a markdown handoff from:
@@ -139,9 +150,9 @@ A ledger that only flows one way needs none of this. One that ping-pongs does, a
 the prompt tells that agent to read the handoff file — so re-importing it captures both. Left alone,
 the next handoff carries a user turn that is really Context Bridge's prompt, plus a whole handoff
 document nested inside itself and truncated mid-page. `stripHandoffPlumbing` drops both. Detection
-requires two markers, each anchored to the start of a line and found within the first 4000 characters,
-so a turn that merely quotes one — which happens whenever Context Bridge is the project being worked
-on — is kept.
+requires the reserved opening phrase, an exported handoff path, and the generated follow-up
+instruction within the first 4000 characters. A user request that merely begins with the reserved
+phrase is therefore kept.
 
 **Per-agent watermarks.** `lastSeenBy` answers how far an agent has already seen: the later of the
 last handoff aimed at it and its own last turn in the ledger. Both halves matter. Using the newest
@@ -149,6 +160,10 @@ export of any target loses work — hand off to Claude, refresh Claude again, re
 everything Claude did before the refresh falls outside the window. Ignoring the agent's own turns
 breaks the first return trip, where the agent has been sent no handoff at all but wrote half the
 ledger itself.
+
+Watermark comparisons parse timestamps as instants, so equivalent offsets compare correctly. Invalid
+manifest timestamps are ignored; turns with missing or malformed timestamps remain in scoped exports
+because Context Bridge cannot prove that the receiving agent has already seen them.
 
 **Origin chats.** `writeSession` records the native session id and the agent's own name for it, so
 `originChat` can say which chat a handoff should be continued in, and the VS Code session picker can

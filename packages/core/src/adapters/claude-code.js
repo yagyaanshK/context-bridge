@@ -6,7 +6,7 @@ import {
   homePath,
   jsonlFileInfo,
   listJsonlFiles,
-  pathsSameOrNested,
+  pathsOverlap,
   readFirstJsonlObjects,
   readJsonlObjects,
   readLastJsonlObjects
@@ -30,7 +30,7 @@ export async function discoverClaudeSessions(options = {}) {
   for (const file of files.slice(0, options.limit || 200)) {
     options.signal?.throwIfAborted();
     const meta = await inspectClaudeFile(file.path, options);
-    const matchesProject = meta.cwd ? pathsSameOrNested(meta.cwd, root) || pathsSameOrNested(root, meta.cwd) : false;
+    const matchesProject = meta.cwd ? await pathsOverlap(meta.cwd, root) : false;
     if (!options.all && !matchesProject) continue;
 
     // Only sessions that could be offered as a choice get the extra tail read.

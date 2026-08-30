@@ -84,6 +84,11 @@ context-bridge run codex -- --approval-mode auto-edit
 
 The current implementation uses the native JSONL transcript as the source of truth after the process exits. It does not yet capture full terminal redraw output through a pseudo-terminal.
 
+Native arguments are passed directly to the executable without a command shell. On Windows, npm
+command shims are launched through their sibling PowerShell shim with an argument array, preserving
+literal spaces and shell metacharacters. `SIGINT` and `SIGTERM` are forwarded to the child, and a
+signal-terminated child produces the conventional nonzero exit status.
+
 ## `export`
 
 Generate a deterministic handoff file.
