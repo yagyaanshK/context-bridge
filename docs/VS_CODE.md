@@ -82,6 +82,12 @@ official UI start using your choice. For Claude that is two files — the creden
 project history and caches and is left byte-identical. Both files are backed up first, and the
 confirmation toast offers **Undo**.
 
+Before **Use this**, close that agent's CLI processes and close or reload every editor window hosting
+its extension. Context Bridge checks for native `codex` and `claude` extension subprocesses and
+refuses the switch while they are running. This is deliberate: a process started under the old
+account can refresh later and overwrite the newly selected machine credential. Reselecting the
+already-active account is allowed because it does not replace the credential.
+
 ## The Handoff Card
 
 The panel's bottom section runs the same handoff flow as the commands: choose the target agent,

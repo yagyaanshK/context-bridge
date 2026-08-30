@@ -2,8 +2,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { ensureDir, pathExists, readJson } from '../fs-utils.js';
-import { accountDir, updateAccount } from './store.js';
+import { accountDir, listAccounts, updateAccount } from './store.js';
 import { fetchClaudeProfile, refreshClaudeToken } from './claude-oauth.js';
+import { assertAgentStopped } from './processes.js';
 
 export const CLAUDE_PROVIDER = 'claude';
 
@@ -144,6 +145,37 @@ export async function activateClaudeAccount(accountId, options = {}) {
   await ensureDir(target);
   const targetCredentials = claudeCredentialsPath(target);
 
+  let outgoing;
+  if (await pathExists(targetCredentials)) {
+    const accounts = await listAccounts({ ...options, provider: CLAUDE_PROVIDER });
+    outgoing = await activeClaudeAccountId(accounts, options);
+  }
+
+  if (outgoing === accountId) {
+    await updateAccount(accountId, { lastUsedAt: new Date().toISOString() }, options);
+    return { target: targetCredentials, alreadyActive: true };
+  }
+  await assertAgentStopped(CLAUDE_PROVIDER, options);
+
+  // The official client refreshes the active credential in place. Capture that
+  // live state before replacing it, otherwise switching away strands a stale
+  // refresh token in the managed account.
+  if (outgoing) {
+    await copyCredential(targetCredentials, claudeCredentialsPath(claudeHome(outgoing, options)));
+    const liveProfile = await readClaudeProfile(target, options);
+    if (liveProfile) await writeClaudeProfile(claudeConfigPath(claudeHome(outgoing, options), options), liveProfile);
+  }
+
+  // Renew before touching the live home. If the incoming credential cannot be
+  // renewed, leave the currently active account intact and ask for sign-in.
+  const incoming = await ensureClaudeAccessToken(accountId, { ...options, allowActiveRefresh: true });
+  if (!incoming?.accessToken) throw new Error(`Account "${accountId}" is not signed in yet.`);
+  const expiresAt = Number(incoming.expiresAt);
+  if (Number.isFinite(expiresAt) && expiresAt - EXPIRY_SKEW_MS <= Date.now()) {
+    throw new Error(`Account "${accountId}" has expired and cannot be renewed. Sign in again.`);
+  }
+  await assertAgentStopped(CLAUDE_PROVIDER, options);
+
   let backup;
   if (await pathExists(targetCredentials)) {
     backup = claudeCredentialsBackupPath(target);
@@ -170,6 +202,7 @@ export async function restoreClaudeBackup(options = {}) {
   const target = defaultClaudeHome(options);
   const backup = claudeCredentialsBackupPath(target);
   if (!(await pathExists(backup))) throw new Error('No Context Bridge backup to restore.');
+  await assertAgentStopped(CLAUDE_PROVIDER, options);
   await copyCredential(backup, claudeCredentialsPath(target));
 
   const config = claudeConfigPath(target, options);
@@ -187,18 +220,15 @@ function claudeConfigBackupPath(config) {
   return `${config}.context-bridge-backup`;
 }
 
-// Which registered account the official Claude tooling is using. Matched on the
-// refresh token: the access token is rotated in place as it expires, so
-// comparing that would report no active account within the hour.
+// Which registered account the official Claude tooling is using. Tokens rotate,
+// so profile identity is the fallback after direct token matches.
 export async function activeClaudeAccountId(accounts, options = {}) {
   const current = await readClaudeAuth(defaultClaudeHome(options), options).catch(() => null);
   if (!current) return undefined;
 
   for (const account of accounts) {
     const auth = await readClaudeAuth(claudeHome(account.id, options), options).catch(() => null);
-    if (!auth) continue;
-    if (current.refreshToken && auth.refreshToken === current.refreshToken) return account.id;
-    if (current.accessToken && auth.accessToken === current.accessToken) return account.id;
+    if (sameClaudeIdentity(current, auth)) return account.id;
   }
   return undefined;
 }
@@ -342,14 +372,18 @@ export async function isActiveClaudeAccount(accountId, options = {}) {
   const live = await readClaudeAuth(defaultClaudeHome(options), options).catch(() => null);
   if (!live?.accessToken && !live?.refreshToken) return false;
   const auth = await readClaudeAuth(claudeHome(accountId, options), options).catch(() => null);
-  if (!auth) return false;
-  if (live.refreshToken && auth.refreshToken && live.refreshToken === auth.refreshToken) return true;
-  if (live.accessToken && auth.accessToken && live.accessToken === auth.accessToken) return true;
-  const sameEmail = live.email && auth.email && live.email.toLowerCase() === auth.email.toLowerCase();
+  return sameClaudeIdentity(live, auth);
+}
+
+function sameClaudeIdentity(left, right) {
+  if (!left || !right) return false;
+  if (left.refreshToken && right.refreshToken && left.refreshToken === right.refreshToken) return true;
+  if (left.accessToken && right.accessToken && left.accessToken === right.accessToken) return true;
+  const sameEmail = left.email && right.email && left.email.toLowerCase() === right.email.toLowerCase();
   if (!sameEmail) return false;
   // When both know their org, require it to match too; otherwise the email is
   // the best identity we have.
-  if (live.organizationUuid && auth.organizationUuid) return live.organizationUuid === auth.organizationUuid;
+  if (left.organizationUuid && right.organizationUuid) return left.organizationUuid === right.organizationUuid;
   return true;
 }
 

@@ -40,7 +40,7 @@ delete process.env.CLAUDE_CONFIG_DIR;
 
 async function sandbox() {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-claude-'));
-  return { home, options: { home } };
+  return { home, options: { home, agentProcesses: [] } };
 }
 
 function credential(overrides = {}) {
@@ -187,7 +187,11 @@ test('switching writes the credential and patches only oauthAccount', async () =
   );
 
   const account = await createAccount({ label: 'Work', provider: 'claude' }, options);
-  await signIn(account.id, options, { accessToken: 'sk-ant-oat01-work', email: 'work@example.com' });
+  await signIn(account.id, options, {
+    accessToken: 'sk-ant-oat01-work',
+    refreshToken: 'sk-ant-ort01-work',
+    email: 'work@example.com'
+  });
 
   await activateClaudeAccount(account.id, options);
 
@@ -212,8 +216,20 @@ test('an undone switch restores both files', async () => {
   );
 
   const account = await createAccount({ label: 'Work', provider: 'claude' }, options);
-  await signIn(account.id, options, { accessToken: 'sk-ant-oat01-after', email: 'after@example.com' });
+  await signIn(account.id, options, {
+    accessToken: 'sk-ant-oat01-after',
+    refreshToken: 'sk-ant-ort01-after',
+    email: 'after@example.com'
+  });
   await activateClaudeAccount(account.id, options);
+
+  await assert.rejects(
+    () => restoreClaudeBackup({ ...options, agentProcesses: [{ name: 'claude.exe', pid: 4343 }] }),
+    /Claude is still running/
+  );
+  const stillActive = JSON.parse(await fs.readFile(claudeCredentialsPath(target), 'utf8'));
+  assert.equal(stillActive.claudeAiOauth.accessToken, 'sk-ant-oat01-after', 'a blocked undo must not replace the live credential');
+
   await restoreClaudeBackup(options);
 
   const credentials = JSON.parse(await fs.readFile(claudeCredentialsPath(target), 'utf8'));
@@ -226,8 +242,18 @@ test('the account in use is matched on the refresh token', async () => {
   const { options } = await sandbox();
   const first = await createAccount({ label: 'Personal', provider: 'claude' }, options);
   const second = await createAccount({ label: 'Work', provider: 'claude' }, options);
-  await signIn(first.id, options, { refreshToken: 'refresh-personal' });
-  await signIn(second.id, options, { refreshToken: 'refresh-work' });
+  await signIn(first.id, options, {
+    accessToken: 'access-personal',
+    refreshToken: 'refresh-personal',
+    email: 'personal@example.com',
+    organizationUuid: 'org-personal'
+  });
+  await signIn(second.id, options, {
+    accessToken: 'access-work',
+    refreshToken: 'refresh-work',
+    email: 'work@example.com',
+    organizationUuid: 'org-work'
+  });
 
   await activateClaudeAccount(second.id, options);
 
@@ -243,6 +269,108 @@ test('the account in use is matched on the refresh token', async () => {
     { id: second.id, provider: 'claude' }
   ];
   assert.equal(await activeClaudeAccountId(accounts, options), second.id);
+});
+
+test('switching preserves the rotated outgoing login and renews the incoming login', async () => {
+  const { options } = await sandbox();
+  const outgoing = await createAccount({ label: 'Outgoing', provider: 'claude' }, options);
+  const incoming = await createAccount({ label: 'Incoming', provider: 'claude' }, options);
+  await signIn(outgoing.id, options, {
+    accessToken: 'out-snapshot-access',
+    refreshToken: 'out-snapshot-refresh',
+    email: 'outgoing@example.com',
+    organizationUuid: 'org-outgoing'
+  });
+  await signIn(incoming.id, options, {
+    accessToken: 'incoming-expired-access',
+    refreshToken: 'incoming-old-refresh',
+    expiresAt: Date.now() - 1000,
+    email: 'incoming@example.com',
+    organizationUuid: 'org-incoming'
+  });
+
+  await activateClaudeAccount(outgoing.id, options);
+  const target = defaultClaudeHome(options);
+  const live = JSON.parse(await fs.readFile(claudeCredentialsPath(target), 'utf8'));
+  live.claudeAiOauth.accessToken = 'out-live-access';
+  live.claudeAiOauth.refreshToken = 'out-live-refresh';
+  await fs.writeFile(claudeCredentialsPath(target), JSON.stringify(live), 'utf8');
+
+  const result = await activateClaudeAccount(incoming.id, {
+    ...options,
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        access_token: 'incoming-renewed-access',
+        refresh_token: 'incoming-renewed-refresh',
+        expires_in: 28800,
+        scope: 'user:inference'
+      })
+    })
+  });
+  assert.equal(result.alreadyActive, undefined);
+
+  const outgoingSnapshot = await readClaudeAuth(claudeHome(outgoing.id, options), options);
+  assert.equal(outgoingSnapshot.refreshToken, 'out-live-refresh');
+  const installed = await readClaudeAuth(target, options);
+  assert.equal(installed.refreshToken, 'incoming-renewed-refresh');
+});
+
+test('switching leaves the live Claude login untouched when the incoming login cannot be renewed', async () => {
+  const { options } = await sandbox();
+  const active = await createAccount({ label: 'Active', provider: 'claude' }, options);
+  const dead = await createAccount({ label: 'Dead', provider: 'claude' }, options);
+  await signIn(active.id, options, { accessToken: 'active-access', refreshToken: 'active-refresh', email: 'active@example.com' });
+  await signIn(dead.id, options, {
+    accessToken: 'dead-access',
+    refreshToken: 'dead-refresh',
+    expiresAt: Date.now() - 1000,
+    email: 'dead@example.com'
+  });
+  await activateClaudeAccount(active.id, options);
+
+  await assert.rejects(
+    activateClaudeAccount(dead.id, {
+      ...options,
+      fetch: async () => ({
+        ok: false,
+        status: 400,
+        text: async () => JSON.stringify({ error: 'invalid_grant' })
+      })
+    }),
+    /sign in again/i
+  );
+
+  const stillActive = await readClaudeAuth(defaultClaudeHome(options), options);
+  assert.equal(stillActive.accessToken, 'active-access');
+});
+
+test('switching Claude accounts is blocked while Claude is running', async () => {
+  const { options } = await sandbox();
+  const active = await createAccount({ label: 'Active', provider: 'claude' }, options);
+  const incoming = await createAccount({ label: 'Incoming', provider: 'claude' }, options);
+  await signIn(active.id, options, {
+    accessToken: 'active-access',
+    refreshToken: 'active-refresh',
+    email: 'active@example.com'
+  });
+  await signIn(incoming.id, options, {
+    accessToken: 'incoming-access',
+    refreshToken: 'incoming-refresh',
+    email: 'incoming@example.com'
+  });
+  await activateClaudeAccount(active.id, options);
+
+  await assert.rejects(
+    activateClaudeAccount(incoming.id, {
+      ...options,
+      agentProcesses: [{ pid: 43, name: 'claude.exe' }]
+    }),
+    /Claude is still running/i
+  );
+  const live = await readClaudeAuth(defaultClaudeHome(options), options);
+  assert.equal(live.accessToken, 'active-access');
 });
 
 // --- the OAuth flow ---------------------------------------------------------

@@ -30,7 +30,7 @@ import {
 
 async function sandbox() {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-accounts-'));
-  return { home, options: { home } };
+  return { home, options: { home, agentProcesses: [] } };
 }
 
 function idToken(claims) {
@@ -40,17 +40,17 @@ function idToken(claims) {
 
 async function signIn(accountId, options, overrides = {}) {
   const home = codexHome(accountId, options);
+  const providerAccountId = overrides.accountId || `acct_${accountId}`;
   await fs.mkdir(home, { recursive: true });
   await fs.writeFile(
     path.join(home, 'auth.json'),
     JSON.stringify({
       tokens: {
         access_token: overrides.accessToken || 'access-token',
-        // Unique per account, as real refresh tokens are - this is the key the
-        // active-account match relies on.
         refresh_token: overrides.refreshToken || `${accountId}-refresh`,
-        account_id: overrides.accountId || 'acct_123',
+        account_id: providerAccountId,
         id_token: idToken({
+          sub: providerAccountId,
           email: overrides.email || 'dev@example.com',
           'https://api.openai.com/auth': { chatgpt_plan_type: overrides.plan || 'pro' }
         })
@@ -190,7 +190,7 @@ test('reading a Codex login extracts identity without verifying the token', asyn
   const account = await createAccount({ label: 'Work', provider: 'codex' }, options);
   assert.equal(await isSignedIn(account.id, options), false);
 
-  await signIn(account.id, options, { email: 'work@example.com', plan: 'pro_20x' });
+  await signIn(account.id, options, { accountId: 'acct_123', email: 'work@example.com', plan: 'pro_20x' });
   const auth = await readCodexAuth(codexHome(account.id, options));
 
   assert.equal(auth.accessToken, 'access-token');
@@ -267,9 +267,8 @@ test('the account in use is detected, and survives access-token rotation', async
   await activateCodexAccount(b.id, scoped);
   assert.equal(await activeCodexAccountId(accounts, scoped), b.id);
 
-  // Codex rotates the access token in place as it expires. Matching on that
-  // alone would report no active account within the hour, so the refresh token
-  // is the primary key.
+  // Codex rotates tokens in place. The provider account id still identifies the
+  // live account after those mutable credentials change.
   const current = JSON.parse(await fs.readFile(path.join(defaultHome, 'auth.json'), 'utf8'));
   current.tokens.access_token = 'rotated-by-codex';
   await fs.writeFile(path.join(defaultHome, 'auth.json'), JSON.stringify(current), 'utf8');
@@ -290,6 +289,12 @@ test('a switch can be undone from the backup it leaves behind', async () => {
   await activateCodexAccount(b.id, scoped);
   const accounts = await listAccounts(options);
   assert.equal(await activeCodexAccountId(accounts, scoped), b.id);
+
+  await assert.rejects(
+    () => restoreCodexBackup({ ...scoped, agentProcesses: [{ name: 'codex.exe', pid: 4242 }] }),
+    /Codex is still running/
+  );
+  assert.equal(await activeCodexAccountId(accounts, scoped), b.id, 'a blocked undo must not replace the live credential');
 
   await restoreCodexBackup(scoped);
   assert.equal(await activeCodexAccountId(accounts, scoped), a.id, 'undo puts the previous subscription back');
@@ -598,4 +603,26 @@ test('both Codex windows become separate meters, tightest first', () => {
   // The headline stays the worst window even though it is no longer the only
   // one on screen.
   assert.equal(headlineRemaining(usage), 29);
+});
+
+test('activating a different Codex account is blocked while Codex is running', async () => {
+  const { home, options } = await sandbox();
+  const defaultHome = path.join(home, '.codex');
+  const current = await createAccount({ label: 'Current', provider: 'codex' }, options);
+  const incoming = await createAccount({ label: 'Incoming', provider: 'codex' }, options);
+  await signIn(current.id, options, { accessToken: 'current-access' });
+  await signIn(incoming.id, options, { accessToken: 'incoming-access' });
+  await fs.mkdir(defaultHome, { recursive: true });
+  await fs.copyFile(path.join(codexHome(current.id, options), 'auth.json'), path.join(defaultHome, 'auth.json'));
+
+  await assert.rejects(
+    activateCodexAccount(incoming.id, {
+      ...options,
+      defaultCodexHome: defaultHome,
+      agentProcesses: [{ pid: 42, name: 'codex.exe' }]
+    }),
+    /Codex is still running/i
+  );
+  const live = await readCodexAuth(defaultHome);
+  assert.equal(live.accessToken, 'current-access');
 });

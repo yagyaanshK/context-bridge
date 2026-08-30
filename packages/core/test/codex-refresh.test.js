@@ -21,8 +21,8 @@ import {
 function b64url(value) {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
-function accessToken(expEpochSec) {
-  return `${b64url({ alg: 'none' })}.${b64url({ exp: expEpochSec, client_id: CODEX_CLIENT_ID })}.sig`;
+function accessToken(expEpochSec, nonce) {
+  return `${b64url({ alg: 'none' })}.${b64url({ exp: expEpochSec, client_id: CODEX_CLIENT_ID, nonce })}.sig`;
 }
 const past = () => Math.floor(Date.now() / 1000) - 3600;
 const future = () => Math.floor(Date.now() / 1000) + 3600;
@@ -45,10 +45,11 @@ const failIfCalled = () => {
 
 async function sandbox() {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-refresh-'));
-  return { home, defaultCodexHome: path.join(home, 'live-codex') };
+  return { home, defaultCodexHome: path.join(home, 'live-codex'), agentProcesses: [] };
 }
 async function signIn(id, options, tokens) {
   const dir = codexHome(id, options);
+  const providerAccountId = tokens.accountId || `acct_${id}`;
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(
     path.join(dir, 'auth.json'),
@@ -58,8 +59,8 @@ async function signIn(id, options, tokens) {
       tokens: {
         access_token: tokens.access,
         refresh_token: tokens.refresh,
-        id_token: `${b64url({ alg: 'none' })}.${b64url({ email: 'dev@example.com' })}.sig`,
-        account_id: 'acct_123'
+        id_token: `${b64url({ alg: 'none' })}.${b64url({ email: 'dev@example.com', sub: providerAccountId })}.sig`,
+        account_id: providerAccountId
       },
       last_refresh: '2026-08-01T00:00:00.000Z'
     }),
@@ -138,24 +139,43 @@ test('the active account is never refreshed here - Codex owns its rotating token
   assert.equal(auth.refreshToken, 'rt.shared');
 });
 
+test('the active account remains identifiable after both live tokens rotate', async () => {
+  const options = await sandbox();
+  const account = await createAccount({ label: 'Rotated active', provider: 'codex' }, options);
+  const home = await signIn(account.id, options, {
+    access: accessToken(past(), 'stored'),
+    refresh: 'rt.stored'
+  });
+
+  await fs.mkdir(options.defaultCodexHome, { recursive: true });
+  const live = JSON.parse(await fs.readFile(path.join(home, 'auth.json'), 'utf8'));
+  live.tokens.access_token = accessToken(past(), 'live');
+  live.tokens.refresh_token = 'rt.live';
+  await fs.writeFile(path.join(options.defaultCodexHome, 'auth.json'), JSON.stringify(live), 'utf8');
+
+  assert.equal(await isActiveCodexAccount(account.id, options), true);
+  const auth = await ensureCodexAccessToken(account.id, { ...options, fetch: failIfCalled });
+  assert.equal(auth.refreshToken, 'rt.stored', 'Context Bridge must leave the active snapshot untouched');
+});
+
 test('switching syncs the outgoing login and renews the incoming one', async () => {
   const options = await sandbox();
   const outgoing = await createAccount({ label: 'Outgoing', provider: 'codex' }, options);
   const incoming = await createAccount({ label: 'Incoming', provider: 'codex' }, options);
-  const outHome = await signIn(outgoing.id, options, { access: accessToken(future()), refresh: 'rt.out' });
-  await signIn(incoming.id, options, { access: accessToken(past()), refresh: 'rt.in-old' });
+  const outHome = await signIn(outgoing.id, options, { access: accessToken(future(), 'out-snapshot'), refresh: 'rt.out' });
+  await signIn(incoming.id, options, { access: accessToken(past(), 'incoming'), refresh: 'rt.in-old' });
 
   // The live home is the outgoing account, but freshly rotated by Codex since we
   // last snapshotted it - a newer token than the snapshot holds.
   await fs.mkdir(options.defaultCodexHome, { recursive: true });
   const live = JSON.parse(await fs.readFile(path.join(outHome, 'auth.json'), 'utf8'));
-  live.tokens.access_token = accessToken(future());
+  live.tokens.access_token = accessToken(future(), 'out-live');
   live.tokens.refresh_token = 'rt.out-live';
   await fs.writeFile(path.join(options.defaultCodexHome, 'auth.json'), JSON.stringify(live), 'utf8');
 
   const result = await activateCodexAccount(incoming.id, {
     ...options,
-    fetch: okFetch({ access_token: accessToken(future()), refresh_token: 'rt.in-new' })
+    fetch: okFetch({ access_token: accessToken(future(), 'incoming-refreshed'), refresh_token: 'rt.in-new' })
   });
   assert.equal(result.staleReason, undefined);
 

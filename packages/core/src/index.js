@@ -68,6 +68,7 @@ export {
   writeCodexTokens
 } from './accounts/codex.js';
 export { refreshCodexToken, CODEX_CLIENT_ID, CODEX_TOKEN_URL } from './accounts/codex-oauth.js';
+export { assertAgentStopped, listAgentProcesses, matchingAgentProcesses } from './accounts/processes.js';
 export {
   codexLoginArgs,
   codexLoginFailureReason,

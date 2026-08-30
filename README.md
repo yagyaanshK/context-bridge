@@ -288,6 +288,12 @@ that means two files: the credential, plus the `oauthAccount` key inside `~/.cla
 that is where the displayed email actually lives. Everything else in that file — project history,
 caches — is left byte-identical, and both files are backed up first.
 
+Close that agent's CLI processes and close or reload IDE windows hosting its extension before
+switching. Context Bridge checks the operating-system process list immediately before replacing the
+credential and refuses the switch while `codex`, `claude`, or their extension subprocesses are still
+running. This prevents an old process from later refreshing its previous account back over the new
+machine default. Selecting the account that is already active does not rewrite the credential.
+
 The account in use is marked in the panel and shown in the status bar with its remaining quota.
 Every account stays signed in, so this is cheap and reversible; the toast offers **Undo**. To use an
 account *without* changing the default, use **Terminal**, which scopes the variable to that one

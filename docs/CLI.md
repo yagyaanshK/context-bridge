@@ -135,6 +135,11 @@ the default, set the variable yourself for that one session:
 CODEX_HOME="$HOME/.context-bridge/accounts/<id>/codex-home" codex
 ```
 
+Close every running Codex CLI and close or reload editor windows hosting the Codex extension before
+running `account use`. Context Bridge checks the process list and refuses to replace the credential
+while a Codex process is active, because that process could later write its previous account back
+over the new default.
+
 `account remove` forgets the account but leaves its credential on disk so it can be added back;
 `--purge` also deletes the directory, which cannot be undone.
 

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { ensureDir, pathExists, readJson } from '../fs-utils.js';
 import { accountDir, listAccounts, updateAccount } from './store.js';
 import { refreshCodexToken } from './codex-oauth.js';
+import { assertAgentStopped } from './processes.js';
 
 export const CODEX_PROVIDER = 'codex';
 
@@ -116,9 +117,18 @@ export async function isActiveCodexAccount(accountId, options = {}) {
   const live = await readCodexAuth(defaultCodexHome(options)).catch(() => null);
   if (!live?.refreshToken && !live?.accessToken) return false;
   const auth = await readCodexAuth(codexHome(accountId, options)).catch(() => null);
-  if (!auth) return false;
-  if (live.refreshToken && auth.refreshToken) return live.refreshToken === auth.refreshToken;
-  return Boolean(live.accessToken && auth.accessToken && live.accessToken === auth.accessToken);
+  return sameCodexIdentity(live, auth);
+}
+
+// Access and refresh tokens both rotate. Prefer identifiers that survive those
+// rotations, and use token equality only for older credentials that carry no
+// stable identity fields.
+function sameCodexIdentity(left, right) {
+  if (!left || !right) return false;
+  if (left.accountId && right.accountId) return left.accountId === right.accountId;
+  if (left.claims?.sub && right.claims?.sub) return left.claims.sub === right.claims.sub;
+  if (left.refreshToken && right.refreshToken) return left.refreshToken === right.refreshToken;
+  return Boolean(left.accessToken && right.accessToken && left.accessToken === right.accessToken);
 }
 
 // Merge refreshed tokens back into an account's stored auth.json, preserving the
@@ -194,15 +204,22 @@ export async function activateCodexAccount(accountId, options = {}) {
   await ensureDir(target);
   const targetAuth = codexAuthPath(target);
 
+  const accounts = await listAccounts({ ...options, provider: CODEX_PROVIDER });
+  const outgoing = await activeCodexAccountId(accounts, options).catch(() => undefined);
+  if (outgoing === accountId) {
+    await updateAccount(accountId, { lastUsedAt: new Date().toISOString() }, options);
+    return { target: targetAuth, alreadyActive: true };
+  }
+  await assertAgentStopped(CODEX_PROVIDER, options);
+
   // Capture whatever the live Codex has been refreshing back into its own
   // account's snapshot before we overwrite it. Without this, every token Codex
   // rotated while the account was active is lost the moment you switch away,
   // and switching back later installs a stale credential - which is exactly the
   // failure that made a just-switched account come up expired.
   if (await pathExists(targetAuth)) {
-    const outgoing = await activeCodexAccountId(await listAccounts({ ...options, provider: CODEX_PROVIDER }), options).catch(() => undefined);
     if (outgoing && outgoing !== accountId) {
-      await copyCredential(targetAuth, codexAuthPath(codexHome(outgoing, options))).catch(() => {});
+      await copyCredential(targetAuth, codexAuthPath(codexHome(outgoing, options)));
     }
   }
 
@@ -224,6 +241,7 @@ export async function activateCodexAccount(accountId, options = {}) {
     staleReason = error.message;
   }
 
+  await assertAgentStopped(CODEX_PROVIDER, options);
   await copyCredential(codexAuthPath(codexHome(accountId, options)), targetAuth);
   await updateAccount(accountId, { lastUsedAt: new Date().toISOString() }, options);
   return { target: targetAuth, backup, staleReason };
@@ -307,18 +325,15 @@ export async function refreshCodexAccountIdentity(accountId, options = {}) {
 // currently using. They read only the default home, so "active" means "the
 // credential sitting in that directory matches this account's".
 //
-// Matched on the refresh token rather than the access token: Codex rotates the
-// access token in place as it expires, so comparing that would report no active
-// account within the hour. The refresh token survives those rotations.
+// Prefer the provider account id because both access and refresh tokens rotate.
+// Older auth files without a stable identity still fall back to token equality.
 export async function activeCodexAccountId(accounts, options = {}) {
   const current = await readCodexAuth(defaultCodexHome(options));
   if (!current) return undefined;
 
   for (const account of accounts) {
     const auth = await readCodexAuth(codexHome(account.id, options)).catch(() => null);
-    if (!auth) continue;
-    if (current.refreshToken && auth.refreshToken === current.refreshToken) return account.id;
-    if (current.accessToken && auth.accessToken === current.accessToken) return account.id;
+    if (sameCodexIdentity(current, auth)) return account.id;
   }
   return undefined;
 }
@@ -328,6 +343,7 @@ export async function restoreCodexBackup(options = {}) {
   const target = defaultCodexHome(options);
   const backup = path.join(target, 'auth.context-bridge-backup.json');
   if (!(await pathExists(backup))) throw new Error('No Context Bridge backup to restore.');
+  await assertAgentStopped(CODEX_PROVIDER, options);
   await copyCredential(backup, codexAuthPath(target));
   return { restored: codexAuthPath(target) };
 }
