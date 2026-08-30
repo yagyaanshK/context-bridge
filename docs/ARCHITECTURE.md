@@ -193,24 +193,26 @@ matters because it bounds what switching an account can and cannot affect.
 - The **Codex CLI** and the **Codex IDE extension** (VS Code, Cursor, and forks) read the OAuth
   credential at `~/.codex/auth.json`. This is the only credential Context Bridge reads, renews, or
   rewrites when you switch a Codex account.
-- The **Codex/ChatGPT desktop app** keeps its *working data* in `~/.codex` as well — a thread
-  database (`state_5.sqlite`), a session index (`session_index.jsonl`), logs, and an Electron state
-  file (`.codex-global-state.json`) — but it does **not** authenticate through `auth.json`. Its
-  account is selected by an id recorded in `.codex-global-state.json`, with no token stored beside
-  it; the actual credential lives in the app's own protected session, separate from `auth.json`.
-  (Observed on a real install: with `auth.json` holding one account, the desktop app ran a different
-  one; no plaintext token, OS credential-manager entry, or browser session store for it could be
-  found on disk.) OpenAI's desktop apps follow the usual Electron pattern — sign in with OAuth 2.0 +
-  PKCE through the system browser, then store the session with the OS-backed keystore (Electron
-  `safeStorage`, which wraps DPAPI on Windows and Keychain on macOS) and/or the OS credential
-  manager — which is precisely why the token is not a readable file. The classic ChatGPT desktop app
-  keeps its data under `%APPDATA%\OpenAI\ChatGPT\` (macOS: `~/Library/Application Support/ChatGPT/`);
-  the newer Codex desktop app uses `~/.codex` together with `%LOCALAPPDATA%\OpenAI\Codex`.
+- The **Codex desktop app** keeps its *working data* in `~/.codex` too — a thread database
+  (`state_5.sqlite`), a session index (`session_index.jsonl`), logs, and an Electron state file
+  (`.codex-global-state.json`, which records the selected account by id). For its Codex credential it
+  reads the same `auth.json`, but only at **startup**: a running process then holds that credential
+  in memory and refreshes it in place against OpenAI, and does not re-read the file mid-session.
 
-The consequence is the useful part: switching a Codex account in Context Bridge rewrites `auth.json`
-and so moves the **CLI and IDE extension**, and nothing else. The desktop app is unaffected and can
-stay signed in as a different account at the same time. The reverse holds too — the desktop app
-never changes `auth.json` — which is why the two can run different accounts simultaneously.
+So a switch Context Bridge makes by rewriting `auth.json` is invisible to an already-running desktop
+app until it restarts, at which point it re-reads the file and adopts the new account. This was
+observed end to end on a real install: with `auth.json` switched underneath it, the running app kept
+serving the previous account and kept working *past that account's on-disk token expiry* — the live
+token was the in-memory copy, refreshed in-process — and only moved to the file's account after a
+restart. There is no second on-disk credential store for it: no plaintext token, OS
+credential-manager entry, or browser session store could be found. `auth.json` is the single source,
+read once per launch.
+
+The practical consequence is the "a live process holds its own token" rule stated under Switching,
+seen from the outside: rewriting `auth.json` moves the CLI and IDE extension at once, but any Codex
+process already running — desktop app included — keeps the account it started with until its next
+launch. Context Bridge never needs to reach into a running app's memory or a second store, because
+there isn't one.
 
 ### Sign-in
 
@@ -244,6 +246,12 @@ The official CLIs and extensions read one credential path each, so making an acc
 necessarily machine-wide. Codex is a single file copy. Claude is two writes: the credential, plus a
 **patch** of the `oauthAccount` key in the config — the rest of that file is project history and
 caches and must survive byte-identical.
+
+The credential file is read at process start, not per request. An agent already running — a CLI
+session, an IDE extension host, the Codex desktop app — has its token in memory and refreshes it
+there, so a switch reaches it only when it next launches. The switch takes effect immediately for
+anything started afterward; a live session keeps the account it began with until restart. This is
+why the notification after a switch offers **Reload Window**.
 
 ### Quota
 
