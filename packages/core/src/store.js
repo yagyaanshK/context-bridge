@@ -1,6 +1,19 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ensureDir, listFiles, pathExists, readJson, resolveLedger, timestampForPath, writeJson } from './fs-utils.js';
+import {
+  ensureDir,
+  listFiles,
+  pathExists,
+  readJson,
+  resolveExistingInside,
+  resolveInside,
+  resolveLedger,
+  uniqueArtifactId,
+  validatePathSegment,
+  withFileLock,
+  writeFileAtomic,
+  writeJson
+} from './fs-utils.js';
 
 export async function initStore(root, options = {}) {
   const ledger = resolveLedger(root);
@@ -38,34 +51,39 @@ export async function writeManifest(root, manifest) {
 }
 
 export async function addManifestEntry(root, key, entry, options = {}) {
-  const manifest = await readManifest(root);
-  manifest[key] = Array.isArray(manifest[key]) ? manifest[key] : [];
-  // Upsert by a matching field (e.g. session id) so re-importing the same
-  // source replaces its entry instead of accumulating stale duplicates.
-  const matchField = options.upsertBy;
-  const existingIndex = matchField
-    ? manifest[key].findIndex((item) => item && item[matchField] === entry[matchField])
-    : -1;
-  if (existingIndex >= 0) {
-    manifest[key][existingIndex] = entry;
-  } else {
-    manifest[key].push(entry);
-  }
-  manifest.updatedAt = new Date().toISOString();
-  await writeManifest(root, manifest);
-  return manifest;
+  return withFileLock(manifestFile(root), async () => {
+    const manifest = await readManifest(root);
+    manifest[key] = Array.isArray(manifest[key]) ? manifest[key] : [];
+    // Upsert by a matching field (e.g. session id) so re-importing the same
+    // source replaces its entry instead of accumulating stale duplicates.
+    const matchField = options.upsertBy;
+    const existingIndex = matchField
+      ? manifest[key].findIndex((item) => item && item[matchField] === entry[matchField])
+      : -1;
+    if (existingIndex >= 0) {
+      manifest[key][existingIndex] = entry;
+    } else {
+      manifest[key].push(entry);
+    }
+    manifest.updatedAt = new Date().toISOString();
+    await writeManifest(root, manifest);
+    return manifest;
+  }, options);
 }
 
 export async function writeSession(root, turns, options = {}) {
   await initStore(root);
   const provider = options.provider || turns[0]?.provider || 'unknown';
   const surface = options.surface || turns[0]?.surface || 'unknown';
-  const sessionId = options.sessionId || `${timestampForPath()}-${provider}-${surface}`;
+  const sessionId = validatePathSegment(
+    options.sessionId || `${uniqueArtifactId()}-${safeIdPart(provider)}-${safeIdPart(surface)}`,
+    'Session id'
+  );
   const fileName = `${sessionId}.jsonl`;
   const relativePath = path.join('sessions', fileName).replaceAll('\\', '/');
-  const absolutePath = path.join(resolveLedger(root), relativePath);
+  const absolutePath = resolveInside(path.join(resolveLedger(root), 'sessions'), fileName);
   const content = turns.map((turn) => JSON.stringify({ ...turn, sessionId: turn.sessionId || sessionId })).join('\n') + '\n';
-  await fs.writeFile(absolutePath, content, 'utf8');
+  await writeFileAtomic(absolutePath, content);
   await addManifestEntry(root, 'sessions', {
     id: sessionId,
     provider,
@@ -105,7 +123,7 @@ export const DEFAULT_KEEP_SNAPSHOTS = 10;
 
 export async function writeSnapshot(root, snapshot, options = {}) {
   await initStore(root);
-  const id = timestampForPath();
+  const id = uniqueArtifactId();
   const relativePath = path.join('snapshots', `${id}.json`).replaceAll('\\', '/');
   const absolutePath = path.join(resolveLedger(root), relativePath);
   await writeJson(absolutePath, snapshot);
@@ -124,15 +142,21 @@ export async function latestSnapshot(root) {
     String(a?.createdAt || '').localeCompare(String(b?.createdAt || ''))
   );
   if (snapshots.length === 0) return null;
-  return readJson(path.join(resolveLedger(root), snapshots[snapshots.length - 1].path));
+  const ledger = resolveLedger(root);
+  const snapshotDir = path.join(ledger, 'snapshots');
+  const entryPath = snapshots[snapshots.length - 1].path;
+  const candidate = resolveInside(ledger, entryPath);
+  const contained = await resolveExistingInside(snapshotDir, candidate);
+  if (path.extname(contained).toLowerCase() !== '.json') throw new Error('Latest snapshot path is not a JSON file.');
+  return readJson(contained);
 }
 
 export async function writeExport(root, target, content, options = {}) {
   await initStore(root);
-  const id = `${timestampForPath()}-to-${target}`;
+  const id = `${uniqueArtifactId()}-to-${safeIdPart(target)}`;
   const relativePath = path.join('exports', `${id}.md`).replaceAll('\\', '/');
   const absolutePath = path.join(resolveLedger(root), relativePath);
-  await fs.writeFile(absolutePath, content, 'utf8');
+  await writeFileAtomic(absolutePath, content);
   await addManifestEntry(root, 'exports', {
     id,
     target,
@@ -150,30 +174,44 @@ export async function writeExport(root, target, content, options = {}) {
 // make this delete something elsewhere on disk. `keep` of 0 disables pruning.
 export async function pruneLedgerEntries(root, key, keep) {
   if (!Number.isFinite(keep) || keep <= 0) return { removed: 0 };
-  const manifest = await readManifest(root);
-  const entries = Array.isArray(manifest[key]) ? manifest[key] : [];
-  if (entries.length <= keep) return { removed: 0 };
+  return withFileLock(manifestFile(root), async () => {
+    const manifest = await readManifest(root);
+    const entries = Array.isArray(manifest[key]) ? manifest[key] : [];
+    if (entries.length <= keep) return { removed: 0 };
 
-  const ledger = path.resolve(resolveLedger(root));
-  const stale = entries.slice(0, entries.length - keep);
-  let removed = 0;
+    const ledger = path.resolve(resolveLedger(root));
+    const stale = entries.slice(0, entries.length - keep);
+    let removed = 0;
 
-  for (const entry of stale) {
-    if (!entry?.path) continue;
-    const target = path.resolve(ledger, entry.path);
-    if (target !== ledger && !target.startsWith(`${ledger}${path.sep}`)) continue;
-    await fs.rm(target, { force: true });
-    removed++;
-  }
+    for (const entry of stale) {
+      if (!entry?.path) continue;
+      let target;
+      try {
+        target = resolveInside(ledger, entry.path);
+      } catch {
+        continue;
+      }
+      await fs.rm(target, { force: true });
+      removed++;
+    }
 
-  manifest[key] = entries.slice(entries.length - keep);
-  manifest.updatedAt = new Date().toISOString();
-  await writeManifest(root, manifest);
-  return { removed };
+    manifest[key] = entries.slice(entries.length - keep);
+    manifest.updatedAt = new Date().toISOString();
+    await writeManifest(root, manifest);
+    return { removed };
+  });
 }
 
 function pickKeep(value, fallback) {
   if (value === 0 || value === false) return 0;
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
   return fallback;
+}
+
+function manifestFile(root) {
+  return path.join(resolveLedger(root), 'manifest.json');
+}
+
+function safeIdPart(value) {
+  return String(value || 'unknown').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24) || 'unknown';
 }

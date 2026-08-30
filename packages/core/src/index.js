@@ -24,14 +24,16 @@ export {
   stripHandoffPlumbing
 } from './roundtrip.js';
 export { captureSnapshot } from './snapshot.js';
-export { sanitizeContentForHandoff, mediaReferencesFromMetadata } from './media.js';
+export { sanitizeContentForHandoff, mediaReferencesFromMetadata, redactSecrets, safeMetadataValue } from './media.js';
 export {
   initStore,
   latestSnapshot,
   pruneLedgerEntries,
   readAllTurns,
   readManifest,
+  writeExport,
   writeSession,
+  writeSnapshot,
   DEFAULT_KEEP_EXPORTS,
   DEFAULT_KEEP_SNAPSHOTS
 } from './store.js';

@@ -6,7 +6,8 @@ export function sanitizeContentForHandoff(content) {
   const stats = {
     inlineImages: 0,
     jsonFields: 0,
-    base64Tokens: 0
+    base64Tokens: 0,
+    secrets: 0
   };
 
   let text = String(content || '');
@@ -20,10 +21,13 @@ export function sanitizeContentForHandoff(content) {
   });
   text = replaceJsonBase64Fields(text, stats);
   text = replaceLongBase64Tokens(text, stats);
+  const redacted = redactSecrets(text);
+  text = redacted.content;
+  stats.secrets = redacted.count;
 
   return {
     content: text,
-    omitted: stats.inlineImages + stats.jsonFields + stats.base64Tokens,
+    omitted: stats.inlineImages + stats.jsonFields + stats.base64Tokens + stats.secrets,
     stats
   };
 }
@@ -32,15 +36,52 @@ export function mediaReferencesFromMetadata(metadata = {}) {
   const media = metadata.media || {};
   const refs = [];
   for (const path of media.localImages || []) {
-    refs.push(`- Local image: ${path}`);
+    refs.push(`- Local image (untrusted path): ${safeMetadataValue(path)}`);
   }
   for (const path of media.localFiles || []) {
-    refs.push(`- Local file: ${path}`);
+    refs.push(`- Local file (untrusted path): ${safeMetadataValue(path)}`);
   }
   if (media.inlineImageCount) {
     refs.push(`- Inline images omitted from transcript: ${media.inlineImageCount}`);
   }
   return refs;
+}
+
+export function safeMetadataValue(value) {
+  const sanitized = sanitizeContentForHandoff(value).content
+    .replace(/\r?\n/g, '\\n')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replaceAll('`', '\\u0060')
+    .replaceAll('<', '\\u003c')
+    .replaceAll('>', '\\u003e');
+  return `\`${sanitized}\``;
+}
+
+export function redactSecrets(content) {
+  let text = String(content || '');
+  let count = 0;
+  const replace = (pattern, replacement) => {
+    text = text.replace(pattern, (...args) => {
+      count++;
+      return typeof replacement === 'function' ? replacement(...args) : replacement;
+    });
+  };
+
+  replace(/-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/gi, '[REDACTED PRIVATE KEY]');
+  replace(/\b(Authorization\s*:\s*)(Bearer|Basic)\s+[^\s"']+/gi, (_match, prefix, scheme) => `${prefix}${scheme} [REDACTED]`);
+  replace(/\b(https?:\/\/[^\s/@:]+:)[^\s/@]+@/gi, (_match, prefix) => `${prefix}[REDACTED]@`);
+  replace(
+    /(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret|token|cookie)["']?\s*[:=]\s*)(["'])([^\r\n]*?)\2/gi,
+    (_match, prefix, quote) => `${prefix}${quote}[REDACTED]${quote}`
+  );
+  replace(
+    /\b((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret|token|cookie)\s*[:=]\s*)(?!\[REDACTED\])[^\s,;]+/gi,
+    (_match, prefix) => `${prefix}[REDACTED]`
+  );
+  replace(/\b(?:sk-(?:ant-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|AKIA[0-9A-Z]{16})\b/g, '[REDACTED TOKEN]');
+  replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED JWT]');
+
+  return { content: text, count };
 }
 
 function looksLikeBase64(value) {

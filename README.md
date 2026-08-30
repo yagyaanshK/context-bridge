@@ -6,7 +6,7 @@ Context Bridge is a local, vendor-neutral handoff layer for developers who switc
 
 - 🔒 **Local-only** — everything lives in your project under `.context-bridge/`. No accounts, no telemetry, no network calls.
 - 🧾 **Lossless** — native transcripts are imported verbatim as JSONL. No AI summary in the core flow.
-- ✂️ **Lean handoffs** — duplicate turns are collapsed, noisy tool output is trimmed, and inline screenshots are stripped, so a handoff stays small enough for the next agent to actually read.
+- ✂️ **Lean handoffs** — duplicate turns are collapsed, noisy tool output is trimmed, inline screenshots are stripped, and common credential formats are redacted before export.
 - 🧰 **Two ways to use it** — a `context-bridge` CLI and a VS Code extension (works in forks like Cursor, Windsurf, and Google Antigravity).
 - 👥 **Many accounts, one panel** — keep several Codex subscriptions and Claude accounts signed in at once, see what each has left, and switch the official tools between them.
 
@@ -99,6 +99,7 @@ A raw multi-tool session can be megabytes. Context Bridge shrinks the **export**
 | **Collapse duplicates** | Native logs record one message under several event types; consecutive identical turns are merged (legitimately-repeated output is kept). |
 | **Trim tool/system noise** | Oversized tool outputs (git diffs, dir listings) and repeated system blobs are middle-truncated, keeping head + tail. |
 | **Strip inline media** | Base64 screenshots are replaced with compact placeholders. |
+| **Redact secrets** | Common tokens, authorization headers, credential assignments, private keys, JWTs, and authenticated Git URLs are replaced deterministically. |
 | **Never summarize** | User and assistant prose is preserved verbatim. |
 
 The ledger header of every export reports exactly what was collapsed and truncated.
@@ -317,7 +318,7 @@ you choose; it does not silently fail over when one runs out.
   attachments/
 ```
 
-`.context-bridge/` is **git-ignored by default** because it can contain private transcripts, command output, and file paths.
+`.context-bridge/` is **git-ignored by default** because the ledger contains private transcripts, command output, and file paths. Export redaction is defense in depth, not a reason to publish the ledger. See [docs/SECURITY.md](docs/SECURITY.md).
 
 ---
 
@@ -352,7 +353,7 @@ The export’s ledger header lists how many turns were collapsed or truncated, s
 
 ## Roadmap
 
-Claude accounts in the CLI · PTY terminal capture · more native adapters · published Marketplace extension · MCP server exposing the ledger · pre-export secret scanner · cross-session conflict detection.
+Claude accounts in the CLI · PTY terminal capture · more native adapters · published Marketplace extension · MCP server exposing the ledger · cross-session conflict detection.
 
 ## Contributing
 

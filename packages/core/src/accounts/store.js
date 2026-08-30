@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ensureDir, pathExists, readJson, writeJson } from '../fs-utils.js';
+import { ensureDir, pathExists, readJson, resolveInside, validatePathSegment, withFileLock, writeJson } from '../fs-utils.js';
 
 // Accounts are a property of the machine, not of a project: the same three
 // subscriptions are the same three subscriptions in every repo you open. So the
@@ -22,7 +23,21 @@ export function registryPath(options = {}) {
 // world. Keeping the agent-specific home one level down leaves room for state
 // of our own (quota cache) beside it without polluting what the CLI sees.
 export function accountDir(id, options = {}) {
-  return path.join(accountsRoot(options), 'accounts', id);
+  const root = path.join(accountsRoot(options), 'accounts');
+  const target = resolveInside(root, validatePathSegment(id, 'Account id'));
+  try {
+    const stat = fsSync.lstatSync(target);
+    if (stat.isSymbolicLink()) throw new Error(`Account directory must not be a symbolic link: ${target}`);
+    const realRoot = fsSync.realpathSync(root);
+    const realTarget = fsSync.realpathSync(target);
+    const relative = path.relative(realRoot, realTarget);
+    if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error(`Account directory escapes its allowed root: ${realTarget}`);
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  return target;
 }
 
 export async function readRegistry(options = {}) {
@@ -59,47 +74,53 @@ export async function getAccount(id, options = {}) {
 }
 
 export async function createAccount(input, options = {}) {
-  const registry = await readRegistry(options);
   const label = String(input.label || '').trim() || 'Account';
   const provider = input.provider || 'codex';
-  const id = input.id || uniqueId(label, registry.accounts);
-
-  if (registry.accounts.some((account) => account.id === id)) {
-    throw new Error(`An account with id "${id}" already exists.`);
-  }
-
-  const account = {
-    id,
-    provider,
-    label,
-    createdAt: new Date().toISOString(),
-    lastUsedAt: undefined
-  };
-
-  registry.accounts.push(removeUndefined(account));
-  await writeRegistry(registry, options);
-  await ensureDir(accountDir(id, options));
-  return { ...account, dir: accountDir(id, options) };
+  let account;
+  await withFileLock(registryPath(options), async () => {
+    const registry = await readRegistry(options);
+    const id = validatePathSegment(input.id || uniqueId(label, registry.accounts), 'Account id');
+    if (registry.accounts.some((item) => item.id === id)) {
+      throw new Error(`An account with id "${id}" already exists.`);
+    }
+    account = {
+      id,
+      provider,
+      label,
+      createdAt: new Date().toISOString(),
+      lastUsedAt: undefined
+    };
+    registry.accounts.push(removeUndefined(account));
+    await writeRegistry(registry, options);
+  }, options);
+  await ensureDir(accountDir(account.id, options));
+  return { ...account, dir: accountDir(account.id, options) };
 }
 
 export async function updateAccount(id, patch, options = {}) {
-  const registry = await readRegistry(options);
-  const index = registry.accounts.findIndex((account) => account.id === id);
-  if (index < 0) throw new Error(`No account with id "${id}".`);
-  registry.accounts[index] = removeUndefined({ ...registry.accounts[index], ...patch, id });
-  await writeRegistry(registry, options);
-  return { ...registry.accounts[index], dir: accountDir(id, options) };
+  validatePathSegment(id, 'Account id');
+  return withFileLock(registryPath(options), async () => {
+    const registry = await readRegistry(options);
+    const index = registry.accounts.findIndex((account) => account.id === id);
+    if (index < 0) throw new Error(`No account with id "${id}".`);
+    registry.accounts[index] = removeUndefined({ ...registry.accounts[index], ...patch, id });
+    await writeRegistry(registry, options);
+    return { ...registry.accounts[index], dir: accountDir(id, options) };
+  }, options);
 }
 
 // Deleting the credential directory is the destructive half, so it is opt-in.
 // Forgetting an account without `purge` leaves its login on disk and recoverable.
 export async function removeAccount(id, options = {}) {
-  const registry = await readRegistry(options);
-  const account = registry.accounts.find((item) => item.id === id);
-  if (!account) throw new Error(`No account with id "${id}".`);
-
-  registry.accounts = registry.accounts.filter((item) => item.id !== id);
-  await writeRegistry(registry, options);
+  validatePathSegment(id, 'Account id');
+  const account = await withFileLock(registryPath(options), async () => {
+    const registry = await readRegistry(options);
+    const found = registry.accounts.find((item) => item.id === id);
+    if (!found) throw new Error(`No account with id "${id}".`);
+    registry.accounts = registry.accounts.filter((item) => item.id !== id);
+    await writeRegistry(registry, options);
+    return found;
+  }, options);
 
   if (!options.purge) return { removed: account, purged: false };
 
