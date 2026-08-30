@@ -192,7 +192,12 @@ matters because it bounds what switching an account can and cannot affect.
 
 - The **Codex CLI** and the **Codex IDE extension** (VS Code, Cursor, and forks) read the OAuth
   credential at `~/.codex/auth.json`. This is the only credential Context Bridge reads, renews, or
-  rewrites when you switch a Codex account.
+  rewrites when you switch a Codex account. Per OpenAI's own docs, all local Codex clients — CLI, IDE
+  extension, and the desktop app — share this one cached login under `CODEX_HOME`, so signing in
+  through any of them is reused by the others. Where it is stored is a setting,
+  `cli_auth_credentials_store`: `file` (the default, `auth.json` in plaintext) or `keyring` (the OS
+  credential store). Context Bridge's per-account isolation assumes the `file` store; a `keyring`
+  install keeps the token in the OS keystore instead, which is why no plaintext token is found there.
 - The **Codex desktop app** keeps its *working data* in `~/.codex` too — a thread database
   (`state_5.sqlite`), a session index (`session_index.jsonl`), logs, and an Electron state file
   (`.codex-global-state.json`, which records the selected account by id). For its Codex credential it
