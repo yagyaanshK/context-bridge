@@ -1,6 +1,8 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const vscode = require('vscode');
+const { safeAgentCommand, safeClaudeUri } = require('./security.cjs');
+const { readRawUsage } = require('./raw-usage.cjs');
 const { AccountsStore, AccountsWebview } = require('./accounts-view.cjs');
 const { handoffForRoot } = require('./handoff-state.cjs');
 const { LoginPanel } = require('./login-view.cjs');
@@ -153,18 +155,9 @@ async function showRawUsage(item) {
         ...(auth.accountId ? { 'ChatGPT-Account-Id': auth.accountId } : {})
       };
 
-  const raw = await withProgress(`Reading usage for ${account.label}`, async () => {
-    const response = await fetch(endpoint, { headers });
-    const text = await response.text();
-    try {
-      return { status: response.status, body: JSON.parse(text) };
-    } catch {
-      return { status: response.status, body: text };
-    }
-  });
-
-  const parse = claude ? api.fetchClaudeUsage : api.fetchCodexUsage;
-  const parsed = await parse(auth).catch((error) => ({ error: error.message }));
+  const raw = await withProgress(`Reading usage for ${account.label}`, ({ signal }) =>
+    readRawUsage(api, { endpoint, headers, signal, claude, auth })
+  );
   const document = await vscode.workspace.openTextDocument({
     language: 'json',
     content: JSON.stringify(
@@ -173,7 +166,7 @@ async function showRawUsage(item) {
         endpoint,
         httpStatus: raw.status,
         rawResponse: raw.body,
-        parsedByContextBridge: parsed
+        parsedByContextBridge: raw.parsed
       },
       null,
       2
@@ -264,16 +257,25 @@ async function importAccount(item) {
   if (!label) return;
 
   const account = await api.createAccount({ label: label.trim(), provider });
-  let auth = claude
-    ? await api.importClaudeAuth(account.id, source)
-    : await api.importCodexAuth(account.id, source);
-  // A Claude credential carries no email; ask the API who it belongs to.
-  if (claude) auth = (await api.backfillClaudeProfile(account.id).catch(() => auth)) || auth;
+  try {
+    let auth = claude
+      ? await api.importClaudeAuth(account.id, source)
+      : await api.importCodexAuth(account.id, source);
+    // A Claude credential carries no email; ask the API who it belongs to.
+    if (claude) auth = (await api.backfillClaudeProfile(account.id).catch(() => auth)) || auth;
 
-  await accountsProvider.reloadUsage({ force: true });
-  vscode.window.showInformationMessage(
-    `Context Bridge: imported ${auth?.claims?.email || auth?.email || label.trim()} as "${account.label}". The original login is untouched.`
-  );
+    await accountsProvider.reloadUsage({ force: true });
+    vscode.window.showInformationMessage(
+      `Context Bridge: imported ${auth?.claims?.email || auth?.email || label.trim()} as "${account.label}". The original login is untouched.`
+    );
+  } catch (error) {
+    try {
+      await api.removeAccount(account.id, { purge: true, purgeLive: false });
+    } catch (cleanupError) {
+      throw new Error(`${error.message} Context Bridge could not remove the incomplete account: ${cleanupError.message}`);
+    }
+    throw error;
+  }
 }
 
 async function signInAccount(item) {
@@ -373,8 +375,8 @@ async function refreshAccountQuota(item) {
   // one. A pool "Refresh now" carries only its provider. The palette and the
   // title-bar button carry neither and refresh everything.
   if (item?.accountId && item?.provider) {
-    const usage = await withProgress(`Refreshing ${agentName(item.provider)} quota`, () =>
-      accountsProvider.reloadUsageOne(item.accountId, item.provider, { force: true })
+    const usage = await withProgress(`Refreshing ${agentName(item.provider)} quota`, ({ signal }) =>
+      accountsProvider.reloadUsageOne(item.accountId, item.provider, { force: true, signal })
     );
     if (usage?.error) {
       vscode.window.showWarningMessage(`Context Bridge: could not read that account's usage — ${usage.error}`);
@@ -382,13 +384,13 @@ async function refreshAccountQuota(item) {
     return;
   }
   if (item?.provider) {
-    await withProgress(`Reading ${agentName(item.provider)} quota`, () =>
-      accountsProvider.reloadUsage({ force: true, providerId: item.provider })
+    await withProgress(`Reading ${agentName(item.provider)} quota`, ({ signal }) =>
+      accountsProvider.reloadUsage({ force: true, providerId: item.provider, signal })
     );
     return;
   }
-  const accounts = await withProgress('Reading account quota', () =>
-    accountsProvider.reloadUsage({ force: true })
+  const accounts = await withProgress('Reading account quota', ({ signal }) =>
+    accountsProvider.reloadUsage({ force: true, signal })
   );
   if (accounts.length === 0) {
     vscode.window.showInformationMessage('Context Bridge: no accounts yet. Add one from the Context Bridge panel.');
@@ -810,8 +812,13 @@ async function openTarget(target) {
 
   if (target === 'claude') {
     const settings = vscode.workspace.getConfiguration('contextBridge');
-    if (settings.get('allowExternalClaudeUri')) {
-      const uri = settings.get('claudeUri') || 'vscode://anthropic.claude-code/open';
+    if (userOnlySetting(settings, 'allowExternalClaudeUri')) {
+      const editorScheme = vscode.env.uriScheme || 'vscode';
+      const configuredUri = userOnlySetting(settings, 'claudeUri', false) || `${editorScheme}://anthropic.claude-code/open`;
+      const uri = safeClaudeUri(configuredUri, editorScheme);
+      if (!uri) {
+        throw new Error(`Context Bridge blocked an unsafe Claude URI setting. Use ${editorScheme}://anthropic.claude-code/open.`);
+      }
       await vscode.env.openExternal(vscode.Uri.parse(uri));
       return;
     }
@@ -824,13 +831,22 @@ async function openTarget(target) {
 
 async function findAgentCommand(target) {
   const settings = vscode.workspace.getConfiguration('contextBridge');
-  const configured = settings.get(`${target}OpenCommand`);
-  if (configured) return configured;
-
   const commands = await vscode.commands.getCommands(true);
-  const namePattern = target === 'claude' ? /claude|anthropic/i : /codex|openai/i;
-  return commands.find((item) => namePattern.test(item) && /open|focus|chat|new|agent/i.test(item)) ||
-    commands.find((item) => namePattern.test(item));
+  const configured = userOnlySetting(settings, `${target}OpenCommand`);
+  if (configured) {
+    const safe = safeAgentCommand(configured, target, commands);
+    if (!safe) throw new Error(`Context Bridge blocked unsafe or unavailable command setting "${configured}".`);
+    return safe;
+  }
+  return commands.find((item) => safeAgentCommand(item, target, commands));
+}
+
+function userOnlySetting(settings, key, includeDefault = true) {
+  const inspected = settings.inspect(key);
+  if (inspected?.workspaceValue !== undefined || inspected?.workspaceFolderValue !== undefined) {
+    throw new Error(`Context Bridge does not allow workspace-controlled ${key} settings.`);
+  }
+  return inspected?.globalValue ?? (includeDefault ? inspected?.defaultValue : undefined);
 }
 
 // Only a chat the agent named itself is worth quoting back. An unnamed one is

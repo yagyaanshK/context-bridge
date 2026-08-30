@@ -228,23 +228,27 @@
         },
         "contextBridge.claudeUri": {
           "type": "string",
+          "scope": "application",
           "default": "vscode://anthropic.claude-code/open",
-          "description": "Optional URI used to open or focus Claude Code when contextBridge.allowExternalClaudeUri is enabled."
+          "description": "Optional application-level URI used to open Claude Code. Only the current editor scheme with anthropic.claude-code/open is accepted."
         },
         "contextBridge.allowExternalClaudeUri": {
           "type": "boolean",
+          "scope": "application",
           "default": false,
-          "description": "Allow Context Bridge to open contextBridge.claudeUri. Keep false in VS Code forks so handoff stays in the current editor."
+          "description": "Allow Context Bridge to open the validated Claude extension URI using the current editor's URI scheme."
         },
         "contextBridge.claudeOpenCommand": {
           "type": "string",
+          "scope": "application",
           "default": "",
-          "description": "Optional VS Code command id used to open or focus Claude. If empty, Context Bridge tries to find a command containing 'claude' or 'anthropic'."
+          "description": "Optional application-level installed command used to open or focus Claude. Unrelated and destructive command ids are rejected."
         },
         "contextBridge.codexOpenCommand": {
           "type": "string",
+          "scope": "application",
           "default": "",
-          "description": "Optional VS Code command id used to open or focus Codex. If empty, Context Bridge tries to find a command containing 'codex'."
+          "description": "Optional application-level installed command used to open or focus Codex. Unrelated and destructive command ids are rejected."
         },
         "contextBridge.alwaysUseLatestSession": {
           "type": "boolean",

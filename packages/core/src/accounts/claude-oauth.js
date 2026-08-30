@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
+import { providerFetch } from './http.js';
 
 // The Claude Code sign-in flow, performed by Context Bridge.
 //
@@ -41,6 +42,7 @@ export const CLAUDE_SCOPES = ['org:create_api_key', 'user:profile', 'user:infere
 // of the redirect_uri we send - but reusing it keeps any firewall rule a user
 // already has working.
 export const CLAUDE_DEFAULT_CALLBACK_PORT = 54545;
+export const DEFAULT_LOOPBACK_TIMEOUT_MS = 5 * 60 * 1000;
 
 export const CLAUDE_OAUTH_MODES = ['browser', 'code'];
 
@@ -54,7 +56,7 @@ export function createPkce() {
 }
 
 export function loopbackRedirectUri(port) {
-  return `http://localhost:${port}/callback`;
+  return `http://127.0.0.1:${port}/callback`;
 }
 
 export function claudeAuthorizeUrl(options = {}) {
@@ -129,15 +131,12 @@ export async function refreshClaudeToken(refreshToken, options = {}) {
 }
 
 async function postToken(body, options = {}) {
-  const fetchImpl = options.fetch || globalThis.fetch;
-  if (typeof fetchImpl !== 'function') throw new Error('No fetch implementation available.');
-
-  const response = await fetchImpl(options.tokenUrl || CLAUDE_TOKEN_URL, {
+  const response = await providerFetch(options.tokenUrl || CLAUDE_TOKEN_URL, {
     method: 'POST',
     // Form encoding, not JSON. The endpoint rejects a JSON body outright.
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
     body
-  });
+  }, options);
 
   const text = await response.text();
   let payload;
@@ -170,7 +169,7 @@ function oauthErrorMessage(payload, status, raw, grant) {
     if (grant === 'refresh') {
       return 'This Claude login has expired or was renewed by Claude Code itself, so the saved token no longer works. Sign in again.';
     }
-    return `${detail || 'The authorization code was rejected.'} Codes are single-use and expire within minutes — start the sign-in again.`;
+    return 'The authorization code was rejected. Codes are single-use and expire within minutes; start the sign-in again.';
   }
   if (code === 'invalid_client') {
     return 'Anthropic rejected the client id. Context Bridge may need updating.';
@@ -181,7 +180,12 @@ function oauthErrorMessage(payload, status, raw, grant) {
   if (status === 429) {
     return 'Anthropic is rate limiting sign-in attempts. Wait a minute and try again.';
   }
-  return detail || code || `Token request failed: ${status}. ${String(raw).slice(0, 200)}`;
+  return code ? `Token request failed: ${safeErrorCode(code)}.` : `Token request failed with HTTP ${status}.`;
+}
+
+function safeErrorCode(value) {
+  const code = String(value || '').replace(/[^a-z0-9_.-]/gi, '').slice(0, 64);
+  return code || 'provider_error';
 }
 
 function normalizeTokens(payload) {
@@ -200,12 +204,9 @@ function normalizeTokens(payload) {
 // Who just signed in. The token response says nothing about the person, so the
 // panel would have an unlabelled card without this.
 export async function fetchClaudeProfile(accessToken, options = {}) {
-  const fetchImpl = options.fetch || globalThis.fetch;
-  if (typeof fetchImpl !== 'function') throw new Error('No fetch implementation available.');
-
-  const response = await fetchImpl(options.profileUrl || CLAUDE_PROFILE_URL, {
+  const response = await providerFetch(options.profileUrl || CLAUDE_PROFILE_URL, {
     headers: claudeApiHeaders(accessToken, options)
-  });
+  }, options);
   if (!response.ok) throw new Error(`Profile request failed: ${response.status}`);
   return normalizeClaudeProfile(await response.json());
 }
@@ -259,7 +260,13 @@ export const DEFAULT_CLAUDE_USER_AGENT = 'claude-code/2.0.1';
 // machine can reach it, and closed the moment it has an answer.
 export function startLoopbackServer(options = {}) {
   const port = options.port || CLAUDE_DEFAULT_CALLBACK_PORT;
+  const expectedState = String(options.state || '');
+  if (!expectedState) throw new Error('A PKCE state value is required before starting the callback server.');
+  const timeoutMs = Number.isFinite(options.timeoutMs)
+    ? Math.max(1, options.timeoutMs)
+    : DEFAULT_LOOPBACK_TIMEOUT_MS;
   let settle;
+  let settled = false;
   const result = new Promise((resolve, reject) => {
     settle = { resolve, reject };
   });
@@ -269,24 +276,28 @@ export function startLoopbackServer(options = {}) {
   // crash. Marking it handled here is safe: awaiting `result` still receives it.
   result.catch(() => {});
 
+  let timer;
   const server = http.createServer((request, response) => {
-    const url = new URL(request.url, `http://localhost:${port}`);
-    if (!url.pathname.startsWith('/callback')) {
+    const url = new URL(request.url, loopbackRedirectUri(port));
+    if (request.method !== 'GET' || url.pathname !== '/callback') {
       response.writeHead(404).end();
       return;
     }
 
     const code = url.searchParams.get('code');
     const error = url.searchParams.get('error');
-    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    response.end(callbackPage(Boolean(code)));
+    const state = url.searchParams.get('state');
+    const valid = Boolean(code && state && state === expectedState);
+    response.writeHead(valid ? 200 : 400, { 'Content-Type': 'text/html; charset=utf-8' });
+    response.end(callbackPage(valid));
 
-    if (code) settle.resolve({ code, state: url.searchParams.get('state') || undefined });
-    else settle.reject(new Error(url.searchParams.get('error_description') || error || 'No authorization code was returned.'));
-    close();
+    if (error) finish(new Error(`Claude sign-in was rejected by the provider (${safeErrorCode(error)}).`));
+    else if (!code) finish(new Error('No authorization code was returned.'));
+    else if (!state || state !== expectedState) finish(new Error('The sign-in response did not match this request. Start again.'));
+    else finish(undefined, { code, state });
   });
 
-  const close = () => {
+  const closeServer = () => {
     try {
       server.close();
     } catch {
@@ -294,16 +305,33 @@ export function startLoopbackServer(options = {}) {
     }
   };
 
+  const finish = (error, value) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    closeServer();
+    if (error) settle.reject(error);
+    else settle.resolve(value);
+  };
+
+  const close = (reason = new Error('Sign-in cancelled.')) => finish(reason);
+
   const listening = new Promise((resolve, reject) => {
     server.once('error', (error) => {
-      reject(
-        error.code === 'EADDRINUSE'
-          ? new Error(`Port ${port} is already in use, so the browser has nowhere to return to. Use the code flow instead.`)
-          : error
-      );
+      const reported = error.code === 'EADDRINUSE'
+        ? new Error(`Port ${port} is already in use, so the browser has nowhere to return to. Use the code flow instead.`)
+        : error;
+      finish(reported);
+      reject(reported);
     });
     server.listen(port, '127.0.0.1', () => resolve());
   });
+
+  timer = setTimeout(
+    () => finish(new Error(`Claude sign-in timed out after ${Math.ceil(timeoutMs / 1000)} seconds. Start again.`)),
+    timeoutMs
+  );
+  timer.unref?.();
 
   return { port, redirectUri: loopbackRedirectUri(port), listening, result, close };
 }

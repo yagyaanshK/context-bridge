@@ -40,6 +40,7 @@ export {
   DEFAULT_KEEP_SNAPSHOTS
 } from './store.js';
 export { createTurn, normalizeProvider, normalizeRole, normalizeSurface } from './schema.js';
+export { DEFAULT_PROVIDER_TIMEOUT_MS, providerFetch } from './accounts/http.js';
 export {
   accountDir,
   accountsRoot,
@@ -138,6 +139,7 @@ export {
   CLAUDE_CLIENT_ID,
   CLAUDE_CONSOLE_AUTHORIZE_URL,
   CLAUDE_DEFAULT_CALLBACK_PORT,
+  DEFAULT_LOOPBACK_TIMEOUT_MS,
   CLAUDE_MANUAL_REDIRECT_URI,
   CLAUDE_OAUTH_MODES,
   CLAUDE_SCOPES,

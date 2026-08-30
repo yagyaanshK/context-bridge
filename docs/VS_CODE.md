@@ -71,6 +71,11 @@ credential itself — meaning **it handles Claude tokens, which it never does fo
 browser (loopback on port 54545), authorization code (no local port, for SSH and containers), adopt
 the login at `~/.claude`, or paste a `.credentials.json`.
 
+Provider requests time out after 20 seconds and cancellable notifications abort their in-flight
+request. The Claude browser callback accepts only its exact loopback path and PKCE state and expires
+after five minutes. Secret fields are cleared when submitted, hidden login panels retain no DOM, and
+a failed or cancelled attempt removes an account row created solely for that attempt.
+
 Deleting credentials is destructive. If the account is currently in use, Context Bridge also
 removes the live default provider login after confirming the provider is stopped; unrelated Claude
 configuration such as project history is preserved. A malformed Claude config is never replaced
@@ -151,23 +156,27 @@ Use a new session when the old native chat is long, stale, noisy, or confused. T
 
 For new Claude sessions, Context Bridge first tries to find and execute an installed Claude/Anthropic command in the current editor.
 
-You can set `contextBridge.claudeOpenCommand` to the exact command id if your editor exposes one.
+You can set `contextBridge.claudeOpenCommand` at application/user scope to an installed Claude or
+Anthropic open/focus command. Context Bridge rejects unavailable, unrelated, or destructive command ids.
 
 Context Bridge no longer opens the Claude Code URI by default because VS Code forks may hand `vscode://...` links to Microsoft VS Code instead of the current editor. If you want that external behavior, enable `contextBridge.allowExternalClaudeUri`.
 
 The optional URI setting is:
 
 ```text
-vscode://anthropic.claude-code/open
+<current-editor-scheme>://anthropic.claude-code/open
 ```
 
-You can override it with `contextBridge.claudeUri`.
+You can override it with the application-scoped `contextBridge.claudeUri`. Only the current editor's
+URI scheme, the `anthropic.claude-code` authority, and `/open` path are accepted; workspace settings
+cannot supply executable commands or URIs.
 
 ## Codex
 
 Codex does not currently have a documented URI equivalent in this project. Context Bridge tries to find an installed VS Code command containing `codex` or `openai`; if that fails, it leaves the prompt on the clipboard and opens the handoff document.
 
-You can set `contextBridge.codexOpenCommand` to the exact Codex command id if your installation exposes one.
+You can set `contextBridge.codexOpenCommand` at application/user scope to an installed Codex/OpenAI
+open/focus command. Workspace-controlled and destructive command ids are rejected.
 
 ## Development
 

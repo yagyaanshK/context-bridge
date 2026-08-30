@@ -528,6 +528,19 @@ test('a rejected refresh says to sign in again, not that a code is single-use', 
   );
 });
 
+test('Claude OAuth errors never expose provider response details', async () => {
+  const secret = 'sk-ant-provider-secret-that-must-not-leak';
+  const fetchImpl = async () => ({
+    ok: false,
+    status: 500,
+    text: async () => JSON.stringify({ error: 'server_error', error_description: secret, diagnostic: secret })
+  });
+  await assert.rejects(
+    exchangeClaudeCode({ code: 'code', verifier: 'verifier', fetch: fetchImpl }),
+    (error) => /server_error/.test(error.message) && !error.message.includes(secret)
+  );
+});
+
 test('a completed sign-in is written in the shape Claude Code reads', async () => {
   const { options } = await sandbox();
   const account = await createAccount({ label: 'Personal', provider: 'claude' }, options);
@@ -695,7 +708,7 @@ test('a failed read keeps the previous number rather than showing nothing', asyn
 
 test('the loopback server returns the code the browser brings back', async () => {
   const { startLoopbackServer } = await import('../src/index.js');
-  const server = startLoopbackServer({ port: 54321 });
+  const server = startLoopbackServer({ port: 54321, state: 'state456' });
   await server.listening;
 
   const page = await fetch(`${server.redirectUri}?code=abc123&state=state456`);
@@ -706,7 +719,7 @@ test('the loopback server returns the code the browser brings back', async () =>
 
 test('a refused sign-in rejects, even when nothing is awaiting it yet', async () => {
   const { startLoopbackServer } = await import('../src/index.js');
-  const server = startLoopbackServer({ port: 54322 });
+  const server = startLoopbackServer({ port: 54322, state: 'state456' });
   await server.listening;
 
   await fetch(`${server.redirectUri}?error=access_denied&error_description=User+refused`);
@@ -714,17 +727,45 @@ test('a refused sign-in rejects, even when nothing is awaiting it yet', async ()
   // with no handler attached. In the extension host that is a crash, not a
   // warning.
   await new Promise((resolve) => setTimeout(resolve, 50));
-  await assert.rejects(() => server.result, /User refused/);
+  await assert.rejects(() => server.result, /rejected by the provider \(access_denied\)/);
 });
 
 test('a taken port fails with the alternative named', async () => {
   const { startLoopbackServer } = await import('../src/index.js');
-  const held = startLoopbackServer({ port: 54323 });
+  const held = startLoopbackServer({ port: 54323, state: 'held-state' });
   await held.listening;
 
-  const clash = startLoopbackServer({ port: 54323 });
+  const clash = startLoopbackServer({ port: 54323, state: 'clash-state' });
   await assert.rejects(() => clash.listening, /already in use.*code flow/s);
   held.close();
+});
+
+test('the loopback callback requires exact path and matching non-empty state', async () => {
+  const { startLoopbackServer } = await import('../src/index.js');
+  const server = startLoopbackServer({ port: 54324, state: 'expected-state' });
+  await server.listening;
+
+  assert.equal((await fetch(`http://127.0.0.1:54324/callback-extra?code=wrong&state=expected-state`)).status, 404);
+  const missing = await fetch(`${server.redirectUri}?code=abc123`);
+  assert.equal(missing.status, 400);
+  await assert.rejects(() => server.result, /did not match this request/i);
+});
+
+test('the loopback callback expires and close cancels a pending wait', async () => {
+  const { startLoopbackServer } = await import('../src/index.js');
+  const expiring = startLoopbackServer({ port: 54325, state: 'expiring', timeoutMs: 20 });
+  await expiring.listening;
+  await assert.rejects(() => expiring.result, /timed out/i);
+
+  const cancelled = startLoopbackServer({ port: 54326, state: 'cancelled' });
+  await cancelled.listening;
+  cancelled.close();
+  await assert.rejects(() => cancelled.result, /cancelled/i);
+});
+
+test('the loopback server cannot start without PKCE state', async () => {
+  const { startLoopbackServer } = await import('../src/index.js');
+  assert.throws(() => startLoopbackServer({ port: 54327 }), /state value is required/i);
 });
 
 // --- when a blocked account resumes ----------------------------------------

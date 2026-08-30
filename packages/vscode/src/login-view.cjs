@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const vscode = require('vscode');
+const { allowedLoginUrl, appendBoundedOutput } = require('./security.cjs');
 
 // Sign-in, without handing the user a terminal.
 //
@@ -21,6 +22,7 @@ const vscode = require('vscode');
 // tests rather than being a thin wrapper over a process.
 
 const TITLES = { codex: 'Connect a Codex subscription', claude: 'Connect a Claude account' };
+const MAX_LOGIN_OUTPUT_CHARS = 64 * 1024;
 
 class LoginPanel {
   constructor(context, core, store) {
@@ -33,10 +35,16 @@ class LoginPanel {
     this.provider = undefined;
     this.pending = undefined;
     this.loopback = undefined;
+    this.operation = undefined;
+    this.operationController = undefined;
+    this.provisionalAccountId = undefined;
   }
 
   async open(target = {}) {
     const provider = target.provider || 'codex';
+    const changingTarget = this.target &&
+      (this.target.accountId !== target.accountId || this.provider !== provider);
+    if (changingTarget) await this.cancel();
     this.target = target;
 
     if (this.panel && this.provider !== provider) {
@@ -54,12 +62,21 @@ class LoginPanel {
         'contextBridgeLogin',
         TITLES[provider],
         vscode.ViewColumn.Active,
-        { enableScripts: true, retainContextWhenHidden: true }
+        { enableScripts: true, retainContextWhenHidden: false }
       );
       this.panel.webview.html = html(this.panel.webview, provider);
-      this.panel.webview.onDidReceiveMessage((message) => this.onMessage(message));
+      this.panel.webview.onDidReceiveMessage((message) => {
+        void this.onMessage(message).catch((error) => {
+          this.post({ type: 'failed', method: message?.method, message: error.message });
+        });
+      });
+      this.panel.onDidChangeViewState?.((event) => {
+        if (event.webviewPanel.visible) {
+          this.post({ type: 'ready', label: this.target?.label || '', locked: Boolean(this.target?.accountId) });
+        }
+      });
       this.panel.onDidDispose(() => {
-        this.cancel();
+        void this.cancel();
         this.panel = undefined;
         this.provider = undefined;
       });
@@ -72,30 +89,43 @@ class LoginPanel {
     this.panel?.webview.postMessage(message);
   }
 
-  cancel() {
+  async cancel() {
     this.pending = undefined;
+    this.operationController?.abort();
     if (this.loopback) {
       this.loopback.close();
       this.loopback = undefined;
     }
-    if (!this.child) return;
-    const child = this.child;
-    this.child = undefined;
-    try {
-      child.kill();
-    } catch {
-      // Already gone.
+    if (this.child) {
+      const child = this.child;
+      this.child = undefined;
+      try {
+        child.kill();
+      } catch {
+        // Already gone.
+      }
     }
+    await this.operation?.catch(() => {});
+    await this.rollbackProvisional();
   }
 
   async onMessage(message) {
     if (message?.type === 'cancel') {
-      this.cancel();
+      await this.cancel();
       this.post({ type: 'idle' });
       return;
     }
     if (message?.type === 'openExternal' && message.url) {
-      vscode.env.openExternal(vscode.Uri.parse(message.url));
+      const url = allowedLoginUrl(message.url);
+      if (!url) {
+        this.post({
+          type: 'failed',
+          method: this.provider === 'claude' ? 'browser' : 'device',
+          message: 'Blocked an unexpected external sign-in URL.'
+        });
+        return;
+      }
+      await vscode.env.openExternal(vscode.Uri.parse(url));
       return;
     }
     if (message?.type === 'copy' && message.value) {
@@ -105,7 +135,7 @@ class LoginPanel {
     }
     if (message?.type === 'pickFile') {
       try {
-        await this.adoptFromFile();
+        await this.runOperation((signal) => this.adoptFromFile(signal));
       } catch (error) {
         this.post({ type: 'failed', method: 'paste', message: error.message });
       }
@@ -113,16 +143,61 @@ class LoginPanel {
     }
     if (message?.type === 'start' || message?.type === 'submit') {
       try {
-        await this.start(message);
+        await this.runOperation((signal) => this.start(message, signal));
       } catch (error) {
         this.post({ type: 'failed', method: message.method, message: error.message });
       }
     }
   }
 
+  async runOperation(task) {
+    if (this.operation) throw new Error('A sign-in operation is already running. Cancel it first.');
+    const controller = new AbortController();
+    this.operationController = controller;
+    const operation = Promise.resolve().then(() => task(controller.signal));
+    this.operation = operation;
+    try {
+      return await operation;
+    } catch (error) {
+      try {
+        await this.rollbackProvisional();
+      } catch (cleanupError) {
+        throw new Error(`${error.message} Context Bridge could not remove the incomplete account: ${cleanupError.message}`);
+      }
+      throw error;
+    } finally {
+      if (this.operation === operation) this.operation = undefined;
+      if (this.operationController === controller) this.operationController = undefined;
+    }
+  }
+
+  async rollbackProvisional() {
+    const accountId = this.provisionalAccountId;
+    if (!accountId) return;
+    // Claim cleanup before awaiting it. Cancel and the operation's rejection
+    // can arrive together; only one path may remove the provisional account.
+    this.provisionalAccountId = undefined;
+    const { removeAccount } = await this.core();
+    try {
+      await removeAccount(accountId, { purge: true, purgeLive: false });
+    } catch (error) {
+      if (!this.provisionalAccountId) this.provisionalAccountId = accountId;
+      throw error;
+    }
+    this.pending = undefined;
+    this.target = {
+      provider: this.provider,
+      label: this.target?.label || this.pendingLabel || ''
+    };
+  }
+
+  commitProvisional() {
+    this.provisionalAccountId = undefined;
+  }
+
   // Reading the file here rather than in the webview means the credential is
   // never handed to the page at all - only the outcome is.
-  async adoptFromFile() {
+  async adoptFromFile(signal) {
     const claude = this.provider === 'claude';
     const picked = await vscode.window.showOpenDialog({
       title: claude ? 'Choose a .credentials.json' : 'Choose an auth.json',
@@ -133,10 +208,10 @@ class LoginPanel {
     if (!picked?.length) return;
 
     const bytes = await vscode.workspace.fs.readFile(picked[0]);
-    await this.adopt(Buffer.from(bytes).toString('utf8'));
+    await this.adopt(Buffer.from(bytes).toString('utf8'), signal);
   }
 
-  async adopt(text) {
+  async adopt(text, signal) {
     const { importCodexAuthText, importClaudeAuthText, backfillClaudeProfile } = await this.core();
     const accountId = await this.ensureAccount();
     const claude = this.provider === 'claude';
@@ -144,15 +219,15 @@ class LoginPanel {
     this.post({ type: 'running', method: 'paste' });
     let auth = claude ? await importClaudeAuthText(accountId, text) : await importCodexAuthText(accountId, text);
     if (!auth) {
-      this.post({ type: 'failed', method: 'paste', message: 'That credential has no access token in it.' });
-      return;
+      throw new Error('That credential has no usable login in it.');
     }
     // A pasted Claude credential carries no identity - the email lives in a
     // different file - so ask the API who it belongs to rather than showing an
     // unlabelled card.
-    if (claude) auth = (await backfillClaudeProfile(accountId).catch(() => auth)) || auth;
+    if (claude) auth = (await backfillClaudeProfile(accountId, { signal }).catch(() => auth)) || auth;
 
-    await this.store.reloadUsage({ force: true });
+    await this.store.reloadUsage({ force: true, signal });
+    this.commitProvisional();
     this.post({ type: 'done', method: 'paste', email: auth.claims?.email || auth.email, label: this.target.label });
   }
 
@@ -169,52 +244,54 @@ class LoginPanel {
     const label = String(this.pendingLabel || '').trim();
     if (!label) throw new Error('Give this account a name first.');
     const account = await createAccount({ label, provider });
+    this.provisionalAccountId = account.id;
     this.target = { ...this.target, accountId: account.id, label, provider };
     await ensureHome(account.id);
     return account.id;
   }
 
-  async start(message) {
-    if (message.method === 'paste') return this.adopt(message.secret);
+  async start(message, signal) {
+    if (message.method === 'paste') return this.adopt(message.secret, signal);
     this.pendingLabel = message.label;
 
-    if (this.provider === 'claude') return this.startClaude(message);
-    return this.startCodex(message);
+    if (this.provider === 'claude') return this.startClaude(message, signal);
+    return this.startCodex(message, signal);
   }
 
   // -------------------------------------------------------------------------
   // Claude: PKCE, performed here.
   // -------------------------------------------------------------------------
 
-  async startClaude(message) {
-    if (message.method === 'import') return this.importClaudeCurrent();
-    if (message.type === 'submit') return this.completeClaudeCode(message.secret);
+  async startClaude(message, signal) {
+    if (message.method === 'import') return this.importClaudeCurrent(signal);
+    if (message.type === 'submit') return this.completeClaudeCode(message.secret, signal);
     if (message.method === 'code') return this.beginClaudeCode();
-    return this.beginClaudeBrowser();
+    return this.beginClaudeBrowser(signal);
   }
 
-  async importClaudeCurrent() {
+  async importClaudeCurrent(signal) {
     const { importClaudeAuth, defaultClaudeHome, backfillClaudeProfile } = await this.core();
     const accountId = await this.ensureAccount();
     this.post({ type: 'running', method: 'import' });
 
     let auth = await importClaudeAuth(accountId, defaultClaudeHome());
     if (!auth) throw new Error('That directory has a credential file but no access token in it.');
-    auth = (await backfillClaudeProfile(accountId).catch(() => auth)) || auth;
+    auth = (await backfillClaudeProfile(accountId, { signal }).catch(() => auth)) || auth;
 
-    await this.store.reloadUsage({ force: true });
+    await this.store.reloadUsage({ force: true, signal });
+    this.commitProvisional();
     this.post({ type: 'done', method: 'import', email: auth.email, label: this.target.label });
   }
 
   // The loopback half: a local server catches the redirect, so the user only
   // has to approve in the browser.
-  async beginClaudeBrowser() {
+  async beginClaudeBrowser(signal) {
     const { createPkce, claudeAuthorizeUrl, startLoopbackServer } = await this.core();
     const accountId = await this.ensureAccount();
     this.post({ type: 'running', method: 'browser' });
 
     const pkce = createPkce();
-    const server = startLoopbackServer();
+    const server = startLoopbackServer({ state: pkce.state });
     await server.listening;
     this.loopback = server;
 
@@ -237,7 +314,7 @@ class LoginPanel {
 
     // The state is what stops another page on this machine from feeding us a
     // code of its own.
-    if (returned.state && returned.state !== pkce.state) {
+    if (returned.state !== pkce.state) {
       throw new Error('The sign-in response did not match this request. Start again.');
     }
     await this.finishClaude(accountId, 'browser', {
@@ -245,7 +322,7 @@ class LoginPanel {
       state: pkce.state,
       verifier: pkce.verifier,
       redirectUri: server.redirectUri
-    });
+    }, signal);
   }
 
   // The no-localhost half: the authorization page displays a code to paste
@@ -264,7 +341,7 @@ class LoginPanel {
     this.post({ type: 'progress', method: 'code', parsed: { authorizeUrl: url } });
   }
 
-  async completeClaudeCode(secret) {
+  async completeClaudeCode(secret, signal) {
     const { parseAuthorizationCode } = await this.core();
     if (!this.pending) throw new Error('Start this method again to get a fresh sign-in link.');
 
@@ -279,20 +356,21 @@ class LoginPanel {
       state: this.pending.state,
       verifier: this.pending.verifier,
       redirectUri: this.pending.redirectUri
-    });
+    }, signal);
     this.pending = undefined;
   }
 
-  async finishClaude(accountId, method, exchange) {
+  async finishClaude(accountId, method, exchange, signal) {
     const { exchangeClaudeCode, fetchClaudeProfile, writeClaudeCredential } = await this.core();
 
-    const tokens = await exchangeClaudeCode(exchange);
+    const tokens = await exchangeClaudeCode({ ...exchange, signal });
     // The token response says nothing about the person, so the card would be
     // unlabelled without this. A profile failure is not fatal: the login works.
-    const profile = await fetchClaudeProfile(tokens.accessToken).catch(() => undefined);
+    const profile = await fetchClaudeProfile(tokens.accessToken, { signal }).catch(() => undefined);
     const auth = await writeClaudeCredential(accountId, tokens, profile);
 
-    await this.store.reloadUsage({ force: true });
+    await this.store.reloadUsage({ force: true, signal });
+    this.commitProvisional();
     this.post({
       type: 'done',
       method,
@@ -305,7 +383,7 @@ class LoginPanel {
   // Codex: drive the official binary and read its output.
   // -------------------------------------------------------------------------
 
-  async startCodex(message) {
+  async startCodex(message, signal) {
     const { codexHome, refreshCodexAccountIdentity, codexLoginArgs } = await this.core();
 
     if (this.child) throw new Error('A sign-in is already running. Cancel it first.');
@@ -317,21 +395,17 @@ class LoginPanel {
 
     const result = await this.run(args, codexHome(accountId), method, message.secret);
     if (!result.ok) {
-      this.post({ type: 'failed', method, message: result.message });
-      return;
+      throw new Error(result.message);
     }
 
     const auth = await refreshCodexAccountIdentity(accountId);
     if (!auth) {
-      this.post({
-        type: 'failed',
-        method,
-        message: 'Sign-in finished but no credential was written. Try again.'
-      });
-      return;
+      throw new Error('Sign-in finished but no credential was written. Try again.');
     }
 
-    await this.store.reloadUsage({ force: true });
+    if (signal.aborted) throw new Error('Sign-in cancelled.');
+    await this.store.reloadUsage({ force: true, signal });
+    this.commitProvisional();
     this.post({ type: 'done', method, email: auth.claims?.email, label: this.target.label });
   }
 
@@ -357,7 +431,7 @@ class LoginPanel {
       let output = '';
 
       const onChunk = async (chunk) => {
-        output += chunk.toString();
+        output = appendBoundedOutput(output, chunk, MAX_LOGIN_OUTPUT_CHARS);
         const { parseCodexLoginOutput: parse } = await this.core();
         // `codex login` opens the browser itself. Opening it again from here
         // launched the page twice and raised the editor's own "open external
@@ -829,7 +903,14 @@ const SECRET_INPUT = ${claude ? "{ code: 'authCode', paste: 'claudeCreds' }" : "
 // Two-step methods run something on open (to produce a link) and are completed
 // later by a submit. A one-step method with an input just waits for the value.
 const TWO_STEP = ${claude ? "{ code: true }" : '{}'};
-const secretOf = (name) => (SECRET_INPUT[name] ? $(SECRET_INPUT[name]).value.trim() : undefined);
+const secretOf = (name) => {
+  if (!SECRET_INPUT[name]) return undefined;
+  const input = $(SECRET_INPUT[name]);
+  const secret = input.value.trim();
+  input.value = '';
+  return secret;
+};
+const clearSecrets = () => Object.values(SECRET_INPUT).forEach((id) => { $(id).value = ''; });
 
 // One method runs at a time, but every method stays on screen. Opening a card
 // expands it in place and starts that flow; the others remain available so a
@@ -885,11 +966,13 @@ document.querySelectorAll('[data-open]').forEach((button) =>
     const name = button.dataset.open;
     // Clicking the header of the card that is already open collapses it.
     if (card(name).classList.contains('open')) {
+      clearSecrets();
       vscode.postMessage({ type: 'cancel' });
       card(name).classList.remove('open');
       card(name).querySelector('.body').hidden = true;
       return;
     }
+    clearSecrets();
     vscode.postMessage({ type: 'cancel' });
     open(name);
   }));
@@ -897,6 +980,7 @@ document.querySelectorAll('[data-open]').forEach((button) =>
 document.querySelectorAll('[data-retry]').forEach((button) =>
   button.addEventListener('click', () => {
     const name = button.dataset.retry;
+    clearSecrets();
     vscode.postMessage({ type: 'cancel' });
     $('outcome').hidden = true;
     reset(name);
@@ -908,6 +992,7 @@ document.querySelectorAll('[data-retry]').forEach((button) =>
 
 document.querySelectorAll('[data-cancel]').forEach((button) =>
   button.addEventListener('click', () => {
+    clearSecrets();
     vscode.postMessage({ type: 'cancel' });
     document.querySelectorAll('.card').forEach((element) => {
       element.classList.remove('open');
@@ -986,6 +1071,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (data.type === 'done') {
+    clearSecrets();
     document.querySelectorAll('.card').forEach((element) => {
       element.classList.remove('open');
       element.querySelector('.body').hidden = true;
@@ -997,6 +1083,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (data.type === 'failed') {
+    clearSecrets();
     const status = within(name, '.status');
     if (status) status.hidden = true;
     const busy = within(name, '[data-busy]');

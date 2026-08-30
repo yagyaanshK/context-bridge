@@ -1,3 +1,5 @@
+import { providerFetch } from './http.js';
+
 // Renewing a Codex login without the browser.
 //
 // Codex signs in with OpenAI's OAuth. The access token it stores lasts about ten
@@ -24,11 +26,8 @@ export async function refreshCodexToken(refreshToken, options = {}) {
   if (!refreshToken) {
     throw new Error('This account has no refresh token, so its login cannot be renewed. Sign in again.');
   }
-  const fetchImpl = options.fetch || globalThis.fetch;
-  if (typeof fetchImpl !== 'function') throw new Error('No fetch implementation available.');
-
   // The endpoint takes a JSON body, unlike Anthropic's form-encoded one.
-  const response = await fetchImpl(options.tokenUrl || CODEX_TOKEN_URL, {
+  const response = await providerFetch(options.tokenUrl || CODEX_TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({
@@ -37,7 +36,7 @@ export async function refreshCodexToken(refreshToken, options = {}) {
       refresh_token: refreshToken,
       scope: 'openid profile email'
     })
-  });
+  }, options);
 
   const text = await response.text();
   let payload;
@@ -74,6 +73,11 @@ function codexOauthError(payload, status, text) {
   if (code === 'invalid_grant' || /reuse|already been used|revoked|expired/i.test(`${code} ${detail} ${text}`)) {
     return 'This login has expired or was renewed elsewhere and cannot be refreshed. Sign in again.';
   }
-  if (code) return `Token refresh failed: ${code}${detail ? ` - ${detail}` : ''}`;
-  return `Token refresh failed: ${status}${text ? ` ${text.slice(0, 200)}` : ''}`;
+  if (code) return `Token refresh failed: ${safeErrorCode(code)}.`;
+  return `Token refresh failed with HTTP ${status}.`;
+}
+
+function safeErrorCode(value) {
+  const code = String(value || '').replace(/[^a-z0-9_.-]/gi, '').slice(0, 64);
+  return code || 'provider_error';
 }

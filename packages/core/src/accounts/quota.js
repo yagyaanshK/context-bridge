@@ -4,6 +4,7 @@ import { accountDir } from './store.js';
 import { ensureCodexAccessToken } from './codex.js';
 import { ensureClaudeAccessToken } from './claude.js';
 import { claudeApiHeaders } from './claude-oauth.js';
+import { providerFetch } from './http.js';
 
 export const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 export const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
@@ -113,12 +114,9 @@ export async function getClaudeUsage(accountId, options = {}) {
 }
 
 export async function fetchClaudeUsage(auth, options = {}) {
-  const fetchImpl = options.fetch || globalThis.fetch;
-  if (typeof fetchImpl !== 'function') throw new Error('No fetch implementation available.');
-
-  const response = await fetchImpl(options.usageUrl || CLAUDE_USAGE_URL, {
+  const response = await providerFetch(options.usageUrl || CLAUDE_USAGE_URL, {
     headers: claudeApiHeaders(auth.accessToken, options)
-  });
+  }, options);
   if (!response.ok) {
     if (response.status === 401) throw new Error('This Claude login has expired. Sign in again.');
     throw new Error(`Usage request failed: ${response.status} ${response.statusText || ''}`.trim());
@@ -215,9 +213,6 @@ function readClaudeCredits(payload) {
 }
 
 export async function fetchCodexUsage(auth, options = {}) {
-  const fetchImpl = options.fetch || globalThis.fetch;
-  if (typeof fetchImpl !== 'function') throw new Error('No fetch implementation available.');
-
   const headers = {
     Authorization: `Bearer ${auth.accessToken}`,
     Accept: 'application/json',
@@ -226,7 +221,7 @@ export async function fetchCodexUsage(auth, options = {}) {
   const accountId = auth.accountId || auth.claims?.accountId;
   if (accountId) headers['ChatGPT-Account-Id'] = accountId;
 
-  const response = await fetchImpl(options.usageUrl || CODEX_USAGE_URL, { headers });
+  const response = await providerFetch(options.usageUrl || CODEX_USAGE_URL, { headers }, options);
   if (!response.ok) {
     throw new Error(`Usage request failed: ${response.status} ${response.statusText || ''}`.trim());
   }

@@ -384,6 +384,21 @@ test('a blocked active Codex purge leaves the registry and both credentials inta
   assert.ok(await readCodexAuth(defaultHome));
 });
 
+test('rollback purge deletes an incomplete managed account without touching a matching live login', async () => {
+  const { home, options } = await sandbox();
+  const defaultHome = path.join(home, '.codex');
+  const scoped = { ...options, defaultCodexHome: defaultHome };
+  const account = await createAccount({ label: 'Incomplete import', provider: 'codex' }, options);
+  await signIn(account.id, options);
+  await activateCodexAccount(account.id, scoped);
+
+  const result = await removeAccount(account.id, { ...scoped, purge: true, purgeLive: false });
+  assert.equal(result.purged, true);
+  assert.equal(result.livePurged, false);
+  assert.equal(await readCodexAuth(codexHome(account.id, options)), null);
+  assert.ok(await readCodexAuth(defaultHome), 'rollback must preserve the original machine login');
+});
+
 test('usage request carries the account header and bearer token', async () => {
   let seen;
   const auth = { accessToken: 'tok', accountId: 'acct_9' };

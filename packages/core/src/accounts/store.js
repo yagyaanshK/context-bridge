@@ -115,7 +115,9 @@ export async function removeAccount(id, options = {}) {
   validatePathSegment(id, 'Account id');
   const before = (await readRegistry(options)).accounts.find((item) => item.id === id);
   if (!before) throw new Error(`No account with id "${id}".`);
-  const livePurged = options.purge ? await purgeActiveProviderLogin(before, options) : false;
+  const livePurged = options.purge && options.purgeLive !== false
+    ? await purgeActiveProviderLogin(before, options)
+    : false;
   const account = await withFileLock(registryPath(options), async () => {
     const registry = await readRegistry(options);
     const found = registry.accounts.find((item) => item.id === id);

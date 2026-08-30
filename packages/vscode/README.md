@@ -52,11 +52,11 @@ To ingest a session without generating a handoff, use **Discover … Sessions** 
 | `snapshotDiffMaxChars` | `4000` | How much of the uncommitted diff (vs HEAD) to embed; `0` shows the file-level stat only. |
 | `keepExports` | `10` | Past handoff files kept in `.context-bridge/exports`; older ones are deleted after each export. `0` keeps all. |
 | `openHandoffDocument` | `true` | Open the handoff file after export. |
-| `allowExternalClaudeUri` | `false` | Allow opening `vscode://` links. Keep `false` in forks so handoff stays in the current editor. |
+| `allowExternalClaudeUri` | `false` | Allow the known Claude extension URI using the current editor's scheme. Application-scoped. |
 | `alwaysUseLatestSession` | `false` | When several sessions were started in this workspace, use the newest without asking instead of showing a picker. |
-| `claudeUri` | `vscode://anthropic.claude-code/open` | URI used to open Claude, when the setting above is enabled. |
-| `claudeOpenCommand` | `""` | Exact VS Code command id to open Claude. Empty means auto-detect one containing "claude" or "anthropic". |
-| `codexOpenCommand` | `""` | Exact VS Code command id to open Codex. Empty means auto-detect one containing "codex". |
+| `claudeUri` | `vscode://anthropic.claude-code/open` | URI used to open Claude when enabled; only the current editor scheme and known Claude authority/path are accepted. Application-scoped. |
+| `claudeOpenCommand` | `""` | Installed Claude/Anthropic open command. Unavailable, unrelated, destructive, and workspace-supplied ids are rejected. |
+| `codexOpenCommand` | `""` | Installed Codex/OpenAI open command with the same validation. |
 
 Handoffs are kept small deterministically: duplicate turns are collapsed, oversized tool/system output is trimmed (head + tail kept), inline base64 screenshots are stripped, and a total character budget caps the transcript. User and assistant prose is preserved verbatim — there is no AI summarization.
 
@@ -204,6 +204,11 @@ Context Bridge is a local tool. Here is exactly what it touches and why.
 - `~/.context-bridge/accounts/` — copies of the credentials for accounts you add, written owner-only (`0600`) so you can switch between them. Nothing account-related is written inside your project.
 
 **Network:** the handoff flow makes **no network calls at all**. The only requests the extension ever makes are from the optional accounts panel, and only to the providers’ own endpoints — Anthropic and OpenAI sign-in, token refresh, and usage/quota. Your credentials go to the service that issued them and nowhere else. There is **no telemetry** and no other server involved.
+
+Provider HTTP calls have a 20-second timeout and support cancellation. Provider response bodies are
+not copied into error messages. The Claude loopback callback requires exact PKCE state and expires;
+the login panel clears submitted secrets, discards hidden DOM state, bounds process output, and
+removes provisional accounts after failed or cancelled attempts.
 
 **Credentials stay on your machine.** They are read from and written to local files only. The extension bundles no analytics and phones no home.
 

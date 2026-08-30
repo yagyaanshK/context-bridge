@@ -240,10 +240,18 @@ about it — rather than degrade silently when they change.
 Invariants for both:
 
 - secrets are passed on stdin, never argv, so they never appear in a process listing
+- provider HTTP calls have a 20-second default timeout and accept caller cancellation
+- provider error response bodies are never copied into user-facing errors
 - credentials are written `0600` (best-effort; Windows ignores POSIX modes)
 - an existing login at `~/.codex` or `~/.claude` is never touched by adding an account
+- failed or cancelled new-account attempts remove their provisional registry row and managed directory
 - switching backs up what it replaces, and is undoable
 - validation happens before any write, so a rejected paste cannot damage a working login
+
+The Claude browser callback binds and advertises `127.0.0.1`, accepts only `GET /callback`, requires
+the exact PKCE state, and closes on success, rejection, cancellation, or a five-minute timeout. The
+login webview retains no DOM while hidden, clears secret fields as they are submitted, serializes
+operations, and bounds captured child-process output.
 
 ### Switching
 
@@ -263,9 +271,11 @@ why the notification after a switch offers **Reload Window**.
 One cache path and one staleness policy for both providers, so they cannot drift apart:
 
 - readings are cached five minutes per account; `force` overrides, `offline` never touches the network
+- manual refresh cancellation propagates to the in-flight provider request
 - a cached reading with **zero windows** never satisfies a read — that is a parse miss, not a fact,
   and would otherwise survive the upgrade that fixed it
 - a failed refresh keeps the previous reading with its age, rather than blanking the display
+- the Raw Response command makes one request and normalizes that same payload instead of polling twice
 - the headline number is the account's **tightest** window, because that is the one that stops you
 - `resumesAt()` answers "when does this start working again", which is deliberately not the next
   reset: a window with room can reset sooner than the one blocking you, and several exhausted

@@ -101,6 +101,16 @@ test('a reused or revoked refresh token asks for a fresh sign-in, not a retry', 
   );
 });
 
+test('Codex OAuth errors never expose provider response details', async () => {
+  const secret = 'sk-provider-secret-that-must-not-leak';
+  await assert.rejects(
+    refreshCodexToken('rt.old', {
+      fetch: errFetch(500, { error: 'server_error', error_description: secret, diagnostic: secret })
+    }),
+    (error) => /server_error/.test(error.message) && !error.message.includes(secret)
+  );
+});
+
 test('a fresh token is used as-is, with no refresh call', async () => {
   const options = await sandbox();
   const account = await createAccount({ label: 'Fresh', provider: 'codex' }, options);
