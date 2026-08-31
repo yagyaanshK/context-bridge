@@ -92,7 +92,7 @@ const EXPIRY_PATTERN = /expires in (\d+)\s*(minute|hour|second)s?/i;
 export function parseCodexLoginOutput(text) {
   const output = stripAnsi(text);
   const urls = output.match(URL_PATTERN) || [];
-  const cleaned = urls.map((url) => url.replace(/[.,;:]+$/, ''));
+  const cleaned = urls.map(trimUrlPunctuation);
 
   // The authorize URL is the one to send the user to. A local callback server
   // address is printed too and must never be mistaken for it.
@@ -116,6 +116,12 @@ export function parseCodexLoginOutput(text) {
     waitingForBrowser: /navigate to this URL|did not open|Starting local login server/i.test(output),
     alreadyLoggedIn: /already logged in|already authenticated/i.test(output)
   };
+}
+
+function trimUrlPunctuation(value) {
+  let end = value.length;
+  while (end > 0 && '.,;:'.includes(value[end - 1])) end--;
+  return value.slice(0, end);
 }
 
 export function isLoopback(url) {
