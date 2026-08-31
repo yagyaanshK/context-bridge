@@ -233,7 +233,23 @@ function manifestFile(root) {
 }
 
 function safeIdPart(value) {
-  return String(value || 'unknown').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24) || 'unknown';
+  let result = '';
+  for (const character of String(value || 'unknown')) {
+    const code = character.charCodeAt(0);
+    const allowed =
+      (code >= 48 && code <= 57) ||
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      character === '.' ||
+      character === '_' ||
+      character === '-';
+    if (allowed) result += character;
+    else if (result && !result.endsWith('-')) result += '-';
+    if (result.length >= 24) break;
+  }
+  while (result.startsWith('-')) result = result.slice(1);
+  while (result.endsWith('-')) result = result.slice(0, -1);
+  return result || 'unknown';
 }
 
 function positiveLimit(value, fallback) {

@@ -168,3 +168,25 @@ test('standalone sanitizer redacts credential assignments without damaging ordin
   assert.match(result.content, /secretariat is ready/);
   assert.ok(result.stats.secrets >= 1);
 });
+
+test('private-key redaction is linear, case-insensitive, and fails closed on an incomplete block', () => {
+  const input = [
+    'before straße',
+    '-----BEGIN RSA PRIVATE KEY-----',
+    'first-private-material',
+    '-----END RSA PRIVATE KEY-----',
+    'between',
+    '-----begin private key-----',
+    'second-private-material',
+    '-----end private key-----',
+    'after',
+    '-----BEGIN OPENSSH PRIVATE KEY-----',
+    'unterminated-private-material'
+  ].join('\n');
+
+  const result = sanitizeContentForHandoff(input);
+  assert.equal(result.content.includes('first-private-material'), false);
+  assert.equal(result.content.includes('second-private-material'), false);
+  assert.equal(result.content.includes('unterminated-private-material'), false);
+  assert.equal(result.content.match(/\[REDACTED PRIVATE KEY\]/g)?.length, 3);
+});

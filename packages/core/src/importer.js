@@ -30,15 +30,21 @@ export async function importTranscript(root, sourcePath, options = {}) {
       options
     );
   } else {
-    const stat = await fs.stat(absoluteSource);
-    const maxBytes = positiveLimit(options.maxNonJsonlImportBytes, DEFAULT_MAX_NON_JSONL_IMPORT_BYTES);
-    if (stat.size > maxBytes) {
-      throw new Error(
-        `Import file is ${stat.size} bytes, above the ${maxBytes}-byte safety limit for ${extension || 'text'} files. ` +
-          'Convert it to JSONL for streaming or raise maxNonJsonlImportBytes deliberately.'
-      );
+    const handle = await fs.open(absoluteSource, 'r');
+    let text;
+    try {
+      const stat = await handle.stat();
+      const maxBytes = positiveLimit(options.maxNonJsonlImportBytes, DEFAULT_MAX_NON_JSONL_IMPORT_BYTES);
+      if (stat.size > maxBytes) {
+        throw new Error(
+          `Import file is ${stat.size} bytes, above the ${maxBytes}-byte safety limit for ${extension || 'text'} files. ` +
+            'Convert it to JSONL for streaming or raise maxNonJsonlImportBytes deliberately.'
+        );
+      }
+      text = await handle.readFile('utf8');
+    } finally {
+      await handle.close();
     }
-    const text = await fs.readFile(absoluteSource, 'utf8');
     for (const raw of parseTranscript(text, extension)) {
       const turn = createTurn(raw, defaults);
       if (turn.content.trim()) collector.push(turn);

@@ -161,6 +161,7 @@ export async function writeCodexTokens(home, tokens, options = {}) {
     },
     last_refresh: new Date().toISOString()
   };
+  validateCodexCredentialPayload(merged);
   await fs.writeFile(file, `${JSON.stringify(merged, null, 2)}
 `, { encoding: 'utf8', mode: 0o600 });
   try {

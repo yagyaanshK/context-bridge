@@ -5,8 +5,11 @@ const path = require('node:path');
 const { allowedLoginUrl, appendBoundedOutput, safeAgentCommand, safeClaudeUri } = require('../src/security.cjs');
 
 test('login links are HTTPS URLs on provider-owned hosts', () => {
-  assert.match(allowedLoginUrl('https://auth.openai.com/codex/device'), /^https:\/\/auth\.openai\.com/);
-  assert.match(allowedLoginUrl('https://claude.ai/oauth/authorize?state=abc'), /^https:\/\/claude\.ai/);
+  assert.equal(allowedLoginUrl('https://auth.openai.com/codex/device'), 'https://auth.openai.com/codex/device');
+  assert.equal(
+    allowedLoginUrl('https://claude.ai/oauth/authorize?state=abc'),
+    'https://claude.ai/oauth/authorize?state=abc'
+  );
   assert.equal(allowedLoginUrl('http://auth.openai.com/codex/device'), undefined);
   assert.equal(allowedLoginUrl('https://auth.openai.com.evil.example/codex/device'), undefined);
   assert.equal(allowedLoginUrl('file:///tmp/credential'), undefined);

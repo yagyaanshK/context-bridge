@@ -67,7 +67,9 @@ export function redactSecrets(content) {
     });
   };
 
-  replace(/-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/gi, '[REDACTED PRIVATE KEY]');
+  const privateKeys = redactPrivateKeyBlocks(text);
+  text = privateKeys.content;
+  count += privateKeys.count;
   replace(/\b(Authorization\s*:\s*)(Bearer|Basic)\s+[^\s"']+/gi, (_match, prefix, scheme) => `${prefix}${scheme} [REDACTED]`);
   replace(/\b(https?:\/\/[^\s/@:]+:)[^\s/@]+@/gi, (_match, prefix) => `${prefix}[REDACTED]@`);
   replace(
@@ -82,6 +84,59 @@ export function redactSecrets(content) {
   replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED JWT]');
 
   return { content: text, count };
+}
+
+function redactPrivateKeyBlocks(text) {
+  const labels = ['PRIVATE KEY', 'RSA PRIVATE KEY', 'EC PRIVATE KEY', 'OPENSSH PRIVATE KEY', 'DSA PRIVATE KEY'];
+  let cursor = 0;
+  let content = '';
+  let count = 0;
+
+  while (cursor < text.length) {
+    let start = -1;
+    let label;
+    for (const candidate of labels) {
+      const found = indexOfAsciiCaseInsensitive(text, `-----BEGIN ${candidate}-----`, cursor);
+      if (found !== -1 && (start === -1 || found < start)) {
+        start = found;
+        label = candidate;
+      }
+    }
+    if (start === -1) break;
+
+    const endMarker = `-----END ${label}-----`;
+    const end = indexOfAsciiCaseInsensitive(text, endMarker, start + label.length + 16);
+    if (end === -1) {
+      content += `${text.slice(cursor, start)}[REDACTED PRIVATE KEY]`;
+      cursor = text.length;
+      count++;
+      break;
+    }
+    content += `${text.slice(cursor, start)}[REDACTED PRIVATE KEY]`;
+    cursor = end + endMarker.length;
+    count++;
+  }
+
+  return { content: content + text.slice(cursor), count };
+}
+
+function indexOfAsciiCaseInsensitive(text, needle, from) {
+  const lastStart = text.length - needle.length;
+  for (let start = from; start <= lastStart; start++) {
+    let matched = true;
+    for (let offset = 0; offset < needle.length; offset++) {
+      if (asciiFold(text.charCodeAt(start + offset)) !== asciiFold(needle.charCodeAt(offset))) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) return start;
+  }
+  return -1;
+}
+
+function asciiFold(code) {
+  return code >= 65 && code <= 90 ? code + 32 : code;
 }
 
 function looksLikeBase64(value) {

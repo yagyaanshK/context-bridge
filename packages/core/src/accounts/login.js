@@ -33,7 +33,7 @@ export function codexLoginArgs(mode) {
 // pick up the trailing reset sequence and break. Strip escapes before anything
 // else looks at the text.
 // eslint-disable-next-line no-control-regex
-const ANSI_PATTERN = new RegExp('\u001B\[[0-9;?]*[ -/]*[@-~]|\u001B\][^\u0007]*\u0007', 'g');
+const ANSI_PATTERN = /\u001B\[[0-9;?]*[ -/]*[@-~]|\u001B\][^\u0007]*\u0007/g;
 
 export function stripAnsi(text) {
   return String(text || '')
