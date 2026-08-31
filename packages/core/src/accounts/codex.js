@@ -4,6 +4,7 @@ import path from 'node:path';
 import { ensureDir, pathExists, readJson } from '../fs-utils.js';
 import { accountDir, listAccounts, updateAccount } from './store.js';
 import { refreshCodexToken } from './codex-oauth.js';
+import { validateCodexCredentialPayload } from './provider-contracts.js';
 import { assertAgentStopped } from './processes.js';
 
 export const CODEX_PROVIDER = 'codex';
@@ -49,6 +50,7 @@ export async function readCodexAuth(home) {
   } catch (error) {
     throw new Error(`Could not parse ${file}: ${error.message}`);
   }
+  validateCodexCredentialPayload(raw);
 
   const tokens = raw.tokens || {};
   return {
@@ -74,6 +76,10 @@ export async function importCodexAuth(accountId, sourceHome, options = {}) {
   const source = codexAuthPath(sourceHome);
   if (!(await pathExists(source))) {
     throw new Error(`No Codex login found at ${source}. Run \`codex login\` first, or pick another directory.`);
+  }
+  const sourceAuth = await readCodexAuth(sourceHome);
+  if (!sourceAuth?.accessToken && !sourceAuth?.apiKey) {
+    throw new Error(`The Codex credential at ${source} has no usable login.`);
   }
   const target = codexHome(accountId, options);
   await ensureDir(target);
@@ -115,9 +121,9 @@ export function codexAccessTokenExpiry(accessToken) {
 // and the server would revoke the pair. So the active account is left alone; the
 // live tooling keeps it fresh, and only genuinely idle accounts are renewed here.
 export async function isActiveCodexAccount(accountId, options = {}) {
-  const live = await readCodexAuth(defaultCodexHome(options)).catch(() => null);
+  const live = await readCodexAuth(defaultCodexHome(options));
   if (!live?.refreshToken && !live?.accessToken && !live?.apiKey) return false;
-  const auth = await readCodexAuth(codexHome(accountId, options)).catch(() => null);
+  const auth = await readCodexAuth(codexHome(accountId, options));
   return sameCodexIdentity(live, auth);
 }
 
@@ -174,7 +180,7 @@ export async function writeCodexTokens(home, tokens, options = {}) {
 // revoke it. That account stays fresh through normal Codex use instead.
 export async function ensureCodexAccessToken(accountId, options = {}) {
   const home = codexHome(accountId, options);
-  const auth = await readCodexAuth(home).catch(() => null);
+  const auth = await readCodexAuth(home);
   if (!auth?.accessToken) return auth;
 
   const expiresAt = codexAccessTokenExpiry(auth.accessToken);
@@ -207,7 +213,7 @@ export async function activateCodexAccount(accountId, options = {}) {
   const targetAuth = codexAuthPath(target);
 
   const accounts = await listAccounts({ ...options, provider: CODEX_PROVIDER });
-  const outgoing = await activeCodexAccountId(accounts, options).catch(() => undefined);
+  const outgoing = await activeCodexAccountId(accounts, options);
   if (outgoing === accountId) {
     await updateAccount(accountId, { lastUsedAt: new Date().toISOString() }, options);
     return { target: targetAuth, alreadyActive: true };
@@ -320,7 +326,7 @@ export async function importCodexAuthText(accountId, text, options = {}) {
 // subscription without asking. Returns null when no credential was written,
 // which is how a cancelled or failed login is detected.
 export async function refreshCodexAccountIdentity(accountId, options = {}) {
-  const auth = await readCodexAuth(codexHome(accountId, options)).catch(() => null);
+  const auth = await readCodexAuth(codexHome(accountId, options));
   if (!auth?.accessToken) return null;
   await updateAccount(
     accountId,
@@ -341,7 +347,7 @@ export async function activeCodexAccountId(accounts, options = {}) {
   if (!current) return undefined;
 
   for (const account of accounts) {
-    const auth = await readCodexAuth(codexHome(account.id, options)).catch(() => null);
+    const auth = await readCodexAuth(codexHome(account.id, options));
     if (sameCodexIdentity(current, auth)) return account.id;
   }
   return undefined;

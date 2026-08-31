@@ -405,7 +405,10 @@ test('usage request carries the account header and bearer token', async () => {
   await fetchCodexUsage(auth, {
     fetch: async (url, init) => {
       seen = { url, init };
-      return { ok: true, json: async () => ({ rate_limits: {} }) };
+      return {
+        ok: true,
+        json: async () => ({ rate_limits: { primary: { used_percent: 1, limit_window_seconds: 18000 } } })
+      };
     }
   });
 

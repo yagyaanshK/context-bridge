@@ -43,6 +43,11 @@ If you are adding a provider, prefer delegating sign-in to its official CLI. Per
 exchange in Context Bridge is a last resort, taken for Claude only because its CLI cannot be driven
 non-interactively, and it must be documented where users will see it.
 
+Provider endpoints and credential layouts are observed private contracts. Follow
+[docs/PROVIDER_CONTRACTS.md](docs/PROVIDER_CONTRACTS.md): keep assumptions centralized, increment the
+provider contract version when a shape changes, validate successful responses, and use sanitized synthetic
+fixtures rather than live credentials.
+
 ## Adapter Rules
 
 Adapters should normalize into the shared turn schema and preserve original content. If a source format is lossy or uncertain, store the raw import as an attachment and mark the normalized turns with metadata.

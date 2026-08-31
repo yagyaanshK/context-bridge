@@ -264,7 +264,10 @@ async function importAccount(item) {
       ? await api.importClaudeAuth(account.id, source)
       : await api.importCodexAuth(account.id, source);
     // A Claude credential carries no email; ask the API who it belongs to.
-    if (claude) auth = (await api.backfillClaudeProfile(account.id).catch(() => auth)) || auth;
+    if (claude) auth = (await api.backfillClaudeProfile(account.id).catch((error) => {
+      if (error?.code === 'PROVIDER_CONTRACT_CHANGED') throw error;
+      return auth;
+    })) || auth;
 
     await accountsProvider.reloadUsage({ force: true });
     vscode.window.showInformationMessage(

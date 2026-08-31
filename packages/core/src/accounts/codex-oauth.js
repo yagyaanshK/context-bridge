@@ -1,4 +1,5 @@
 import { providerFetch } from './http.js';
+import { PROVIDER_CONTRACTS, validateTokenPayload } from './provider-contracts.js';
 
 // Renewing a Codex login without the browser.
 //
@@ -16,11 +17,11 @@ import { providerFetch } from './http.js';
 // using, and writes the rotated token straight back so the next refresh has the
 // current one to present.
 
-export const CODEX_TOKEN_URL = 'https://auth.openai.com/oauth/token';
+export const CODEX_TOKEN_URL = PROVIDER_CONTRACTS.codex.oauth.tokenUrl;
 
 // The public client id the Codex CLI itself uses. Verified against the `aud` of
 // a real id_token and the `client_id` of a real access token on this machine.
-export const CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
+export const CODEX_CLIENT_ID = PROVIDER_CONTRACTS.codex.oauth.clientId;
 
 export async function refreshCodexToken(refreshToken, options = {}) {
   if (!refreshToken) {
@@ -49,9 +50,7 @@ export async function refreshCodexToken(refreshToken, options = {}) {
   if (!response.ok) {
     throw new Error(codexOauthError(payload, response.status, text));
   }
-  if (!payload?.access_token) {
-    throw new Error('The token endpoint returned no access token.');
-  }
+  validateTokenPayload('codex', payload);
 
   return {
     accessToken: payload.access_token,
@@ -59,8 +58,7 @@ export async function refreshCodexToken(refreshToken, options = {}) {
     // not, the one we sent is still current and must be kept, not dropped.
     refreshToken: payload.refresh_token || refreshToken,
     idToken: payload.id_token,
-    expiresIn: payload.expires_in,
-    raw: payload
+    expiresIn: payload.expires_in
   };
 }
 

@@ -5,9 +5,14 @@ import { ensureCodexAccessToken } from './codex.js';
 import { ensureClaudeAccessToken } from './claude.js';
 import { claudeApiHeaders } from './claude-oauth.js';
 import { providerFetch } from './http.js';
+import {
+  ProviderContractError,
+  PROVIDER_CONTRACTS,
+  validateUsagePayload
+} from './provider-contracts.js';
 
-export const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
-export const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
+export const CODEX_USAGE_URL = PROVIDER_CONTRACTS.codex.usage.url;
+export const CLAUDE_USAGE_URL = PROVIDER_CONTRACTS.claude.usage.url;
 
 // Poll slowly and cache. Provider usage endpoints are rate limited in their own
 // right, and a panel that refreshes on every render is how monitoring tools end
@@ -122,7 +127,9 @@ export async function fetchClaudeUsage(auth, options = {}) {
     throw new Error(`Usage request failed: ${response.status} ${response.statusText || ''}`.trim());
   }
 
-  return { ...normalizeClaudeUsage(await response.json()), plan: auth.plan, email: auth.email };
+  const payload = await readUsageJson(response, 'claude');
+  const usage = validateUsagePayload('claude', payload, normalizeClaudeUsage(payload));
+  return { ...usage, plan: auth.plan, email: auth.email };
 }
 
 // Claude's usage payload has a known shape, so it is read directly rather than
@@ -226,7 +233,16 @@ export async function fetchCodexUsage(auth, options = {}) {
     throw new Error(`Usage request failed: ${response.status} ${response.statusText || ''}`.trim());
   }
 
-  return normalizeCodexUsage(await response.json());
+  const payload = await readUsageJson(response, 'codex');
+  return validateUsagePayload('codex', payload, normalizeCodexUsage(payload));
+}
+
+async function readUsageJson(response, provider) {
+  try {
+    return await response.json();
+  } catch {
+    throw new ProviderContractError(provider, 'usage response');
+  }
 }
 
 const USED_PERCENT_KEYS = ['used_percent', 'usedPercent', 'percent_used', 'percentUsed'];

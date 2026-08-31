@@ -12,6 +12,13 @@ Generated handoff Markdown applies deterministic redaction to common credential 
 
 Account and session identifiers are restricted to safe filename segments. Manifest paths are resolved and verified inside their expected ledger directory before being read. Registry and manifest updates use atomic replacement plus a bounded cross-process lock so concurrent editor windows cannot silently discard each other's updates.
 
+## Provider compatibility
+
+The optional account panel depends on observed private provider interfaces. Successful token, profile,
+credential, and quota payloads are validated before use; incompatible shapes produce a redacted, versioned
+compatibility error instead of being accepted or cached. See [Provider Contracts](PROVIDER_CONTRACTS.md) for
+the contract inventory, failure behavior, and maintenance procedure.
+
 ## Untrusted metadata
 
 Transcript content is intentionally passed to the receiving agent as historical conversation. Paths, branch names, session labels, media references, and other metadata are separately flattened and escaped so they cannot add Markdown sections or close a fenced block. Handoffs explicitly tell the receiving agent to treat metadata as data, never instructions.

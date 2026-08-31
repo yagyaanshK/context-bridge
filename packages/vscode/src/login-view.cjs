@@ -224,7 +224,10 @@ class LoginPanel {
     // A pasted Claude credential carries no identity - the email lives in a
     // different file - so ask the API who it belongs to rather than showing an
     // unlabelled card.
-    if (claude) auth = (await backfillClaudeProfile(accountId, { signal }).catch(() => auth)) || auth;
+    if (claude) auth = (await backfillClaudeProfile(accountId, { signal }).catch((error) => {
+      if (error?.code === 'PROVIDER_CONTRACT_CHANGED') throw error;
+      return auth;
+    })) || auth;
 
     await this.store.reloadUsage({ force: true, signal });
     this.commitProvisional();
@@ -276,7 +279,10 @@ class LoginPanel {
 
     let auth = await importClaudeAuth(accountId, defaultClaudeHome());
     if (!auth) throw new Error('That directory has a credential file but no access token in it.');
-    auth = (await backfillClaudeProfile(accountId, { signal }).catch(() => auth)) || auth;
+    auth = (await backfillClaudeProfile(accountId, { signal }).catch((error) => {
+      if (error?.code === 'PROVIDER_CONTRACT_CHANGED') throw error;
+      return auth;
+    })) || auth;
 
     await this.store.reloadUsage({ force: true, signal });
     this.commitProvisional();
@@ -365,8 +371,12 @@ class LoginPanel {
 
     const tokens = await exchangeClaudeCode({ ...exchange, signal });
     // The token response says nothing about the person, so the card would be
-    // unlabelled without this. A profile failure is not fatal: the login works.
-    const profile = await fetchClaudeProfile(tokens.accessToken, { signal }).catch(() => undefined);
+    // unlabelled without this. A network failure is not fatal, but accepting a
+    // provider shape we no longer understand would write uncertain identity.
+    const profile = await fetchClaudeProfile(tokens.accessToken, { signal }).catch((error) => {
+      if (error?.code === 'PROVIDER_CONTRACT_CHANGED') throw error;
+      return undefined;
+    });
     const auth = await writeClaudeCredential(accountId, tokens, profile);
 
     await this.store.reloadUsage({ force: true, signal });

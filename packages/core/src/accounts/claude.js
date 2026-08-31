@@ -4,6 +4,7 @@ import path from 'node:path';
 import { ensureDir, pathExists, readJson, writeJson } from '../fs-utils.js';
 import { accountDir, listAccounts, updateAccount } from './store.js';
 import { fetchClaudeProfile, refreshClaudeToken } from './claude-oauth.js';
+import { isProviderContractError, validateClaudeCredentialPayload } from './provider-contracts.js';
 import { assertAgentStopped } from './processes.js';
 
 export const CLAUDE_PROVIDER = 'claude';
@@ -63,6 +64,7 @@ export async function readClaudeAuth(home, options = {}) {
   } catch (error) {
     throw new Error(`Could not parse ${file}: ${error.message}`);
   }
+  validateClaudeCredentialPayload(raw);
 
   const oauth = raw.claudeAiOauth || {};
   const profile = await readClaudeProfile(home, options);
@@ -105,7 +107,7 @@ function claudePlan(oauth, profile) {
 }
 
 export async function isClaudeSignedIn(accountId, options = {}) {
-  const auth = await readClaudeAuth(claudeHome(accountId, options), options).catch(() => null);
+  const auth = await readClaudeAuth(claudeHome(accountId, options), options);
   return Boolean(auth?.accessToken);
 }
 
@@ -115,6 +117,8 @@ export async function importClaudeAuth(accountId, sourceHome, options = {}) {
   if (!(await pathExists(source))) {
     throw new Error(`No Claude login found at ${source}. Run \`claude\` and sign in first, or pick another directory.`);
   }
+  const sourceAuth = await readClaudeAuth(sourceHome, options);
+  if (!sourceAuth?.accessToken) throw new Error(`The Claude credential at ${source} has no usable login.`);
 
   const target = await ensureClaudeHome(accountId, options);
   await copyCredential(source, claudeCredentialsPath(target));
@@ -237,18 +241,18 @@ function claudeConfigBackupPath(config) {
 // Which registered account the official Claude tooling is using. Tokens rotate,
 // so profile identity is the fallback after direct token matches.
 export async function activeClaudeAccountId(accounts, options = {}) {
-  const current = await readClaudeAuth(defaultClaudeHome(options), options).catch(() => null);
+  const current = await readClaudeAuth(defaultClaudeHome(options), options);
   if (!current) return undefined;
 
   for (const account of accounts) {
-    const auth = await readClaudeAuth(claudeHome(account.id, options), options).catch(() => null);
+    const auth = await readClaudeAuth(claudeHome(account.id, options), options);
     if (sameClaudeIdentity(current, auth)) return account.id;
   }
   return undefined;
 }
 
 export async function refreshClaudeAccountIdentity(accountId, options = {}) {
-  const auth = await readClaudeAuth(claudeHome(accountId, options), options).catch(() => null);
+  const auth = await readClaudeAuth(claudeHome(accountId, options), options);
   if (!auth?.accessToken) return null;
   await updateAccount(
     accountId,
@@ -383,9 +387,9 @@ const EXPIRY_SKEW_MS = 60 * 1000;
 // "invalid_grant". Tokens drift precisely in that case, so the match falls back
 // to identity - email and organization, which do not rotate.
 export async function isActiveClaudeAccount(accountId, options = {}) {
-  const live = await readClaudeAuth(defaultClaudeHome(options), options).catch(() => null);
+  const live = await readClaudeAuth(defaultClaudeHome(options), options);
   if (!live?.accessToken && !live?.refreshToken) return false;
-  const auth = await readClaudeAuth(claudeHome(accountId, options), options).catch(() => null);
+  const auth = await readClaudeAuth(claudeHome(accountId, options), options);
   return sameClaudeIdentity(live, auth);
 }
 
@@ -408,7 +412,7 @@ function sameClaudeIdentity(left, right) {
 // and a stale token means the panel can never show that subscription's quota,
 // which is most of the point of listing it. So Context Bridge renews them.
 export async function ensureClaudeAccessToken(accountId, options = {}) {
-  const auth = await readClaudeAuth(claudeHome(accountId, options), options).catch(() => null);
+  const auth = await readClaudeAuth(claudeHome(accountId, options), options);
   if (!auth?.accessToken) return null;
 
   // For the active account, read the credential the official client keeps fresh
@@ -416,7 +420,7 @@ export async function ensureClaudeAccessToken(accountId, options = {}) {
   // would race Claude Code for the rotating refresh token and leave one side
   // holding a dead one - the cause of "invalid_grant" on the account in use.
   if (!options.offline && !options.allowActiveRefresh && (await isActiveClaudeAccount(accountId, options))) {
-    const live = await readClaudeAuth(defaultClaudeHome(options), options).catch(() => null);
+    const live = await readClaudeAuth(defaultClaudeHome(options), options);
     if (live?.accessToken) return live;
   }
 
@@ -445,7 +449,12 @@ export async function backfillClaudeProfile(accountId, options = {}) {
   if (!auth?.accessToken) return null;
   if (auth.email) return auth;
 
-  const profile = await fetchClaudeProfile(auth.accessToken, options).catch(() => undefined);
+  let profile;
+  try {
+    profile = await fetchClaudeProfile(auth.accessToken, options);
+  } catch (error) {
+    if (isProviderContractError(error)) throw error;
+  }
   if (!profile) return auth;
   await writeClaudeProfile(claudeConfigPath(claudeHome(accountId, options), options), claudeProfileRecord(profile));
   return refreshClaudeAccountIdentity(accountId, options);

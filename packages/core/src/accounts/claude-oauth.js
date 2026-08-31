@@ -1,6 +1,12 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
 import { providerFetch } from './http.js';
+import {
+  ProviderContractError,
+  PROVIDER_CONTRACTS,
+  validateClaudeProfilePayload,
+  validateTokenPayload
+} from './provider-contracts.js';
 
 // The Claude Code sign-in flow, performed by Context Bridge.
 //
@@ -23,14 +29,14 @@ import { providerFetch } from './http.js';
 // body shape with a well-formed OAuth error, and /api/oauth/profile reports
 // `application.uuid` equal to the client id below, named "Claude Code".
 
-export const CLAUDE_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
+export const CLAUDE_CLIENT_ID = PROVIDER_CONTRACTS.claude.oauth.clientId;
 
 // claude.ai signs in Pro/Max/Team subscriptions; platform.claude.com signs in
 // Console (API-billed) accounts. The CLI offers both, and so do we.
-export const CLAUDE_AUTHORIZE_URL = 'https://claude.ai/oauth/authorize';
-export const CLAUDE_CONSOLE_AUTHORIZE_URL = 'https://platform.claude.com/oauth/authorize';
-export const CLAUDE_TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token';
-export const CLAUDE_PROFILE_URL = 'https://api.anthropic.com/api/oauth/profile';
+export const CLAUDE_AUTHORIZE_URL = PROVIDER_CONTRACTS.claude.oauth.authorizeUrl;
+export const CLAUDE_CONSOLE_AUTHORIZE_URL = PROVIDER_CONTRACTS.claude.oauth.consoleAuthorizeUrl;
+export const CLAUDE_TOKEN_URL = PROVIDER_CONTRACTS.claude.oauth.tokenUrl;
+export const CLAUDE_PROFILE_URL = PROVIDER_CONTRACTS.claude.oauth.profileUrl;
 
 // Used by the paste-a-code flow: the authorization lands on a page that simply
 // displays the code, so no local port and no browser on this machine are needed.
@@ -149,9 +155,7 @@ async function postToken(body, options = {}) {
   if (!response.ok) {
     throw new Error(oauthErrorMessage(payload, response.status, text, options.grant));
   }
-  if (!payload?.access_token) {
-    throw new Error('The token endpoint returned no access token.');
-  }
+  validateTokenPayload('claude', payload);
   return normalizeTokens(payload);
 }
 
@@ -208,7 +212,13 @@ export async function fetchClaudeProfile(accessToken, options = {}) {
     headers: claudeApiHeaders(accessToken, options)
   }, options);
   if (!response.ok) throw new Error(`Profile request failed: ${response.status}`);
-  return normalizeClaudeProfile(await response.json());
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new ProviderContractError('claude', 'profile response');
+  }
+  return normalizeClaudeProfile(validateClaudeProfilePayload(payload));
 }
 
 // Claude Code records identity in its config under `oauthAccount`. Writing the

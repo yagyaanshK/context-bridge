@@ -48,6 +48,16 @@ export {
 export { createTurn, normalizeProvider, normalizeRole, normalizeSurface } from './schema.js';
 export { DEFAULT_PROVIDER_TIMEOUT_MS, providerFetch } from './accounts/http.js';
 export {
+  isProviderContractError,
+  ProviderContractError,
+  PROVIDER_CONTRACTS,
+  validateClaudeCredentialPayload,
+  validateClaudeProfilePayload,
+  validateCodexCredentialPayload,
+  validateTokenPayload,
+  validateUsagePayload
+} from './accounts/provider-contracts.js';
+export {
   accountDir,
   accountsRoot,
   createAccount,
@@ -149,5 +159,6 @@ export {
   CLAUDE_MANUAL_REDIRECT_URI,
   CLAUDE_OAUTH_MODES,
   CLAUDE_SCOPES,
+  CLAUDE_PROFILE_URL,
   CLAUDE_TOKEN_URL
 } from './accounts/claude-oauth.js';
