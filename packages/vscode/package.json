@@ -10,6 +10,12 @@
   "engines": {
     "vscode": "^1.95.0"
   },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Context Bridge reads local agent transcripts and Git workspace state, and can launch provider tools. Trust this workspace before using it."
+    }
+  },
   "categories": [
     "AI",
     "Other"

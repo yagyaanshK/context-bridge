@@ -8,10 +8,15 @@ Context Bridge should remain easy to inspect, easy to run locally, and conservat
 npm ci
 npm test
 npm run lint
+npm run test:vscode-integration
 ```
 
 `npm run lint` also verifies that every workspace and lockfile version agrees, internal core
 dependencies point at that same version, and generated VSIX files are not tracked.
+
+The integration command downloads the minimum supported VS Code release into `.vscode-test/` and
+runs isolated Extension Development Host scenarios. It does not read the developer's real provider
+homes, editor profile, extensions, or Context Bridge account store.
 
 The current implementation uses Node.js built-ins where possible. Add dependencies only when they remove meaningful complexity.
 

@@ -11,6 +11,7 @@
   ],
   "scripts": {
     "test": "node --test packages/core/test/*.test.js packages/cli/test/*.test.js packages/vscode/test/*.test.cjs",
+    "test:vscode-integration": "node scripts/test-vscode-integration.mjs",
     "lint": "node scripts/check-syntax.mjs && node scripts/check-webview-scripts.mjs && node scripts/check-packages.mjs",
     "check:packages": "node scripts/check-packages.mjs",
     "package:vscode": "node scripts/package-vscode.mjs"
@@ -20,6 +21,7 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.9.2"
   }
 }

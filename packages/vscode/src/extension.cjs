@@ -6,14 +6,16 @@ const { readRawUsage } = require('./raw-usage.cjs');
 const { AccountsStore, AccountsWebview } = require('./accounts-view.cjs');
 const { handoffForRoot } = require('./handoff-state.cjs');
 const { LoginPanel } = require('./login-view.cjs');
+const { runWithCancellation } = require('./progress.cjs');
 
 let accountsProvider;
 let accountStatus;
 let loginPanel;
+let accountsWebview;
 
 async function activateExtension(context) {
   accountsProvider = new AccountsStore(core);
-  const accountsWebview = new AccountsWebview(accountsProvider);
+  accountsWebview = new AccountsWebview(accountsProvider);
   loginPanel = new LoginPanel(context, core, accountsProvider);
 
   // The panel is only visible when its view is open, so the account in use also
@@ -881,13 +883,7 @@ async function withProgress(title, task) {
   return vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `Context Bridge: ${title}`, cancellable: true },
     async (progress, token) => {
-      const controller = new AbortController();
-      const disposable = token.onCancellationRequested(() => controller.abort());
-      try {
-        return await task({ progress, signal: controller.signal });
-      } finally {
-        disposable.dispose();
-      }
+      return runWithCancellation(token, task, progress);
     }
   );
 }
@@ -927,10 +923,31 @@ async function latestState(root) {
   return handoffForRoot(latest, activeRoot);
 }
 
-module.exports = {
-  activate(context) {
+const extensionApi = {
+  async activate(context) {
     extensionContext = context;
-    return activateExtension(context);
+    await activateExtension(context);
+    return process.env.CONTEXT_BRIDGE_EXTENSION_TESTS === '1' ? { __test: extensionApi.__test } : undefined;
   },
   deactivate
 };
+
+if (process.env.CONTEXT_BRIDGE_EXTENSION_TESTS === '1') {
+  extensionApi.__test = {
+    integrationState() {
+      return {
+        trusted: vscode.workspace.isTrusted,
+        uriScheme: vscode.env.uriScheme,
+        webviewResolved: Boolean(accountsWebview?.view),
+        webviewScripts: accountsWebview?.view?.webview?.options?.enableScripts === true,
+        webviewHtml: accountsWebview?.view?.webview?.html || ''
+      };
+    },
+    latestState,
+    rememberLatest,
+    runWithCancellation,
+    safeClaudeUri
+  };
+}
+
+module.exports = extensionApi;

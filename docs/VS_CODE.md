@@ -196,6 +196,21 @@ For normal use, package a VSIX:
 npm run package:vscode
 ```
 
+Run the real extension-host suite with:
+
+```bash
+npm run test:vscode-integration
+```
+
+The suite uses the minimum supported VS Code API version and isolated home, profile, extension, and
+workspace directories. It verifies command registration and execution, webview resolution and CSP,
+VS Code cancellation propagation, state isolation between workspace windows, Restricted Mode, and
+the editor URI schemes used by VS Code-compatible forks. Linux CI runs it under Xvfb.
+
+Context Bridge deliberately declares no support for untrusted workspaces. It reads local agent
+transcripts and Git workspace state and can launch provider tools, so VS Code keeps it inactive in
+Restricted Mode until the folder is trusted.
+
 This writes:
 
 ```text
