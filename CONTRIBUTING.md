@@ -5,10 +5,13 @@ Context Bridge should remain easy to inspect, easy to run locally, and conservat
 ## Development
 
 ```bash
-npm install
+npm ci
 npm test
 npm run lint
 ```
+
+`npm run lint` also verifies that every workspace and lockfile version agrees, internal core
+dependencies point at that same version, and generated VSIX files are not tracked.
 
 The current implementation uses Node.js built-ins where possible. Add dependencies only when they remove meaningful complexity.
 

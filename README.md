@@ -37,13 +37,18 @@ Run the CLI:
 node packages/cli/bin/context-bridge.js --help
 ```
 
-**VS Code extension:** build the VSIX and install it.
+**VS Code extension:** download the VSIX from the
+[latest GitHub release](https://github.com/yagyaanshK/context-bridge/releases/latest), or build it
+locally:
 
 ```bash
 npm run package:vscode
 ```
 
-Then in your editor run **“Extensions: Install from VSIX…”** and pick `dist/context-bridge-<version>.vsix` (currently `context-bridge-0.7.4.vsix`). This works in VS Code and compatible forks (Cursor, Windsurf, Google Antigravity).
+Then in your editor run **“Extensions: Install from VSIX…”** and pick
+`dist/context-bridge-<version>.vsix`. This works in VS Code and compatible forks (Cursor, Windsurf,
+Google Antigravity). Generated VSIX files are release artifacts and are not committed to the source
+tree.
 
 ---
 

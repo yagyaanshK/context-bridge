@@ -11,7 +11,8 @@
   ],
   "scripts": {
     "test": "node --test packages/core/test/*.test.js packages/cli/test/*.test.js packages/vscode/test/*.test.cjs",
-    "lint": "node scripts/check-syntax.mjs && node scripts/check-webview-scripts.mjs",
+    "lint": "node scripts/check-syntax.mjs && node scripts/check-webview-scripts.mjs && node scripts/check-packages.mjs",
+    "check:packages": "node scripts/check-packages.mjs",
     "package:vscode": "node scripts/package-vscode.mjs"
   },
   "engines": {

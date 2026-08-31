@@ -199,7 +199,7 @@ npm run package:vscode
 This writes:
 
 ```text
-dist/context-bridge-0.7.4.vsix
+dist/context-bridge-<version>.vsix
 ```
 
 Install it from the Extensions view:
@@ -207,7 +207,7 @@ Install it from the Extensions view:
 1. Open Extensions.
 2. Click the `...` menu.
 3. Choose `Install from VSIX...`.
-4. Select `dist/context-bridge-0.7.4.vsix`.
+4. Select `dist/context-bridge-<version>.vsix`.
 
 This is the best path before marketplace publication because it works like a normal extension install.
 
