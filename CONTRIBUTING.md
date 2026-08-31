@@ -51,3 +51,6 @@ Add deterministic handoff exporter
 Implement JSONL transcript importer
 Document local ledger format
 ```
+
+Maintainers should follow [docs/RELEASING.md](docs/RELEASING.md). Release binaries belong on the
+tagged GitHub release, not in Git.
