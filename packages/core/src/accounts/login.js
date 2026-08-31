@@ -32,15 +32,49 @@ export function codexLoginArgs(mode) {
 // device code never matches and the code becomes invisible to the parser. URLs
 // pick up the trailing reset sequence and break. Strip escapes before anything
 // else looks at the text.
-// eslint-disable-next-line no-control-regex
-const ANSI_PATTERN = /\u001B\[[0-9;?]*[ -/]*[@-~]|\u001B\][^\u0007]*\u0007/g;
-
 export function stripAnsi(text) {
-  return String(text || '')
-    .replace(ANSI_PATTERN, '')
+  const input = String(text || '');
+  let output = '';
+  let index = 0;
+
+  while (index < input.length) {
+    const code = input.charCodeAt(index);
+    if (code === 0x1b && input[index + 1] === '[') {
+      const end = ansiCsiEnd(input, index + 2);
+      if (end !== -1) {
+        index = end + 1;
+        continue;
+      }
+    }
+    if (code === 0x1b && input[index + 1] === ']') {
+      const end = ansiOscEnd(input, index + 2);
+      if (end !== -1) {
+        index = end;
+        continue;
+      }
+    }
     // Progress redraws use a bare carriage return; treat it as a line break so
     // rewritten lines stay separate rather than running together.
-    .replace(/\r(?!\n)/g, '\n');
+    output += code === 0x0d && input[index + 1] !== '\n' ? '\n' : input[index];
+    index++;
+  }
+  return output;
+}
+
+function ansiCsiEnd(input, start) {
+  let index = start;
+  while (index < input.length && input.charCodeAt(index) >= 0x30 && input.charCodeAt(index) <= 0x3f) index++;
+  while (index < input.length && input.charCodeAt(index) >= 0x20 && input.charCodeAt(index) <= 0x2f) index++;
+  const final = input.charCodeAt(index);
+  return final >= 0x40 && final <= 0x7e ? index : -1;
+}
+
+function ansiOscEnd(input, start) {
+  for (let index = start; index < input.length; index++) {
+    if (input.charCodeAt(index) === 0x07) return index + 1;
+    if (input.charCodeAt(index) === 0x1b && input[index + 1] === '\\') return index + 2;
+  }
+  return -1;
 }
 
 const URL_PATTERN = /https?:\/\/[^\s<>"'`)]+/g;
