@@ -13,6 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: marketplace
     steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
       - name: Sign in to Azure with GitHub OIDC
         uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
         with:
@@ -34,3 +38,5 @@ jobs:
           echo "## Marketplace publishing identity" >> "$GITHUB_STEP_SUMMARY"
           echo "Add this profile ID as a Contributor under the TurnTrail publisher's Members tab:" >> "$GITHUB_STEP_SUMMARY"
           echo "\`$profile_id\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify Marketplace authorization
+        run: npx --yes @vscode/vsce@3.9.2 verify-pat turntrail --azure-credential
