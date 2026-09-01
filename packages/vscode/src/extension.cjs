@@ -7,6 +7,12 @@ const { AccountsStore, AccountsWebview } = require('./accounts-view.cjs');
 const { handoffForRoot } = require('./handoff-state.cjs');
 const { LoginPanel } = require('./login-view.cjs');
 const { runWithCancellation } = require('./progress.cjs');
+const {
+  consumeSwitchResults,
+  createSwitchRequest,
+  editorRelaunch,
+  startSwitchHelper
+} = require('./switch-restart.cjs');
 
 let accountsProvider;
 let accountStatus;
@@ -62,6 +68,7 @@ async function activateExtension(context) {
   // opening a window never costs a call to the usage endpoint.
   accountsProvider.reloadUsage({ offline: true }).catch(() => {});
   publishHandoffState().catch(() => {});
+  startSwitchResultMonitor(context);
 }
 
 function deactivate() {}
@@ -89,10 +96,27 @@ async function switchAccount(item) {
   const account = await resolveAccount(item, { excludeActive: true });
   if (!account) return;
 
-  const { activateCodexAccount, activateClaudeAccount } = await core();
-  const activate = account.provider === 'claude' ? activateClaudeAccount : activateCodexAccount;
+  const api = await core();
+  const processes = await api.listAgentProcesses().catch((error) => {
+    vscode.window.showErrorMessage(`Turntrail: could not inspect running agent processes — ${error.message}`);
+    return undefined;
+  });
+  if (!processes) return;
+  const blockers = api.classifyAgentProcesses(account.provider, processes);
+  if (blockers.length > 0) {
+    await queueSwitchAfterEditorsClose(account, blockers);
+    return;
+  }
+
+  const activate = account.provider === 'claude' ? api.activateClaudeAccount : api.activateCodexAccount;
   const result = await activate(account.id).catch((error) => ({ error: error.message }));
   if (result?.error) {
+    const raced = await api.listAgentProcesses().catch(() => []);
+    const racedBlockers = api.classifyAgentProcesses(account.provider, raced);
+    if (racedBlockers.length > 0) {
+      await queueSwitchAfterEditorsClose(account, racedBlockers);
+      return;
+    }
     vscode.window.showErrorMessage(`Turntrail: could not switch to "${account.label}" — ${result.error}`);
     return;
   }
@@ -113,6 +137,94 @@ async function switchAccount(item) {
       if (choice === 'Reload Window') vscode.commands.executeCommand('workbench.action.reloadWindow');
       else if (choice === 'Undo') undoAccountSwitch({ provider: account.provider });
     });
+}
+
+async function queueSwitchAfterEditorsClose(account, blockers) {
+  const agent = agentName(account.provider);
+  const editors = [...new Set(blockers.map((item) => item.editor).filter(Boolean))];
+  const interactive = blockers.filter((item) => item.kind === 'interactive');
+  const locations = editors.length > 0 ? editors.join(', ') : 'an editor';
+  const detail = interactive.length > 0
+    ? `${interactive.length} interactive ${agent} process${interactive.length === 1 ? '' : 'es'} must also finish.`
+    : `Its background service is running in ${locations}.`;
+  const choice = await vscode.window.showWarningMessage(
+    `${agent} must stop before Turntrail can safely switch to "${account.label}". ${detail} ` +
+      'Turntrail can wait in the background, switch after every process exits, and reopen this workspace.',
+    { modal: true },
+    'Switch After Closing Editors'
+  );
+  if (choice !== 'Switch After Closing Editors') return;
+
+  const directory = switchResultsDirectory();
+  let queued;
+  try {
+    queued = await createSwitchRequest(directory, {
+      provider: account.provider,
+      accountId: account.id,
+      accountLabel: account.label,
+      editorHostPid: process.pid,
+      relaunch: editorRelaunch(
+        { execPath: process.execPath },
+        {
+          workspaceFile: vscode.workspace.workspaceFile?.scheme === 'file' ? vscode.workspace.workspaceFile.fsPath : undefined,
+          folder: vscode.workspace.workspaceFolders?.[0]?.uri.scheme === 'file'
+            ? vscode.workspace.workspaceFolders[0].uri.fsPath
+            : undefined
+        }
+      ),
+      blockers
+    });
+    await startSwitchHelper({
+      editorExecutable: process.execPath,
+      helperPath: path.join(__dirname, 'switch-helper.cjs'),
+      requestPath: queued.requestPath
+    });
+  } catch (error) {
+    if (queued?.requestPath) await fs.promises.rm(queued.requestPath, { force: true }).catch(() => {});
+    vscode.window.showErrorMessage(`Turntrail: could not queue the account switch — ${error.message}`);
+    return;
+  }
+
+  const affected = editors.length > 0 ? ` Close all ${editors.join(' and ')} windows using Codex.` : ` Close ${agent}.`;
+  vscode.window.showInformationMessage(
+    `Turntrail is waiting to switch to "${account.label}".${affected} The initiating editor will reopen if it was closed.`
+  );
+}
+
+function startSwitchResultMonitor(context) {
+  let reading = false;
+  const read = async () => {
+    if (reading) return;
+    reading = true;
+    try {
+      for (const result of await consumeSwitchResults(switchResultsDirectory())) {
+        if (result.success) {
+          await accountsProvider.reloadUsage({ offline: true });
+          const relaunch = result.relaunchError ? ` The editor could not reopen automatically: ${result.relaunchError}` : '';
+          const choice = await vscode.window.showInformationMessage(
+            `Turntrail: ${agentName(result.provider)} is now using "${result.accountLabel || result.accountId}".${relaunch}`,
+            'Reload Window'
+          );
+          if (choice === 'Reload Window') await vscode.commands.executeCommand('workbench.action.reloadWindow');
+        } else {
+          vscode.window.showErrorMessage(
+            `Turntrail: queued switch to "${result.accountLabel || result.accountId || 'account'}" failed — ${result.error}`
+          );
+        }
+      }
+    } catch (error) {
+      console.error(`Turntrail could not read queued switch results: ${error.message}`);
+    } finally {
+      reading = false;
+    }
+  };
+  read();
+  const timer = setInterval(read, 1500);
+  context.subscriptions.push({ dispose: () => clearInterval(timer) });
+}
+
+function switchResultsDirectory() {
+  return path.join(extensionContext.globalStorageUri.fsPath, 'switches');
 }
 
 function agentName(provider) {

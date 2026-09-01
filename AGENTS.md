@@ -26,6 +26,9 @@ These are invariants, not preferences. Breaking one is a security regression.
 - **Credentials are written `0600`** (best-effort; Windows ignores POSIX modes) and live under
   `~/.turntrail/accounts/`, never inside a project's `.turntrail/`.
 - **Never log or echo a token**, including in error messages and the raw-response viewer.
+- **Never switch underneath a running provider.** IDE app-servers retain authentication state and
+  may later refresh the old credential over the new one. A queued helper may wait for them to exit,
+  but it must call the same fail-closed switch routine and its request must contain no credentials.
 - **Delegate the OAuth exchange when the provider's CLI can perform it.** Codex can, so Turntrail
   only spawns `codex login` and reads its output. Claude cannot — its login is an Ink TUI
   requiring raw mode on stdin, and `setup-token` writes no credential — so Turntrail runs the

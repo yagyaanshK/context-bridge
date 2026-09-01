@@ -92,11 +92,18 @@ official UI start using your choice. For Claude that is two files — the creden
 project history and caches and is left byte-identical. Both files are backed up first, and the
 confirmation toast offers **Undo**.
 
-Before **Use this**, close that agent's CLI processes and close or reload every editor window hosting
-its extension. Turntrail checks for native `codex` and `claude` extension subprocesses and
-refuses the switch while they are running. This is deliberate: a process started under the old
-account can refresh later and overwrite the newly selected machine credential. Reselecting the
-already-active account is allowed because it does not replace the credential.
+Turntrail checks for native `codex` and `claude` processes immediately before replacing a login. If
+the provider is stopped, **Use this** switches immediately. If an interactive session or IDE
+background service is running, choose **Switch After Closing Editors**. A detached helper waits for
+every process to exit, requires three consecutive quiet polls, runs the same guarded switch, and
+reopens the initiating workspace. Save work and close every window hosting that provider, including
+windows in other VS Code-compatible editors, because the default credential is machine-wide.
+
+Ignoring an idle-looking `codex.exe app-server` is unsafe: Codex can retain the old account in memory
+and refresh its persisted token later. Queuing keeps the strict process check while making it usable
+from the extension. Requests expire after 15 minutes and contain no tokens. A timeout, a restarted
+provider, or a failed account validation leaves the live credential unchanged. Reselecting the
+already-active account remains a no-op.
 
 ## The Handoff Card
 

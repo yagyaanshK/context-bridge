@@ -10,7 +10,7 @@ Release artifacts are built by GitHub Actions from an immutable version tag. VSI
 2. Run `npm install --package-lock-only --ignore-scripts` to update lock metadata.
 3. Run `npm ci --ignore-scripts`, `npm test`, `npm run lint`, and `npm audit` from a clean checkout.
 4. Merge the version commit to `main` and wait for the required CI and CodeQL checks.
-5. Create and push the matching annotated tag, such as `v0.12.0`.
+5. Create and push the matching annotated tag, such as `v0.12.1`.
 
 The tag-triggered release workflow repeats all gates, packages the extension, produces
 `SHA256SUMS.txt`, creates a signed build-provenance attestation, and attaches both files to the

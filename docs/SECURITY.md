@@ -19,6 +19,19 @@ credential, and quota payloads are validated before use; incompatible shapes pro
 compatibility error instead of being accepted or cached. See [Provider Contracts](PROVIDER_CONTRACTS.md) for
 the contract inventory, failure behavior, and maintenance procedure.
 
+## Account switch isolation
+
+Turntrail never replaces a live provider credential while that provider has a running process. IDE
+background services count because they retain authentication state and can refresh persisted tokens.
+When the extension queues a switch, a detached local helper waits for three consecutive process-free
+polls and then calls the same fail-closed switch routine used by the CLI. The routine checks the
+process list again before its final atomic credential copy.
+
+Queued request files live in the extension's global storage, are written `0600` where supported, and
+contain an account id, a bounded blocker description, a deadline, and editor relaunch metadata. They
+never contain access tokens, refresh tokens, API keys, or credential contents. Requests expire after
+15 minutes; malformed, expired, raced, or failed requests do not modify the live provider login.
+
 ## Untrusted metadata
 
 Transcript content is intentionally passed to the receiving agent as historical conversation. Paths, branch names, session labels, media references, and other metadata are separately flattened and escaped so they cannot add Markdown sections or close a fenced block. Handoffs explicitly tell the receiving agent to treat metadata as data, never instructions.

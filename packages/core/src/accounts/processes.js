@@ -34,6 +34,19 @@ export function matchingAgentProcesses(provider, processes) {
   return (processes || []).map(normalizeProcess).filter((item) => processMatches(normalized, item));
 }
 
+export function classifyAgentProcesses(provider, processes) {
+  const all = (processes || []).map(normalizeProcess);
+  const matches = matchingAgentProcesses(provider, all);
+  return matches.map((item) => {
+    const editor = provider === 'codex' ? codexEditorOwner(item, all) : undefined;
+    return {
+      ...item,
+      kind: editor ? 'ide-background' : 'interactive',
+      editor
+    };
+  });
+}
+
 export async function assertAgentStopped(provider, options = {}) {
   const matches = matchingAgentProcesses(provider, await listAgentProcesses(options));
   if (matches.length === 0) return;
@@ -99,6 +112,49 @@ function processMatches(provider, item) {
     return /(?:^|\s|["'])[^\s"']*@openai\/codex(?:\/|\s|["']|$)/.test(command);
   }
   return /(?:^|\s|["'])[^\s"']*@anthropic-ai\/claude-code(?:\/|\s|["']|$)/.test(command);
+}
+
+function codexEditorOwner(item, processes) {
+  const name = processName(item);
+  if (name === 'codex-code-mode-host') {
+    const parent = processes.find((candidate) => candidate.pid === item.parentPid);
+    return parent ? codexEditorOwner(parent, processes) : undefined;
+  }
+  if (name !== 'codex' || !/(?:^|\s)app-server(?:\s|$)/i.test(item.commandLine)) return undefined;
+
+  const executable = String(item.executablePath || '').toLowerCase().replaceAll('\\', '/');
+  if (!/\/extensions\/openai\.chatgpt-[^/]+\/bin\//.test(executable)) return undefined;
+
+  const byPid = new Map(processes.filter((candidate) => candidate.pid).map((candidate) => [candidate.pid, candidate]));
+  let ancestor = byPid.get(item.parentPid);
+  for (let depth = 0; ancestor && depth < 8; depth++) {
+    const editor = editorLabel(ancestor);
+    if (editor) return editor;
+    ancestor = byPid.get(ancestor.parentPid);
+  }
+  return undefined;
+}
+
+function editorLabel(item) {
+  switch (processName(item)) {
+    case 'code':
+      return 'VS Code';
+    case 'cursor':
+      return 'Cursor';
+    case 'windsurf':
+      return 'Windsurf';
+    case 'antigravity':
+      return 'Google Antigravity';
+    case 'codium':
+    case 'vscodium':
+      return 'VSCodium';
+    default:
+      return undefined;
+  }
+}
+
+function processName(item) {
+  return path.basename(String(item.name || item.executablePath || '')).toLowerCase().replace(/\.exe$/, '');
 }
 
 function normalizeProcess(item = {}) {

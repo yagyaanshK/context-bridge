@@ -156,6 +156,13 @@ The account in use is marked and appears in the status bar with its remaining qu
 stays signed in, so switching back is one more click; the confirmation also offers **Undo** and
 **Reload Window**.
 
+If the provider is already stopped, **Use this** switches immediately. If an IDE background service
+or interactive process is running, Turntrail offers **Switch After Closing Editors**. A detached
+helper waits until all provider processes have exited, performs the guarded switch, and reopens the
+initiating workspace. Close every editor window hosting that provider, including other VS Code
+forks, because they share the same machine-wide default credential. The request expires after 15
+minutes and contains no tokens; failures leave the live credential unchanged.
+
 | Action | Effect |
 |--------|--------|
 | **Use this** | Points that agent's official CLI and extension at this account. |
