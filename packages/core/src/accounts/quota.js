@@ -248,15 +248,38 @@ const RESET_KEYS = ['resets_at', 'resetsAt', 'reset_at', 'resetAt', 'resets_in_s
 const WINDOW_KEYS = ['limit_window_seconds', 'limitWindowSeconds', 'window_seconds', 'windowSeconds', 'window_minutes'];
 const PLAN_KEYS = ['plan_type', 'planType', 'plan', 'chatgpt_plan_type'];
 
+const ADDITIONAL_LIMIT_KEYS = new Set(['additional_rate_limits', 'additionalRateLimits']);
+
 // The response shape is observed from the wire, not from a published contract,
 // and it differs between providers and over time. Rather than guessing at one
 // nesting, walk the payload and collect every object that carries a usage
-// percentage. That survives the windows moving under a different key, being
-// wrapped in an extra envelope, or arriving as a list instead of a map.
+// percentage. Additional named pools are deliberately excluded here: they are
+// independent allowances, not extra windows that constrain the main quota.
 export function normalizeCodexUsage(payload) {
+  let plan;
+  const windows = collectWindows(payload, {
+    skipKeys: ADDITIONAL_LIMIT_KEYS,
+    onObject(node) {
+      for (const planKey of PLAN_KEYS) {
+        if (!plan && typeof node[planKey] === 'string') plan = node[planKey];
+      }
+    }
+  });
+
+  return {
+    fetchedAt: new Date().toISOString(),
+    windows,
+    additionalLimits: readAdditionalLimits(payload),
+    plan,
+    email: typeof payload?.email === 'string' ? payload.email : undefined,
+    ...readLimitState(payload),
+    credits: readCredits(payload)
+  };
+}
+
+function collectWindows(root, options = {}) {
   const windows = [];
   const seen = new Set();
-  let plan;
 
   const visit = (node, key, depth) => {
     if (!node || typeof node !== 'object' || depth > 6) return;
@@ -266,10 +289,7 @@ export function normalizeCodexUsage(payload) {
       return;
     }
 
-    for (const planKey of PLAN_KEYS) {
-      if (!plan && typeof node[planKey] === 'string') plan = node[planKey];
-    }
-
+    options.onObject?.(node);
     const window = readWindow(node, key);
     if (window) {
       const identity = `${window.key}:${window.usedPercent}:${window.windowSeconds ?? ''}`;
@@ -277,29 +297,40 @@ export function normalizeCodexUsage(payload) {
         seen.add(identity);
         windows.push(window);
       }
-      // A node that is itself a window has no nested windows worth finding.
       return;
     }
 
     for (const [childKey, value] of Object.entries(node)) {
-      visit(value, childKey, depth + 1);
+      if (!options.skipKeys?.has(childKey)) visit(value, childKey, depth + 1);
     }
   };
 
-  visit(payload, undefined, 0);
-  // Tightest window first. Unknown durations sort last, and must compare equal
-  // to each other rather than producing NaN from Infinity - Infinity.
+  visit(root, undefined, 0);
   const rank = (window) => window.windowSeconds ?? Number.MAX_SAFE_INTEGER;
   windows.sort((a, b) => rank(a) - rank(b));
+  return windows;
+}
 
-  return {
-    fetchedAt: new Date().toISOString(),
-    windows,
-    plan,
-    email: typeof payload?.email === 'string' ? payload.email : undefined,
-    ...readLimitState(payload),
-    credits: readCredits(payload)
-  };
+function readAdditionalLimits(payload) {
+  const raw = payload?.additional_rate_limits ?? payload?.additionalRateLimits;
+  if (!Array.isArray(raw)) return [];
+
+  return raw.flatMap((item, index) => {
+    if (!item || typeof item !== 'object') return [];
+    const name = firstString(item.limit_name, item.limitName, item.name);
+    const meteredFeature = firstString(item.metered_feature, item.meteredFeature, item.id);
+    const windows = collectWindows(item.rate_limit ?? item.rateLimit);
+    if (!name && !meteredFeature && windows.length === 0) return [];
+
+    return [{
+      id: meteredFeature || name || `additional-${index + 1}`,
+      name: name || meteredFeature || `additional-${index + 1}`,
+      label: humanizeLimitName(name || meteredFeature || `Additional limit ${index + 1}`),
+      meteredFeature,
+      windows,
+      ...readLimitState(item)
+    }];
+  });
 }
 
 // The provider states outright whether the subscription is currently blocked.
@@ -416,6 +447,17 @@ function firstNumber(...values) {
     if (value !== null && value !== undefined && value !== '' && Number.isFinite(num)) return num;
   }
   return undefined;
+}
+
+function firstString(...values) {
+  return values.find((value) => typeof value === 'string' && value.trim())?.trim();
+}
+
+function humanizeLimitName(value) {
+  return String(value)
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (character) => character.toUpperCase())
+    .replace(/\b(Gpt|Api)\b/g, (word) => word.toUpperCase());
 }
 
 function clampPercent(value) {

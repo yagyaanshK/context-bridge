@@ -148,6 +148,16 @@ class AccountsStore {
         label: window.label,
         remaining: window.remainingPercent,
         resetsAt: window.resetsAt
+      })),
+      additionalLimits: (usage?.additionalLimits || []).map((limit) => ({
+        id: limit.id,
+        label: limit.label,
+        limitReached: Boolean(limit.limitReached),
+        windows: (limit.windows || []).map((window) => ({
+          label: window.label,
+          remaining: window.remainingPercent,
+          resetsAt: window.resetsAt
+        }))
       }))
     };
   }
@@ -462,6 +472,15 @@ function html(webview) {
   .meter-label { color: var(--dim); font-size: 0.82em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .meter-label b { color: var(--vscode-foreground); font-weight: 600; }
   .meter .bar { margin-top: 0; }
+  .additional-limits {
+    display: flex; flex-direction: column; gap: 9px;
+    margin-top: 10px; padding-top: 9px;
+    border-top: 1px solid var(--hairline);
+  }
+  .additional-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .additional-title b { font-size: 0.88em; font-weight: 600; }
+  .additional-title span, .additional-status { color: var(--dim); font-size: 0.78em; }
+  .additional-limit .meters { margin-top: 6px; }
 
   /* Handoff */
   .handoff { display: flex; flex-direction: column; gap: 10px; }
@@ -583,6 +602,16 @@ function renderMeter(window) {
   '</div>';
 }
 
+function renderAdditionalLimit(limit) {
+  const meters = (limit.windows || []).map(renderMeter).join('');
+  return '<div class="additional-limit">' +
+    '<div class="additional-title"><b>' + esc(limit.label) + '</b>' +
+      '<span>Separate allowance</span></div>' +
+    (limit.limitReached ? '<div class="additional-status">Limit reached</div>' : '') +
+    (meters ? '<div class="meters">' + meters + '</div>' : '<div class="additional-status">Quota unavailable</div>') +
+  '</div>';
+}
+
 function renderRow(row) {
   const state = level(row);
   const width = barWidth(row.remaining);
@@ -610,6 +639,9 @@ function renderRow(row) {
   const meters = (row.windows || []).length > 0
     ? '<div class="meters">' + row.windows.map(renderMeter).join('') + '</div>'
     : '<div class="bar"><i style="width:' + width + '%;--fill:' + fillColor(state) + '"></i></div>';
+  const additionalLimits = (row.additionalLimits || []).length > 0
+    ? '<div class="additional-limits">' + row.additionalLimits.map(renderAdditionalLimit).join('') + '</div>'
+    : '';
 
   const act = (action, text, cls) =>
     '<button class="' + (cls || '') + '" data-act="' + action + '" data-id="' + id +
@@ -639,6 +671,7 @@ function renderRow(row) {
         : '') +
     '</div>' +
     meters +
+    additionalLimits +
     '<div class="meta"><span>' + status + esc(credits) + '</span>' +
       (row.active ? '<span class="badge' + (state === 'crit' ? ' crit' : '') + '">In use</span>' : '') +
     '</div>' +

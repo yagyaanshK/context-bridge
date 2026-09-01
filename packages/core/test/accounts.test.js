@@ -509,6 +509,63 @@ test('usage normalization handles the live Codex payload', () => {
   assert.equal(headlineRemaining(usage), 0);
 });
 
+test('additional Codex limits remain separate from the main quota', () => {
+  const usage = normalizeCodexUsage({
+    plan_type: 'plus',
+    rate_limit: {
+      allowed: true,
+      limit_reached: false,
+      primary_window: { used_percent: 93, limit_window_seconds: 18000 },
+      secondary_window: { used_percent: 61, limit_window_seconds: 604800 }
+    },
+    additional_rate_limits: [{
+      limit_name: 'gpt-reserve',
+      metered_feature: 'base_model_inference',
+      rate_limit: {
+        allowed: true,
+        limit_reached: false,
+        primary_window: { used_percent: 0, limit_window_seconds: 604800, reset_at: 1788904556 },
+        secondary_window: null
+      }
+    }]
+  });
+
+  assert.deepEqual(usage.windows.map((window) => window.remainingPercent), [7, 39]);
+  assert.equal(headlineRemaining(usage), 7, 'a reserve pool must not change the main headline');
+  assert.equal(usage.additionalLimits.length, 1);
+  assert.deepEqual(usage.additionalLimits[0], {
+    id: 'base_model_inference',
+    name: 'gpt-reserve',
+    label: 'GPT Reserve',
+    meteredFeature: 'base_model_inference',
+    windows: [{
+      key: 'primary_window',
+      label: 'weekly',
+      usedPercent: 0,
+      remainingPercent: 100,
+      resetsAt: new Date(1788904556 * 1000).toISOString(),
+      windowSeconds: 604800
+    }],
+    limitReached: false
+  });
+});
+
+test('unknown additional Codex limits retain their backend identity', () => {
+  const usage = normalizeCodexUsage({
+    rate_limit: { primary_window: { used_percent: 20, limit_window_seconds: 18000 } },
+    additionalRateLimits: [{
+      limitName: 'future_pool',
+      meteredFeature: 'future_feature',
+      rateLimit: { primaryWindow: { usedPercent: 25, limitWindowSeconds: 3600 } }
+    }]
+  });
+
+  assert.equal(usage.windows.length, 1);
+  assert.equal(usage.additionalLimits[0].id, 'future_feature');
+  assert.equal(usage.additionalLimits[0].label, 'Future Pool');
+  assert.equal(usage.additionalLimits[0].windows[0].remainingPercent, 75);
+});
+
 test('usage normalization ignores unrelated counters in the payload', () => {
   // The live response carries referral and spend-control blocks full of numbers.
   // None of them are quota windows and none may leak into the panel.

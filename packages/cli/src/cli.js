@@ -455,9 +455,18 @@ function renderAccountRow(account, usage, signedIn) {
           ? 'quota not read (use --refresh)'
           : `${remaining}% left`;
 
-  const detail = (usage?.windows || [])
+  const ordinary = (usage?.windows || [])
     .map((window) => `${window.label} ${window.remainingPercent}%`)
     .join(', ');
+  const additional = (usage?.additionalLimits || [])
+    .map((limit) => {
+      const windows = (limit.windows || [])
+        .map((window) => `${window.label} ${window.remainingPercent}%`)
+        .join(', ');
+      return `${limit.label} (separate allowance${windows ? `: ${windows}` : ''})`;
+    })
+    .join('; ');
+  const detail = [ordinary, additional].filter(Boolean).join('; ');
 
   return [
     `  ${account.id}`,
