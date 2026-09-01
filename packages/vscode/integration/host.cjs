@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const vscode = require('vscode');
 
-const EXTENSION_ID = 'yagyaanshK.context-bridge-vscode';
+const EXTENSION_ID = 'turntrail.context-bridge-vscode';
 
 async function run() {
   const scenario = process.env.TURNTRAIL_TEST_SCENARIO || process.env.CONTEXT_BRIDGE_TEST_SCENARIO;

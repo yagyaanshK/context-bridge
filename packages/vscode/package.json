@@ -3,7 +3,7 @@
   "displayName": "Turntrail",
   "description": "Continue developer agent sessions across Claude, Codex, and other tools from VS Code.",
   "version": "0.12.1",
-  "publisher": "yagyaanshK",
+  "publisher": "turntrail",
   "license": "MIT",
   "type": "commonjs",
   "icon": "media/icon.png",
