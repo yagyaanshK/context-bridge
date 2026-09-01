@@ -11,9 +11,10 @@ Use either without the other. The handoff flow never touches the network; the ac
 
 Works in VS Code and compatible forks (Cursor, Windsurf, Google Antigravity).
 
-Existing Context Bridge installations upgrade in place because the internal extension id remains
-`yagyaanshK.context-bridge-vscode`. Legacy `contextBridge.*` commands and settings remain supported;
-new commands and settings use `turntrail.*`. Existing `.context-bridge/` ledgers are read in place.
+Marketplace builds use the permanent extension id `yagyaanshK.turntrail`. Pre-release Context Bridge
+VSIX builds used `yagyaanshK.context-bridge-vscode`; uninstall that build when moving to the
+Marketplace version. Legacy `contextBridge.*` commands and settings remain supported, new commands
+and settings use `turntrail.*`, and existing `.context-bridge/` ledgers are read in place.
 
 ## Use it
 

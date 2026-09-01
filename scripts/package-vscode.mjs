@@ -29,6 +29,9 @@ await copyDir(path.join(vscodePackage, 'src'), path.join(stage, 'src'));
 await copyDir(path.join(corePackage, 'src'), path.join(stage, 'node_modules', '@turntrail', 'core', 'src'));
 
 const extensionPkg = sourceExtensionPkg;
+// The source manifest is also an npm workspace, where its name must differ
+// from the Turntrail CLI. The staged VSIX owns the public Marketplace id.
+extensionPkg.name = 'turntrail';
 delete extensionPkg.devDependencies;
 extensionPkg.dependencies = {
   '@turntrail/core': sourceCorePkg.version
