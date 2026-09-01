@@ -1,0 +1,36 @@
+name: Resolve Marketplace publishing identity
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  resolve:
+    name: Resolve Azure DevOps profile
+    runs-on: ubuntu-latest
+    environment: marketplace
+    steps:
+      - name: Sign in to Azure with GitHub OIDC
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Resolve Marketplace profile ID
+        shell: bash
+        run: |
+          set -euo pipefail
+          profile_id="$(az rest \
+            --method get \
+            --url 'https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1' \
+            --resource 499b84ac-1321-427f-aa17-267ca6975798 \
+            --query id \
+            --output tsv)"
+          test -n "$profile_id"
+          echo "Marketplace profile ID: $profile_id"
+          echo "## Marketplace publishing identity" >> "$GITHUB_STEP_SUMMARY"
+          echo "Add this profile ID as a Contributor under the TurnTrail publisher's Members tab:" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$profile_id\`" >> "$GITHUB_STEP_SUMMARY"
