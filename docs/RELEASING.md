@@ -13,8 +13,14 @@ Release artifacts are built by GitHub Actions from an immutable version tag. VSI
 5. Create and push the matching annotated tag, such as `v0.12.1`.
 
 The tag-triggered release workflow repeats all gates, packages the extension, produces
-`SHA256SUMS.txt`, creates a signed build-provenance attestation, and attaches both files to the
-GitHub release. It refuses a tag that does not exactly match package metadata.
+`SHA256SUMS.txt`, creates a signed build-provenance attestation, publishes the VSIX to the Visual
+Studio Marketplace, and attaches both files to the GitHub release. It refuses a tag that does not
+exactly match package metadata. Marketplace authentication uses the `marketplace` GitHub
+environment and Microsoft Entra workload identity federation; no publishing PAT is stored.
+
+The `marketplace` environment is restricted to version tags matching `v*.*.*`. It provides the
+non-secret `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` variables used by `azure/login`. The managed
+identity must remain a Contributor on the `turntrail` Visual Studio Marketplace publisher.
 
 Verify a downloaded artifact with:
 
