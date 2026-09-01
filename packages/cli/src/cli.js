@@ -16,6 +16,7 @@ import {
   initStore,
   isSignedIn,
   listAccounts,
+  maintainAccounts,
   normalizeNativeProvider,
   readManifest,
   removeAccount,
@@ -40,6 +41,7 @@ Usage:
   turntrail account add <label> [--import]
   turntrail account use <id>
   turntrail account remove <id> [--purge]
+  turntrail account maintain [--json]
 
 Account options:
   --import                Adopt the login already in the default CODEX_HOME
@@ -49,6 +51,7 @@ Account options:
                           account without changing the machine default.
   --purge                 Delete the managed credential and the live default
                           login when this account is active.
+  --json                  Emit machine-readable maintenance results.
 
 Export options:
   --max-chars <n>         Character budget for the transcript (default 120000, 0 = off).
@@ -79,7 +82,7 @@ Compatibility:
   The legacy context-bridge executable remains an alias for turntrail.
 `;
 
-export async function runCli(argv, io = process) {
+export async function runCli(argv, io = process, dependencies = {}) {
   const { command, args, flags } = parseArgs(argv);
   const cwd = path.resolve(flags.cwd || process.cwd());
 
@@ -191,6 +194,13 @@ export async function runCli(argv, io = process) {
   if (command === 'account') {
     const action = args[0];
 
+    if (action === 'maintain') {
+      const runMaintenance = dependencies.maintainAccounts || maintainAccounts;
+      const maintenance = await runMaintenance(dependencies.accountOptions || {});
+      io.stdout.write(flags.json ? `${JSON.stringify(maintenance, null, 2)}\n` : renderMaintenance(maintenance));
+      return;
+    }
+
     if (action === 'add') {
       const label = args.slice(1).join(' ').trim();
       if (!label) throw new Error('account add requires a label');
@@ -233,6 +243,19 @@ export async function runCli(argv, io = process) {
   }
 
   throw new Error(`unknown command: ${command}`);
+}
+
+export function renderMaintenance(maintenance) {
+  if (maintenance.locked) return 'Account maintenance is already running in another process.\n';
+  if (maintenance.results.length === 0) return 'No managed accounts to maintain.\n';
+
+  const lines = ['Account maintenance:', ''];
+  for (const item of maintenance.results) {
+    const detail = item.reason ? ` (${item.reason})` : item.error ? ` (${item.error})` : '';
+    lines.push(`${item.provider}/${item.accountId}: ${item.status}${detail}`);
+  }
+  lines.push('');
+  return lines.join('\n');
 }
 
 export function parseArgs(argv) {

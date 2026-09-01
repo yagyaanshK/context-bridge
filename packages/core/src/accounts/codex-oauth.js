@@ -3,10 +3,9 @@ import { PROVIDER_CONTRACTS, validateTokenPayload } from './provider-contracts.j
 
 // Renewing a Codex login without the browser.
 //
-// Codex signs in with OpenAI's OAuth. The access token it stores lasts about ten
-// days; past that, any request with it comes back 401 token_expired. The stored
-// `refresh_token` mints a new one against the endpoint below - the same call the
-// Codex CLI makes lazily when it notices its own token is near expiry.
+// Codex signs in with OpenAI's OAuth. The access token is a JWT with its own
+// expiry. The stored `refresh_token` mints a new one against the endpoint below
+// - the same call the Codex CLI makes lazily when renewal is due.
 //
 // One property of this endpoint dictates how the rest of the account code has to
 // behave: the refresh token is ROTATED on every use. A successful refresh

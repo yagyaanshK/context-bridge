@@ -88,6 +88,7 @@ export {
   readCodexAuth,
   refreshCodexAccountIdentity,
   restoreCodexBackup,
+  syncActiveCodexAccount,
   writeCodexTokens
 } from './accounts/codex.js';
 export { refreshCodexToken, CODEX_CLIENT_ID, CODEX_TOKEN_URL } from './accounts/codex-oauth.js';
@@ -143,9 +144,17 @@ export {
   readClaudeProfile,
   refreshClaudeAccountIdentity,
   restoreClaudeBackup,
+  syncActiveClaudeAccount,
   writeClaudeCredential,
   CLAUDE_PROVIDER
 } from './accounts/claude.js';
+export {
+  accountMaintenanceLockPath,
+  maintainAccounts,
+  DEFAULT_ACCOUNT_MAINTENANCE_INTERVAL_MS,
+  DEFAULT_ACCOUNT_MAINTENANCE_LOCK_STALE_MS,
+  DEFAULT_ACCOUNT_MAINTENANCE_LOCK_TIMEOUT_MS
+} from './accounts/maintenance.js';
 export {
   claudeApiHeaders,
   claudeAuthorizeUrl,

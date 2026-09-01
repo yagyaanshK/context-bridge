@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { ensureDir, pathExists, readJson, writeJson } from '../fs-utils.js';
+import { ensureDir, pathExists, readJson, writeFileAtomic, writeJson } from '../fs-utils.js';
 import { accountDir, listAccounts, updateAccount } from './store.js';
 import { fetchClaudeProfile, refreshClaudeToken } from './claude-oauth.js';
 import { isProviderContractError, validateClaudeCredentialPayload } from './provider-contracts.js';
@@ -412,6 +412,24 @@ export async function isActiveClaudeAccount(accountId, options = {}) {
   if (!live?.accessToken && !live?.refreshToken) return false;
   const auth = await readClaudeAuth(claudeHome(accountId, options), options);
   return sameClaudeIdentity(live, auth);
+}
+
+// Preserve refresh-token rotations performed by the live Claude Code process
+// without competing with it for the same rotating token.
+export async function syncActiveClaudeAccount(accountId, options = {}) {
+  if (!(await isActiveClaudeAccount(accountId, options))) return false;
+
+  const source = claudeCredentialsPath(defaultClaudeHome(options));
+  const contents = await fs.readFile(source, 'utf8');
+  let credential;
+  try {
+    credential = JSON.parse(contents);
+  } catch (error) {
+    throw new Error(`Could not parse ${source}: ${error.message}`);
+  }
+  validateClaudeCredentialPayload(credential);
+  await writeFileAtomic(claudeCredentialsPath(claudeHome(accountId, options)), contents, { mode: 0o600 });
+  return true;
 }
 
 function sameClaudeIdentity(left, right) {

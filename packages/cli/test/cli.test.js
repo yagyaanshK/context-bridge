@@ -20,6 +20,27 @@ test('cli init and status write expected output', async () => {
   assert.match(output, /Sessions: 0/);
 });
 
+test('account maintain renders scheduler-friendly results', async () => {
+  let output = '';
+  const io = { stdout: { write: (chunk) => { output += chunk; } } };
+  await runCli(['account', 'maintain'], io, {
+    maintainAccounts: async () => ({
+      locked: false,
+      results: [{ accountId: 'work', provider: 'codex', status: 'checked' }]
+    })
+  });
+  assert.match(output, /codex\/work: checked/);
+});
+
+test('account maintain can emit JSON for OS schedulers', async () => {
+  let output = '';
+  const io = { stdout: { write: (chunk) => { output += chunk; } } };
+  await runCli(['account', 'maintain', '--json'], io, {
+    maintainAccounts: async () => ({ locked: true, results: [] })
+  });
+  assert.deepEqual(JSON.parse(output), { locked: true, results: [] });
+});
+
 function fakeChild(exitCode, signal) {
   const child = new EventEmitter();
   child.kill = () => {};

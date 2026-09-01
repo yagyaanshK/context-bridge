@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { ensureDir, pathExists, readJson } from '../fs-utils.js';
+import { ensureDir, pathExists, readJson, writeFileAtomic } from '../fs-utils.js';
 import { accountDir, listAccounts, updateAccount } from './store.js';
 import { refreshCodexToken } from './codex-oauth.js';
 import { validateCodexCredentialPayload } from './provider-contracts.js';
@@ -125,6 +125,26 @@ export async function isActiveCodexAccount(accountId, options = {}) {
   if (!live?.refreshToken && !live?.accessToken && !live?.apiKey) return false;
   const auth = await readCodexAuth(codexHome(accountId, options));
   return sameCodexIdentity(live, auth);
+}
+
+// Copy the credential owned by the live Codex process back into Turntrail's
+// managed snapshot. This does not refresh anything: it only preserves token
+// rotations Codex has already completed, so a later switch does not reinstall
+// an older refresh token.
+export async function syncActiveCodexAccount(accountId, options = {}) {
+  if (!(await isActiveCodexAccount(accountId, options))) return false;
+
+  const source = codexAuthPath(defaultCodexHome(options));
+  const contents = await fs.readFile(source, 'utf8');
+  let credential;
+  try {
+    credential = JSON.parse(contents);
+  } catch (error) {
+    throw new Error(`Could not parse ${source}: ${error.message}`);
+  }
+  validateCodexCredentialPayload(credential);
+  await writeFileAtomic(codexAuthPath(codexHome(accountId, options)), contents, { mode: 0o600 });
+  return true;
 }
 
 // Access and refresh tokens both rotate. Prefer identifiers that survive those
