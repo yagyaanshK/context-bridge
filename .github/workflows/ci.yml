@@ -58,7 +58,7 @@ jobs:
       - name: Upload test package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: context-bridge-vsix-${{ github.sha }}
+          name: turntrail-vsix-${{ github.sha }}
           path: dist/*.vsix
           if-no-files-found: error
           retention-days: 14

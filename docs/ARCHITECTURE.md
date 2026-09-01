@@ -1,6 +1,6 @@
 # Architecture
 
-Context Bridge has one durable idea: the continuity layer should live in the project, not inside a single vendor chat.
+Turntrail has one durable idea: the continuity layer should live in the project, not inside a single vendor chat.
 
 ## Packages
 
@@ -148,7 +148,7 @@ A ledger that only flows one way needs none of this. One that ping-pongs does, a
 
 **Plumbing removal.** Pasting a handoff puts the prompt into the receiving agent's transcript, and
 the prompt tells that agent to read the handoff file — so re-importing it captures both. Left alone,
-the next handoff carries a user turn that is really Context Bridge's prompt, plus a whole handoff
+the next handoff carries a user turn that is really Turntrail's prompt, plus a whole handoff
 document nested inside itself and truncated mid-page. `stripHandoffPlumbing` drops both. Detection
 requires the reserved opening phrase, an exported handoff path, and the generated follow-up
 instruction within the first 4000 characters. A user request that merely begins with the reserved
@@ -163,12 +163,12 @@ ledger itself.
 
 Watermark comparisons parse timestamps as instants, so equivalent offsets compare correctly. Invalid
 manifest timestamps are ignored; turns with missing or malformed timestamps remain in scoped exports
-because Context Bridge cannot prove that the receiving agent has already seen them.
+because Turntrail cannot prove that the receiving agent has already seen them.
 
 **Origin chats.** `writeSession` records the native session id and the agent's own name for it, so
 `originChat` can say which chat a handoff should be continued in, and the VS Code session picker can
 offer it first. Only agent-assigned names are used; an unnamed session's opening request is not a
-name, and for a session started from a handoff it is Context Bridge's own prompt.
+name, and for a session started from a handoff it is Turntrail's own prompt.
 
 ## Accounts
 
@@ -177,7 +177,7 @@ It shares nothing with the ledger: its state lives in the home directory, becaus
 are the same accounts in every repo you open.
 
 ```text
-~/.context-bridge/
+~/.turntrail/
   accounts.json                    # registry: id, provider, label, email, plan
   accounts/<id>/
     codex-home/     or  claude-home/   # whatever that agent's CLI treats as its world
@@ -200,18 +200,18 @@ the stock `~/.claude` home, at `~/.claude.json`, but moves *inside* any custom
 `CLAUDE_CONFIG_DIR`. Both facts were verified on disk; getting either backwards means writing
 identity into a file nothing reads.
 
-### Credential sources, and what Context Bridge does not touch
+### Credential sources, and what Turntrail does not touch
 
 `~/.codex` is shared by more than one program, and they do not all authenticate the same way. This
 matters because it bounds what switching an account can and cannot affect.
 
 - The **Codex CLI** and the **Codex IDE extension** (VS Code, Cursor, and forks) read the OAuth
-  credential at `~/.codex/auth.json`. This is the only credential Context Bridge reads, renews, or
+  credential at `~/.codex/auth.json`. This is the only credential Turntrail reads, renews, or
   rewrites when you switch a Codex account. Per OpenAI's own docs, all local Codex clients — CLI, IDE
   extension, and the desktop app — share this one cached login under `CODEX_HOME`, so signing in
   through any of them is reused by the others. Where it is stored is a setting,
   `cli_auth_credentials_store`: `file` (the default, `auth.json` in plaintext) or `keyring` (the OS
-  credential store). Context Bridge's per-account isolation assumes the `file` store; a `keyring`
+  credential store). Turntrail's per-account isolation assumes the `file` store; a `keyring`
   install keeps the token in the OS keystore instead, which is why no plaintext token is found there.
 - The **Codex desktop app** keeps its *working data* in `~/.codex` too — a thread database
   (`state_5.sqlite`), a session index (`session_index.jsonl`), logs, and an Electron state file
@@ -219,7 +219,7 @@ matters because it bounds what switching an account can and cannot affect.
   reads the same `auth.json`, but only at **startup**: a running process then holds that credential
   in memory and refreshes it in place against OpenAI, and does not re-read the file mid-session.
 
-So a switch Context Bridge makes by rewriting `auth.json` is invisible to an already-running desktop
+So a switch Turntrail makes by rewriting `auth.json` is invisible to an already-running desktop
 app until it restarts, at which point it re-reads the file and adopts the new account. This was
 observed end to end on a real install: with `auth.json` switched underneath it, the running app kept
 serving the previous account and kept working *past that account's on-disk token expiry* — the live
@@ -231,23 +231,23 @@ read once per launch.
 The practical consequence is the "a live process holds its own token" rule stated under Switching,
 seen from the outside: rewriting `auth.json` moves the CLI and IDE extension at once, but any Codex
 process already running — desktop app included — keeps the account it started with until its next
-launch. Context Bridge never needs to reach into a running app's memory or a second store, because
+launch. Turntrail never needs to reach into a running app's memory or a second store, because
 there isn't one.
 
 ### Sign-in
 
 The two agents are handled differently, and the difference is forced by what their CLIs are:
 
-- **Codex** — `codex login` prints plain text to stdout. Context Bridge spawns it with
+- **Codex** — `codex login` prints plain text to stdout. Turntrail spawns it with
   `CODEX_HOME` set, parses the output to drive its own progress UI, and never performs the OAuth
   exchange. The credential is written by `codex`.
 - **Claude** — `claude` and `claude setup-token` render an Ink terminal UI that requires raw mode
   on stdin, so a piped child process dies before printing anything; `setup-token` also writes no
   credential by design. The official VS Code extension avoids this by bundling the CLI runtime, which
-  an extension cannot borrow. So Context Bridge runs the same public PKCE flow the CLI runs and
+  an extension cannot borrow. So Turntrail runs the same public PKCE flow the CLI runs and
   writes the credential itself.
 
-**Consequence to state plainly:** for Claude, Context Bridge performs the token exchange and handles
+**Consequence to state plainly:** for Claude, Turntrail performs the token exchange and handles
 the tokens. It does not for Codex. The Claude endpoints are not a published contract, so
 `accounts/claude-oauth.js` is written to fail loudly — every error path names what the user can do
 about it — rather than degrade silently when they change.
@@ -303,11 +303,11 @@ response carries a curated `limits` array, so that is read directly — walking 
 windows out of codenamed buckets sitting at 100% remaining and inflates the headline.
 
 Claude access tokens expire every eight hours and the official client renews only the account it is
-using, so Context Bridge renews the others before reading their quota.
+using, so Turntrail renews the others before reading their quota.
 
 ## Privacy Model
 
-`.context-bridge/` is gitignored because it may contain:
+`.turntrail/` is gitignored because it may contain:
 
 - private conversations
 - shell output
@@ -316,8 +316,8 @@ using, so Context Bridge renews the others before reading their quota.
 - issue descriptions or client data
 - proprietary code snippets
 
-Publishing a project that uses Context Bridge should not publish its local ledger by accident.
+Publishing a project that uses Turntrail should not publish its local ledger by accident.
 
-Account credentials are deliberately kept **out** of the project: they live in `~/.context-bridge/`,
-never in `.context-bridge/`, so a repository can never carry a token even if the ledger is committed
+Account credentials are deliberately kept **out** of the project: they live in `~/.turntrail/`,
+never in `.turntrail/`, so a repository can never carry a token even if the ledger is committed
 by mistake.

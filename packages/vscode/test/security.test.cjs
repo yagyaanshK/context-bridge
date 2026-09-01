@@ -46,11 +46,31 @@ test('executable command and URI settings are application-scoped', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
   const properties = manifest.contributes.configuration.properties;
   for (const key of [
+    'turntrail.claudeUri',
+    'turntrail.allowExternalClaudeUri',
+    'turntrail.claudeOpenCommand',
+    'turntrail.codexOpenCommand',
     'contextBridge.claudeUri',
     'contextBridge.allowExternalClaudeUri',
     'contextBridge.claudeOpenCommand',
     'contextBridge.codexOpenCommand'
   ]) {
     assert.equal(properties[key].scope, 'application', key);
+  }
+});
+
+test('every Turntrail command activates both canonical and legacy command ids', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  const activationEvents = new Set(manifest.activationEvents);
+  const commands = manifest.contributes.commands.map(({ command }) => command);
+
+  for (const command of commands) {
+    assert.match(command, /^turntrail\./);
+    assert.equal(activationEvents.has(`onCommand:${command}`), true, command);
+    assert.equal(
+      activationEvents.has(`onCommand:${command.replace(/^turntrail\./, 'contextBridge.')}`),
+      true,
+      command
+    );
   }
 });

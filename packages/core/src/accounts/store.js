@@ -7,12 +7,19 @@ import { ensureDir, pathExists, readJson, resolveInside, validatePathSegment, wi
 // Accounts are a property of the machine, not of a project: the same three
 // subscriptions are the same three subscriptions in every repo you open. So the
 // registry lives in the home directory rather than in a project's ledger.
-export const ACCOUNTS_DIR = '.context-bridge';
+export const ACCOUNTS_DIR = '.turntrail';
+export const LEGACY_ACCOUNTS_DIR = '.context-bridge';
 export const REGISTRY_FILE = 'accounts.json';
 export const REGISTRY_SCHEMA_VERSION = 1;
 
 export function accountsRoot(options = {}) {
-  return options.accountsRoot || path.join(options.home || os.homedir(), ACCOUNTS_DIR);
+  if (options.accountsRoot) return options.accountsRoot;
+  const home = options.home || os.homedir();
+  const canonical = path.join(home, ACCOUNTS_DIR);
+  const legacy = path.join(home, LEGACY_ACCOUNTS_DIR);
+  if (fsSync.existsSync(canonical)) return canonical;
+  if (fsSync.existsSync(legacy)) return legacy;
+  return canonical;
 }
 
 export function registryPath(options = {}) {

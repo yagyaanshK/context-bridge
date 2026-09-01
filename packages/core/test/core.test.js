@@ -45,7 +45,7 @@ test('imports jsonl transcripts and exports deterministic handoff', async () => 
 
   const exported = await exportHandoff(root, { target: 'codex' });
   const handoff = await fs.readFile(exported.path, 'utf8');
-  assert.match(handoff, /Context Bridge Handoff: codex/);
+  assert.match(handoff, /Turntrail Handoff: codex/);
   assert.match(handoff, /Please inspect auth/);
 });
 
@@ -106,9 +106,9 @@ test('prepareTurns sanitizes and truncates each turn exactly once', () => {
   const [prepared] = prepareTurns(turns, { tool: 500 });
   assert.ok(prepared.truncatedChars > 0);
   assert.equal(prepared.size, prepared.block.length + 1);
-  assert.match(prepared.block, /Context Bridge truncated \d+ chars/);
+  assert.match(prepared.block, /Turntrail truncated \d+ chars/);
   // One truncation marker means one truncation pass.
-  assert.equal(prepared.block.split('Context Bridge truncated').length - 1, 1);
+  assert.equal(prepared.block.split('Turntrail truncated').length - 1, 1);
 });
 
 test('export applies a default character budget', async () => {
@@ -238,7 +238,7 @@ test('truncateTurnContent keeps head and tail and reports removed chars', () => 
   assert.ok(result.content.length < text.length);
   assert.match(result.content, /^HEAD/);
   assert.match(result.content, /TAIL$/);
-  assert.match(result.content, /Context Bridge truncated \d+ chars/);
+  assert.match(result.content, /Turntrail truncated \d+ chars/);
 });
 
 test('truncateTurnContent leaves short content and disabled caps untouched', () => {
@@ -264,7 +264,7 @@ test('export collapses duplicate turns and truncates tool output', async () => {
   const handoff = await fs.readFile(exported.path, 'utf8');
   assert.match(handoff, /Collapsed duplicate turns: 1/);
   assert.match(handoff, /Truncated oversized turns: 1/);
-  assert.match(handoff, /Context Bridge truncated \d+ chars/);
+  assert.match(handoff, /Turntrail truncated \d+ chars/);
   // Counted inside the transcript only: the summary section quotes the last
   // assistant message by design, which is a separate occurrence.
   const transcript = handoff.split('## Transcript Turns')[1];
@@ -553,7 +553,7 @@ test('snapshot diff is truncated to the configured budget', () => {
     snapshotDiffMaxChars: 500
   });
   assert.match(handoff, /Uncommitted diff \(truncated\)/);
-  assert.match(handoff, /Context Bridge truncated \d+ chars/);
+  assert.match(handoff, /Turntrail truncated \d+ chars/);
   assert.ok(handoff.length < 5000);
 });
 
@@ -595,7 +595,7 @@ test('pruning keeps everything when disabled and never escapes the ledger', asyn
   await fs.writeFile(outside, 'keep me', 'utf8');
   const manifest = await readManifest(root);
   manifest.exports.unshift({ id: 'evil', path: '../../do-not-delete.txt', createdAt: '1970-01-01T00:00:00.000Z' });
-  await fs.writeFile(path.join(root, '.context-bridge', 'manifest.json'), JSON.stringify(manifest), 'utf8');
+  await fs.writeFile(path.join(root, '.turntrail', 'manifest.json'), JSON.stringify(manifest), 'utf8');
 
   await pruneLedgerEntries(root, 'exports', 3);
   assert.equal(await pathExists(outside), true);

@@ -42,8 +42,8 @@ export class ProviderContractError extends Error {
     const label = PROVIDER_LABELS[provider] || provider;
     const version = contract?.version || 'unknown';
     super(
-      `${label} ${operation} no longer matches Context Bridge's observed provider contract ` +
-        `(${version}). Update Context Bridge before retrying.`
+      `${label} ${operation} no longer matches Turntrail's observed provider contract ` +
+        `(${version}). Update Turntrail before retrying.`
     );
     this.name = 'ProviderContractError';
     this.code = 'PROVIDER_CONTRACT_CHANGED';

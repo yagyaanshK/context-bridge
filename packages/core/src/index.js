@@ -31,6 +31,7 @@ export {
   SNAPSHOT_DIFF_MAX_CHARS
 } from './snapshot.js';
 export { sanitizeContentForHandoff, mediaReferencesFromMetadata, redactSecrets, safeMetadataValue } from './media.js';
+export { LEDGER_DIR, LEGACY_LEDGER_DIR, resolveLedger } from './fs-utils.js';
 export {
   initStore,
   latestSnapshot,

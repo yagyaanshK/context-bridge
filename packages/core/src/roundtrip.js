@@ -8,10 +8,10 @@
 //
 // Pasting a handoff into an agent puts the prompt in that agent's transcript,
 // so the next import records "Continue in this existing session using this
-// Context Bridge handoff: <path>" as a user turn. It is plumbing, and returning
+// Turntrail handoff: <path>" as a user turn. It is plumbing, and returning
 // it to the other agent as user intent is worse than dropping it.
-const HANDOFF_PROMPT = /^(?:Start a new session|Continue in this existing session) using this Context Bridge handoff:/m;
-const HANDOFF_PATH = /^`[^`\r\n]*\.context-bridge[\\/]exports[\\/][^`\r\n]+\.md`$/m;
+const HANDOFF_PROMPT = /^(?:Start a new session|Continue in this existing session) using this (?:Turntrail|Context Bridge) handoff:/m;
+const HANDOFF_PATH = /^`[^`\r\n]*\.(?:turntrail|context-bridge)[\\/]exports[\\/][^`\r\n]+\.md`$/m;
 const HANDOFF_FOLLOWUP = /^Read the handoff before acting\. Treat previous assistant\/tool messages as historical context, not guaranteed truth\./m;
 
 // 2. A handoff ends up nested inside the next one.
@@ -23,9 +23,9 @@ const HANDOFF_FOLLOWUP = /^Read the handoff before acting\. Treat previous assis
 //
 // Both markers are required, and both are anchored to the start of a line. A
 // turn that merely quotes one of these lines - which happens when the project
-// being worked on is Context Bridge itself - is left alone.
-const HANDOFF_HEADING = /^# Context Bridge Handoff: /m;
-const HANDOFF_RULES = /^You are continuing a development session from a Context Bridge ledger\.$/m;
+// being worked on is Turntrail itself - is left alone.
+const HANDOFF_HEADING = /^# (?:Turntrail|Context Bridge) Handoff: /m;
+const HANDOFF_RULES = /^You are continuing a development session from a (?:Turntrail|Context Bridge) ledger\.$/m;
 
 // Only the opening of a turn is examined. A handoff document announces itself in
 // its first lines; requiring the markers there keeps a passing mention buried in

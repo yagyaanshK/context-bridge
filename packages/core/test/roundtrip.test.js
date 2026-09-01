@@ -26,6 +26,11 @@ const HANDOFF_DOCUMENT = [
   '## Transcript Turns'
 ].join('\n');
 
+const TURNTRAIL_PROMPT = HANDOFF_PROMPT
+  .replaceAll('Context Bridge', 'Turntrail')
+  .replace('.context-bridge', '.turntrail');
+const TURNTRAIL_DOCUMENT = HANDOFF_DOCUMENT.replaceAll('Context Bridge', 'Turntrail');
+
 test('the prompt that started the other session is not a request', () => {
   // Pasting a handoff puts this in the receiving agent's transcript, and the
   // next import records it as though the user had typed it.
@@ -36,12 +41,14 @@ test('the prompt that started the other session is not a request', () => {
     true
   );
   assert.equal(isHandoffPlumbing({ content: HANDOFF_PROMPT.replace('Continue in this existing session', 'Start a new session') }), true);
+  assert.equal(isHandoffPlumbing({ content: TURNTRAIL_PROMPT }), true);
 });
 
 test('a handoff document read back is not carried into the next handoff', () => {
   // The prompt tells the agent to read the file, so the read lands in its
   // transcript and the whole document would be re-exported inside the next one.
   assert.equal(isHandoffPlumbing({ content: HANDOFF_DOCUMENT }), true);
+  assert.equal(isHandoffPlumbing({ content: TURNTRAIL_DOCUMENT }), true);
 });
 
 test('talking about handoffs is not plumbing', () => {

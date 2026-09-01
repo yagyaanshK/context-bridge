@@ -1,11 +1,17 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-export const LEDGER_DIR = '.context-bridge';
+export const LEDGER_DIR = '.turntrail';
+export const LEGACY_LEDGER_DIR = '.context-bridge';
 
 export function resolveLedger(root) {
-  return path.resolve(root, LEDGER_DIR);
+  const canonical = path.resolve(root, LEDGER_DIR);
+  const legacy = path.resolve(root, LEGACY_LEDGER_DIR);
+  if (fsSync.existsSync(canonical)) return canonical;
+  if (fsSync.existsSync(legacy)) return legacy;
+  return canonical;
 }
 
 export async function ensureDir(dir) {

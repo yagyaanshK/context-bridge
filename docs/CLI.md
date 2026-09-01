@@ -1,13 +1,13 @@
 # CLI Reference
 
-The binary name is `context-bridge`. The short alias `cb` can be added later when publishing packages.
+The binary name is `turntrail`. The legacy `context-bridge` executable remains an alias for compatibility.
 
 ## `init`
 
-Create a `.context-bridge/` ledger in the current project.
+Create a `.turntrail/` ledger in the current project.
 
 ```bash
-context-bridge init
+turntrail init
 ```
 
 ## `import`
@@ -15,9 +15,9 @@ context-bridge init
 Import a transcript file into the local ledger.
 
 ```bash
-context-bridge import --provider claude --surface cli ./transcript.jsonl
-context-bridge import --provider codex --surface ide ./codex-export.json
-context-bridge import --provider other ./notes.md
+turntrail import --provider claude --surface cli ./transcript.jsonl
+turntrail import --provider codex --surface ide ./codex-export.json
+turntrail import --provider other ./notes.md
 ```
 
 Supported inputs:
@@ -31,7 +31,7 @@ Supported inputs:
 Capture workspace state.
 
 ```bash
-context-bridge snapshot
+turntrail snapshot
 ```
 
 The snapshot includes Git branch, status, latest commit, and top-level files when available.
@@ -41,45 +41,45 @@ The snapshot includes Git branch, status, latest commit, and top-level files whe
 Find native Claude Code or Codex sessions matching the current project.
 
 ```bash
-context-bridge discover --provider claude
-context-bridge discover --provider codex
+turntrail discover --provider claude
+turntrail discover --provider codex
 ```
 
 Use `--all` to show sessions even when the native transcript does not match the current project path:
 
 ```bash
-context-bridge discover --provider codex --all
+turntrail discover --provider codex --all
 ```
 
 Codex archived sessions can be included with:
 
 ```bash
-context-bridge discover --provider codex --includeArchived
+turntrail discover --provider codex --includeArchived
 ```
 
 ## `import-native`
 
-Import a native Claude Code or Codex session into `.context-bridge/sessions/`.
+Import a native Claude Code or Codex session into `.turntrail/sessions/`.
 
 ```bash
-context-bridge import-native --provider claude --last
-context-bridge import-native --provider codex --last
-context-bridge import-native --provider claude --session <session-id>
+turntrail import-native --provider claude --last
+turntrail import-native --provider codex --last
+turntrail import-native --provider claude --session <session-id>
 ```
 
 By default, native import searches for sessions whose recorded working directory matches the current project. Use `--all` if you intentionally want to import across projects.
 
-Native files are read-only inputs. Context Bridge does not modify `~/.claude` or `~/.codex`.
+Native files are read-only inputs. Turntrail does not modify `~/.claude` or `~/.codex`.
 
 ## `run`
 
 Launch Claude or Codex, then import the native transcript file changed during that run.
 
 ```bash
-context-bridge run claude
-context-bridge run codex
-context-bridge run claude -- -c
-context-bridge run codex -- --approval-mode auto-edit
+turntrail run claude
+turntrail run codex
+turntrail run claude -- -c
+turntrail run codex -- --approval-mode auto-edit
 ```
 
 The current implementation uses the native JSONL transcript as the source of truth after the process exits. It does not yet capture full terminal redraw output through a pseudo-terminal.
@@ -94,18 +94,18 @@ signal-terminated child produces the conventional nonzero exit status.
 Generate a deterministic handoff file.
 
 ```bash
-context-bridge export --to codex
-context-bridge export --to claude --max-chars 60000
+turntrail export --to codex
+turntrail export --to claude --max-chars 60000
 ```
 
-The generated file appears in `.context-bridge/exports/`.
+The generated file appears in `.turntrail/exports/`.
 
 ## `status`
 
 Show ledger status.
 
 ```bash
-context-bridge status
+turntrail status
 ```
 
 ## Accounts
@@ -117,15 +117,15 @@ context-bridge status
 
 Keep several Codex subscriptions signed in at once and see what each has left. The mechanism is one
 environment variable: the Codex CLI keeps its identity in `auth.json` under whatever `CODEX_HOME`
-points at, so each account gets its own directory under `~/.context-bridge/accounts/<id>/codex-home`.
+points at, so each account gets its own directory under `~/.turntrail/accounts/<id>/codex-home`.
 
 ```bash
-context-bridge accounts                  # list, using cached quota
-context-bridge accounts --refresh        # re-read quota from the usage endpoint
-context-bridge account add "Primary" --import
-context-bridge account add "Subscription 2"
-context-bridge account use <id>
-context-bridge account remove <id> [--purge]
+turntrail accounts                  # list, using cached quota
+turntrail accounts --refresh        # re-read quota from the usage endpoint
+turntrail account add "Primary" --import
+turntrail account add "Subscription 2"
+turntrail account use <id>
+turntrail account remove <id> [--purge]
 ```
 
 `account add --import` adopts the login already at `~/.codex` — it **copies**, so the original stays
@@ -137,11 +137,11 @@ and VS Code extension read. It backs up what it replaces first. To use an accoun
 the default, set the variable yourself for that one session:
 
 ```bash
-CODEX_HOME="$HOME/.context-bridge/accounts/<id>/codex-home" codex
+CODEX_HOME="$HOME/.turntrail/accounts/<id>/codex-home" codex
 ```
 
 Close every running Codex CLI and close or reload editor windows hosting the Codex extension before
-running `account use`. Context Bridge checks the process list and refuses to replace the credential
+running `account use`. Turntrail checks the process list and refuses to replace the credential
 while a Codex process is active, because that process could later write its previous account back
 over the new default.
 

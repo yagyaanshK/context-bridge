@@ -165,7 +165,7 @@ test('the active account remains identifiable after both live tokens rotate', as
 
   assert.equal(await isActiveCodexAccount(account.id, options), true);
   const auth = await ensureCodexAccessToken(account.id, { ...options, fetch: failIfCalled });
-  assert.equal(auth.refreshToken, 'rt.stored', 'Context Bridge must leave the active snapshot untouched');
+  assert.equal(auth.refreshToken, 'rt.stored', 'Turntrail must leave the active snapshot untouched');
 });
 
 test('switching syncs the outgoing login and renews the incoming one', async () => {

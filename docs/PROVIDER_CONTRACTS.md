@@ -1,9 +1,9 @@
 # Provider Contracts
 
-Context Bridge's handoff path is provider-neutral and offline. The optional account panel is different:
+Turntrail's handoff path is provider-neutral and offline. The optional account panel is different:
 it reads provider credential files and usage services, and its Claude sign-in performs an OAuth exchange.
 
-These interfaces are **observed private contracts**, not stable APIs promised to Context Bridge. Their URLs,
+These interfaces are **observed private contracts**, not stable APIs promised to Turntrail. Their URLs,
 client identifiers, request formats, credential layouts, and response fields may change when Codex or Claude
 changes. The current assumptions are centralized and versioned in
 `packages/core/src/accounts/provider-contracts.js`.

@@ -204,19 +204,19 @@ class AccountsWebview {
 
     view.webview.onDidReceiveMessage((message) => {
       const commands = {
-        switch: 'contextBridge.switchAccount',
-        signin: 'contextBridge.signInAccount',
-        terminal: 'contextBridge.openAccountTerminal',
-        raw: 'contextBridge.showRawUsage',
-        forget: 'contextBridge.forgetAccount',
-        purge: 'contextBridge.forgetAccount',
-        rename: 'contextBridge.renameAccount',
-        add: 'contextBridge.addAccount',
-        import: 'contextBridge.importAccount',
-        refresh: 'contextBridge.refreshAccountQuota',
-        handoff: 'contextBridge.createHandoff',
-        openHandoff: 'contextBridge.openLatestHandoff',
-        copyHandoff: 'contextBridge.copyLatestHandoffPrompt'
+        switch: 'turntrail.switchAccount',
+        signin: 'turntrail.signInAccount',
+        terminal: 'turntrail.openAccountTerminal',
+        raw: 'turntrail.showRawUsage',
+        forget: 'turntrail.forgetAccount',
+        purge: 'turntrail.forgetAccount',
+        rename: 'turntrail.renameAccount',
+        add: 'turntrail.addAccount',
+        import: 'turntrail.importAccount',
+        refresh: 'turntrail.refreshAccountQuota',
+        handoff: 'turntrail.createHandoff',
+        openHandoff: 'turntrail.openLatestHandoff',
+        copyHandoff: 'turntrail.copyLatestHandoffPrompt'
       };
       const command = commands[message?.type];
       if (!command) return;

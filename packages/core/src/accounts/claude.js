@@ -218,24 +218,45 @@ export async function purgeActiveClaudeAccount(accountId, options = {}) {
 
 export async function restoreClaudeBackup(options = {}) {
   const target = defaultClaudeHome(options);
-  const backup = claudeCredentialsBackupPath(target);
-  if (!(await pathExists(backup))) throw new Error('No Context Bridge backup to restore.');
+  const backup = await firstExistingPath([
+    claudeCredentialsBackupPath(target),
+    legacyClaudeCredentialsBackupPath(target)
+  ]);
+  if (!backup) throw new Error('No Turntrail backup to restore.');
   await assertAgentStopped(CLAUDE_PROVIDER, options);
   await copyCredential(backup, claudeCredentialsPath(target));
 
   const config = claudeConfigPath(target, options);
-  const configBackup = claudeConfigBackupPath(config);
-  if (await pathExists(configBackup)) await fs.copyFile(configBackup, config);
+  const configBackup = await firstExistingPath([
+    claudeConfigBackupPath(config),
+    legacyClaudeConfigBackupPath(config)
+  ]);
+  if (configBackup) await fs.copyFile(configBackup, config);
 
   return { restored: claudeCredentialsPath(target) };
 }
 
 function claudeCredentialsBackupPath(home) {
-  return path.join(home, '.credentials.context-bridge-backup.json');
+  return path.join(home, '.credentials.turntrail-backup.json');
 }
 
 function claudeConfigBackupPath(config) {
+  return `${config}.turntrail-backup`;
+}
+
+function legacyClaudeCredentialsBackupPath(home) {
+  return path.join(home, '.credentials.context-bridge-backup.json');
+}
+
+function legacyClaudeConfigBackupPath(config) {
   return `${config}.context-bridge-backup`;
+}
+
+async function firstExistingPath(candidates) {
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 // Which registered account the official Claude tooling is using. Tokens rotate,
@@ -324,7 +345,7 @@ export async function importClaudeAuthText(accountId, text, options = {}) {
 //
 // Written in exactly the shape Claude Code writes, so that activating this
 // account later produces a credential the official CLI and extension accept
-// without knowing Context Bridge was involved.
+// without knowing Turntrail was involved.
 export async function writeClaudeCredential(accountId, tokens, profile, options = {}) {
   if (!tokens?.accessToken) throw new Error('Sign-in returned no access token.');
   const home = await ensureClaudeHome(accountId, options);
@@ -382,7 +403,7 @@ const EXPIRY_SKEW_MS = 60 * 1000;
 //
 // It matters for the same reason it does on the Codex side: the active account's
 // token lives in the default home, where the official client refreshes it and
-// Anthropic rotates the refresh token on each use. If Context Bridge refreshed
+// Anthropic rotates the refresh token on each use. If Turntrail refreshed
 // its own copy too, one of the two would then hold a rotated-out token and get
 // "invalid_grant". Tokens drift precisely in that case, so the match falls back
 // to identity - email and organization, which do not rotate.
@@ -410,7 +431,7 @@ function sameClaudeIdentity(left, right) {
 // Claude Code refreshes its own credential in place, but only for the account
 // it is currently using. Every other account's token would simply go stale -
 // and a stale token means the panel can never show that subscription's quota,
-// which is most of the point of listing it. So Context Bridge renews them.
+// which is most of the point of listing it. So Turntrail renews them.
 export async function ensureClaudeAccessToken(accountId, options = {}) {
   const auth = await readClaudeAuth(claudeHome(accountId, options), options);
   if (!auth?.accessToken) return null;
@@ -480,10 +501,10 @@ async function readClaudeConfig(file) {
   try {
     config = await readJson(file);
   } catch (error) {
-    throw new Error(`Could not parse ${file}: ${error.message}. Context Bridge left it unchanged.`);
+    throw new Error(`Could not parse ${file}: ${error.message}. Turntrail left it unchanged.`);
   }
   if (!config || typeof config !== 'object' || Array.isArray(config)) {
-    throw new Error(`Could not update ${file}: the Claude config must be a JSON object. Context Bridge left it unchanged.`);
+    throw new Error(`Could not update ${file}: the Claude config must be a JSON object. Turntrail left it unchanged.`);
   }
   return config;
 }

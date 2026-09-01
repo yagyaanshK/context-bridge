@@ -5,12 +5,14 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   accountDir,
+  accountsRoot,
   createAccount,
   initStore,
   latestSnapshot,
   listAccounts,
   readManifest,
   renderHandoff,
+  resolveLedger,
   sanitizeContentForHandoff,
   writeExport,
   writeSession,
@@ -22,6 +24,28 @@ async function sandbox(prefix = 'context-bridge-storage-') {
   await initStore(root);
   return root;
 }
+
+test('new ledgers use Turntrail storage and existing Context Bridge ledgers stay in place', async () => {
+  const fresh = await fs.mkdtemp(path.join(os.tmpdir(), 'turntrail-storage-fresh-'));
+  await initStore(fresh);
+  assert.equal(resolveLedger(fresh), path.join(fresh, '.turntrail'));
+
+  const legacy = await fs.mkdtemp(path.join(os.tmpdir(), 'turntrail-storage-legacy-'));
+  await fs.mkdir(path.join(legacy, '.context-bridge'));
+  await initStore(legacy);
+  assert.equal(resolveLedger(legacy), path.join(legacy, '.context-bridge'));
+  await fs.access(path.join(legacy, '.context-bridge', 'manifest.json'));
+  await assert.rejects(() => fs.access(path.join(legacy, '.turntrail')));
+});
+
+test('account storage uses the new directory unless a legacy registry already exists', async () => {
+  const fresh = await fs.mkdtemp(path.join(os.tmpdir(), 'turntrail-accounts-fresh-'));
+  assert.equal(accountsRoot({ home: fresh }), path.join(fresh, '.turntrail'));
+
+  const legacy = await fs.mkdtemp(path.join(os.tmpdir(), 'turntrail-accounts-legacy-'));
+  await fs.mkdir(path.join(legacy, '.context-bridge'));
+  assert.equal(accountsRoot({ home: legacy }), path.join(legacy, '.context-bridge'));
+});
 
 test('account ids cannot traverse or name nested paths', async () => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-accounts-safe-'));
@@ -59,7 +83,7 @@ test('latest snapshot refuses manifest paths outside the snapshots directory', a
   const root = await sandbox();
   const outside = path.join(root, 'outside.json');
   await fs.writeFile(outside, JSON.stringify({ secret: true }), 'utf8');
-  const manifestPath = path.join(root, '.context-bridge', 'manifest.json');
+  const manifestPath = path.join(root, '.turntrail', 'manifest.json');
   const manifest = await readManifest(root);
   manifest.snapshots = [{ id: 'bad', path: '../../outside.json', createdAt: '2099-01-01T00:00:00.000Z' }];
   await fs.writeFile(manifestPath, JSON.stringify(manifest), 'utf8');

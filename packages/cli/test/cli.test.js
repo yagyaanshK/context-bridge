@@ -12,7 +12,8 @@ test('cli init and status write expected output', async () => {
   const io = { stdout: { write: (chunk) => { output += chunk; } } };
 
   await runCli(['init', '--cwd', root], io);
-  assert.match(output, /Initialized Context Bridge/);
+  assert.match(output, /Initialized Turntrail/);
+  await fs.access(path.join(root, '.turntrail', 'manifest.json'));
 
   output = '';
   await runCli(['status', '--cwd', root], io);

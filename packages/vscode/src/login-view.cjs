@@ -8,7 +8,7 @@ const { allowedLoginUrl, appendBoundedOutput } = require('./security.cjs');
 // The two agents get there very differently, and the difference is forced:
 //
 // Codex - the official `codex` binary performs the whole OAuth exchange and
-// writes the credential. Context Bridge only runs it as a child process with
+// writes the credential. Turntrail only runs it as a child process with
 // CODEX_HOME pointed at the right directory, reads its plain-text output, and
 // presents the result. We never see the authorization code and never hold a
 // token.
@@ -16,7 +16,7 @@ const { allowedLoginUrl, appendBoundedOutput } = require('./security.cjs');
 // Claude - none of that is possible. `claude` and `claude setup-token` render
 // an Ink terminal UI that requires raw mode on stdin, so a piped child process
 // dies before printing anything, and `setup-token` writes no credential even
-// when it succeeds. So Context Bridge runs the same public PKCE flow the CLI
+// when it succeeds. So Turntrail runs the same public PKCE flow the CLI
 // runs and writes the credential itself. That is a real difference in what this
 // extension handles, and it is why the Claude paths live in core with their own
 // tests rather than being a thin wrapper over a process.
@@ -162,7 +162,7 @@ class LoginPanel {
       try {
         await this.rollbackProvisional();
       } catch (cleanupError) {
-        throw new Error(`${error.message} Context Bridge could not remove the incomplete account: ${cleanupError.message}`);
+        throw new Error(`${error.message} Turntrail could not remove the incomplete account: ${cleanupError.message}`);
       }
       throw error;
     } finally {
@@ -553,7 +553,7 @@ function codexCards() {
         </div>
         <p class="note">Runs <code>codex login --with-access-token</code>. Workspace admins issue these
           for trusted scripts and private CI runners. The token goes straight to <code>codex</code> on
-          standard input — Context Bridge does not store or log it.</p>
+          standard input — Turntrail does not store or log it.</p>
       </div>
     </section>
 
@@ -574,7 +574,7 @@ function codexCards() {
           <button class="action" data-retry="apikey" hidden>Retry</button>
           <button class="action" data-cancel>Cancel</button>
         </div>
-        <p class="note">The key is passed straight to <code>codex</code> on standard input. Context Bridge does not store or log it.</p>
+        <p class="note">The key is passed straight to <code>codex</code> on standard input. Turntrail does not store or log it.</p>
       </div>
     </section>
 
@@ -701,9 +701,9 @@ function claudeCards() {
 }
 
 const LEDE = {
-  codex: `Context Bridge runs the official <code>codex</code> sign-in and stores the result in
+  codex: `Turntrail runs the official <code>codex</code> sign-in and stores the result in
       its own directory, so your existing login stays exactly as it is.`,
-  claude: `Context Bridge runs Claude's own sign-in flow and stores the result in its own
+  claude: `Turntrail runs Claude's own sign-in flow and stores the result in its own
       directory, so your existing login stays exactly as it is.`
 };
 

@@ -47,7 +47,7 @@ export async function assertAgentStopped(provider, options = {}) {
   throw new Error(
     `${label} is still running: ${details}${extra}. ` +
       `Close its CLI processes and close or reload IDE windows hosting the ${label} extension, then retry. ` +
-      'Context Bridge did not change the live credential.'
+      'Turntrail did not change the live credential.'
   );
 }
 

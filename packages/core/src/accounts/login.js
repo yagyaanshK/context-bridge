@@ -1,6 +1,6 @@
 // Driving the official `codex login` without a terminal.
 //
-// Context Bridge never performs the OAuth exchange itself. Doing so would mean
+// Turntrail never performs the OAuth exchange itself. Doing so would mean
 // holding a subscription's tokens in a tool that is not the official client,
 // which is the line the provider's terms draw. Instead the official binary runs
 // as a child process and we read its output to drive our own progress UI: the

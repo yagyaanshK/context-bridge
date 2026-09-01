@@ -4,6 +4,7 @@ npm-debug.log*
 .DS_Store
 
 # Local context ledgers may contain private transcripts and command output.
+.turntrail/
 .context-bridge/
 
 # Test scratch space.

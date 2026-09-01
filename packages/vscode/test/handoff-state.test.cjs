@@ -6,7 +6,7 @@ const { handoffForRoot, normalizedPath } = require('../src/handoff-state.cjs');
 test('latest handoff is visible only in the workspace that created it', () => {
   const first = path.resolve('workspace-a');
   const second = path.resolve('workspace-b');
-  const latest = { root: first, handoffPath: path.join(first, '.context-bridge', 'exports', 'one.md') };
+  const latest = { root: first, handoffPath: path.join(first, '.turntrail', 'exports', 'one.md') };
   assert.equal(handoffForRoot(latest, first), latest);
   assert.equal(handoffForRoot(latest, second), undefined);
   assert.equal(handoffForRoot(latest, undefined), undefined);

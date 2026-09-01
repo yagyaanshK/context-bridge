@@ -15,7 +15,7 @@ for (const key of Object.keys(process.env)) {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const extensionDevelopmentPath = path.join(root, 'packages', 'vscode');
 const extensionTestsPath = path.join(extensionDevelopmentPath, 'integration', 'host.cjs');
-const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'context-bridge-vscode-'));
+const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'turntrail-vscode-'));
 const home = path.join(scratch, 'home');
 const userData = path.join(scratch, 'user-data');
 const extensionsDir = path.join(scratch, 'extensions');
@@ -29,7 +29,7 @@ await Promise.all([
 
 const vscodeExecutablePath = await downloadAndUnzipVSCode('1.95.3');
 const commonEnv = {
-  CONTEXT_BRIDGE_EXTENSION_TESTS: '1',
+  TURNTRAIL_EXTENSION_TESTS: '1',
   HOME: home,
   USERPROFILE: home,
   APPDATA: path.join(home, 'AppData', 'Roaming'),
@@ -53,7 +53,7 @@ async function trusted(scenario, workspace) {
       `--user-data-dir=${userData}`,
       `--extensions-dir=${extensionsDir}`
     ],
-    extensionTestsEnv: { ...commonEnv, CONTEXT_BRIDGE_TEST_SCENARIO: scenario }
+    extensionTestsEnv: { ...commonEnv, TURNTRAIL_TEST_SCENARIO: scenario }
   });
 }
 
@@ -75,7 +75,7 @@ async function untrusted(workspace) {
   await spawnAndWait(vscodeExecutablePath, args, {
     ...process.env,
     ...commonEnv,
-    CONTEXT_BRIDGE_TEST_SCENARIO: 'untrusted'
+    TURNTRAIL_TEST_SCENARIO: 'untrusted'
   });
 }
 

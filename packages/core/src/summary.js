@@ -114,7 +114,7 @@ function collapseWhitespace(value) {
 function clip(value, maxChars) {
   const text = String(value || '');
   if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars).replace(/\s+$/, '')}\n... [Context Bridge clipped ${text.length - maxChars} chars] ...`;
+  return `${text.slice(0, maxChars).replace(/\s+$/, '')}\n... [Turntrail clipped ${text.length - maxChars} chars] ...`;
 }
 
 function last(items) {

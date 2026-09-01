@@ -42,7 +42,7 @@ export async function initStore(root, options = {}) {
 export async function readManifest(root) {
   const manifestPath = path.join(resolveLedger(root), 'manifest.json');
   if (!(await pathExists(manifestPath))) {
-    throw new Error('Context Bridge is not initialized. Run `context-bridge init` first.');
+    throw new Error('Turntrail is not initialized. Run `turntrail init` first.');
   }
   return readJson(manifestPath);
 }

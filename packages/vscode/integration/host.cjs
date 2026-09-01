@@ -6,7 +6,7 @@ const vscode = require('vscode');
 const EXTENSION_ID = 'yagyaanshK.context-bridge-vscode';
 
 async function run() {
-  const scenario = process.env.CONTEXT_BRIDGE_TEST_SCENARIO;
+  const scenario = process.env.TURNTRAIL_TEST_SCENARIO || process.env.CONTEXT_BRIDGE_TEST_SCENARIO;
   if (scenario === 'untrusted') return untrustedWorkspace();
 
   assert.equal(vscode.workspace.isTrusted, true, `${scenario} must run as a trusted workspace`);
@@ -26,11 +26,11 @@ async function smokeAndSeed(hooks) {
   const root = workspaceRoot();
   const commands = await vscode.commands.getCommands(true);
   for (const command of [
-    'contextBridge.discoverClaude',
-    'contextBridge.discoverCodex',
-    'contextBridge.copyLatestHandoffPrompt',
-    'contextBridge.openLatestHandoff',
-    'contextBridge.createHandoff'
+    'turntrail.discoverClaude',
+    'turntrail.discoverCodex',
+    'turntrail.copyLatestHandoffPrompt',
+    'turntrail.openLatestHandoff',
+    'turntrail.createHandoff'
   ]) {
     assert.equal(commands.includes(command), true, `${command} must be registered`);
   }
@@ -45,14 +45,14 @@ async function smokeAndSeed(hooks) {
   assert.match(state.webviewHtml, /acquireVsCodeApi\(\)/);
 
   const handoffPath = path.join(root, 'handoff.md');
-  const prompt = 'Context Bridge extension-host prompt';
+  const prompt = 'Turntrail extension-host prompt';
   await fs.writeFile(handoffPath, '# Integration handoff\n', 'utf8');
   await hooks.rememberLatest(root, 'claude', handoffPath, prompt);
   assert.equal((await hooks.latestState(root))?.prompt, prompt);
   assert.equal(await hooks.latestState(path.join(path.dirname(root), 'workspace-b')), undefined);
-  await vscode.commands.executeCommand('contextBridge.copyLatestHandoffPrompt');
+  await vscode.commands.executeCommand('turntrail.copyLatestHandoffPrompt');
   assert.equal(await vscode.env.clipboard.readText(), prompt);
-  await vscode.commands.executeCommand('contextBridge.openLatestHandoff');
+  await vscode.commands.executeCommand('turntrail.openLatestHandoff');
   assert.equal(vscode.window.activeTextEditor?.document.uri.fsPath, handoffPath);
 
   const source = new vscode.CancellationTokenSource();
@@ -81,7 +81,7 @@ async function untrustedWorkspace() {
   const extension = vscode.extensions.getExtension(EXTENSION_ID);
   assert.ok(extension);
   assert.equal(extension.packageJSON.capabilities?.untrustedWorkspaces?.supported, false);
-  assert.equal(extension.isActive, false, 'Context Bridge must not activate in an untrusted workspace');
+  assert.equal(extension.isActive, false, 'Turntrail must not activate in an untrusted workspace');
 }
 
 function workspaceRoot() {
@@ -93,7 +93,7 @@ function workspaceRoot() {
 async function waitFor(predicate, timeoutMs = 10000) {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
-    if (Date.now() > deadline) throw new Error('Timed out waiting for the Context Bridge webview');
+    if (Date.now() > deadline) throw new Error('Timed out waiting for the Turntrail webview');
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }

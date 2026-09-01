@@ -246,7 +246,7 @@ export async function activateCodexAccount(accountId, options = {}) {
 
   let backup;
   if (await pathExists(targetAuth)) {
-    backup = path.join(target, 'auth.context-bridge-backup.json');
+    backup = path.join(target, 'auth.turntrail-backup.json');
     await fs.copyFile(targetAuth, backup);
   }
 
@@ -357,8 +357,10 @@ export async function activeCodexAccountId(accounts, options = {}) {
 // Put back whatever `activateCodexAccount` displaced.
 export async function restoreCodexBackup(options = {}) {
   const target = defaultCodexHome(options);
-  const backup = path.join(target, 'auth.context-bridge-backup.json');
-  if (!(await pathExists(backup))) throw new Error('No Context Bridge backup to restore.');
+  const canonical = path.join(target, 'auth.turntrail-backup.json');
+  const legacy = path.join(target, 'auth.context-bridge-backup.json');
+  const backup = (await pathExists(canonical)) ? canonical : (await pathExists(legacy)) ? legacy : undefined;
+  if (!backup) throw new Error('No Turntrail backup to restore.');
   await assertAgentStopped(CODEX_PROVIDER, options);
   await copyCredential(backup, codexAuthPath(target));
   return { restored: codexAuthPath(target) };

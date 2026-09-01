@@ -1,8 +1,8 @@
 {
   "name": "context-bridge-vscode",
-  "displayName": "Context Bridge",
+  "displayName": "Turntrail",
   "description": "Continue developer agent sessions across Claude, Codex, and other tools from VS Code.",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "publisher": "yagyaanshK",
   "license": "MIT",
   "type": "commonjs",
@@ -13,7 +13,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false,
-      "description": "Context Bridge reads local agent transcripts and Git workspace state, and can launch provider tools. Trust this workspace before using it."
+      "description": "Turntrail reads local agent transcripts and Git workspace state, and can launch provider tools. Trust this workspace before using it."
     }
   },
   "categories": [
@@ -29,14 +29,39 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/yagyaanshK/context-bridge.git"
+    "url": "https://github.com/yagyaanshK/turntrail.git"
   },
   "bugs": {
-    "url": "https://github.com/yagyaanshK/context-bridge/issues"
+    "url": "https://github.com/yagyaanshK/turntrail/issues"
   },
-  "homepage": "https://github.com/yagyaanshK/context-bridge#readme",
+  "homepage": "https://github.com/yagyaanshK/turntrail#readme",
   "activationEvents": [
     "onView:contextBridgeAccounts",
+    "onCommand:turntrail.switchAccount",
+    "onCommand:turntrail.refreshAccountQuota",
+    "onCommand:turntrail.discoverClaude",
+    "onCommand:turntrail.discoverCodex",
+    "onCommand:turntrail.importLatestClaude",
+    "onCommand:turntrail.importLatestCodex",
+    "onCommand:turntrail.handoffToClaudeExisting",
+    "onCommand:turntrail.handoffToClaudeNew",
+    "onCommand:turntrail.handoffToCodexExisting",
+    "onCommand:turntrail.handoffToCodexNew",
+    "onCommand:turntrail.openLatestHandoff",
+    "onCommand:turntrail.copyLatestHandoffPrompt",
+    "onCommand:turntrail.showRawUsage",
+    "onCommand:turntrail.undoAccountSwitch",
+    "onCommand:turntrail.addAccount",
+    "onCommand:turntrail.importAccount",
+    "onCommand:turntrail.addCodexAccount",
+    "onCommand:turntrail.addClaudeAccount",
+    "onCommand:turntrail.importCodexAccount",
+    "onCommand:turntrail.importClaudeAccount",
+    "onCommand:turntrail.signInAccount",
+    "onCommand:turntrail.openAccountTerminal",
+    "onCommand:turntrail.renameAccount",
+    "onCommand:turntrail.forgetAccount",
+    "onCommand:turntrail.createHandoff",
     "onCommand:contextBridge.switchAccount",
     "onCommand:contextBridge.refreshAccountQuota",
     "onCommand:contextBridge.discoverClaude",
@@ -49,12 +74,18 @@
     "onCommand:contextBridge.handoffToCodexNew",
     "onCommand:contextBridge.openLatestHandoff",
     "onCommand:contextBridge.copyLatestHandoffPrompt",
+    "onCommand:contextBridge.showRawUsage",
+    "onCommand:contextBridge.undoAccountSwitch",
     "onCommand:contextBridge.addAccount",
     "onCommand:contextBridge.importAccount",
     "onCommand:contextBridge.addCodexAccount",
     "onCommand:contextBridge.addClaudeAccount",
     "onCommand:contextBridge.importCodexAccount",
     "onCommand:contextBridge.importClaudeAccount",
+    "onCommand:contextBridge.signInAccount",
+    "onCommand:contextBridge.openAccountTerminal",
+    "onCommand:contextBridge.renameAccount",
+    "onCommand:contextBridge.forgetAccount",
     "onCommand:contextBridge.createHandoff"
   ],
   "main": "./src/extension.cjs",
@@ -63,7 +94,7 @@
       "activitybar": [
         {
           "id": "contextBridge",
-          "title": "Context Bridge",
+          "title": "Turntrail",
           "icon": "$(arrow-swap)"
         }
       ]
@@ -73,242 +104,298 @@
         {
           "id": "contextBridgeAccounts",
           "name": "Accounts",
-          "contextualTitle": "Context Bridge",
+          "contextualTitle": "Turntrail",
           "type": "webview"
         }
       ]
     },
     "commands": [
       {
-        "command": "contextBridge.addAccount",
-        "title": "Context Bridge: Add Account",
+        "command": "turntrail.addAccount",
+        "title": "Turntrail: Add Account",
         "icon": "$(add)"
       },
       {
-        "command": "contextBridge.importAccount",
-        "title": "Context Bridge: Import Current Login"
+        "command": "turntrail.importAccount",
+        "title": "Turntrail: Import Current Login"
       },
       {
-        "command": "contextBridge.addClaudeAccount",
-        "title": "Context Bridge: Add Claude Account"
+        "command": "turntrail.addClaudeAccount",
+        "title": "Turntrail: Add Claude Account"
       },
       {
-        "command": "contextBridge.importClaudeAccount",
-        "title": "Context Bridge: Import Current Claude Login"
+        "command": "turntrail.importClaudeAccount",
+        "title": "Turntrail: Import Current Claude Login"
       },
       {
-        "command": "contextBridge.addCodexAccount",
-        "title": "Context Bridge: Add Codex Subscription",
+        "command": "turntrail.addCodexAccount",
+        "title": "Turntrail: Add Codex Subscription",
         "icon": "$(add)"
       },
       {
-        "command": "contextBridge.importCodexAccount",
-        "title": "Context Bridge: Import Current Codex Login"
+        "command": "turntrail.importCodexAccount",
+        "title": "Turntrail: Import Current Codex Login"
       },
       {
-        "command": "contextBridge.signInAccount",
-        "title": "Context Bridge: Sign In",
+        "command": "turntrail.signInAccount",
+        "title": "Turntrail: Sign In",
         "icon": "$(sign-in)"
       },
       {
-        "command": "contextBridge.refreshAccountQuota",
-        "title": "Context Bridge: Refresh Account Quota",
+        "command": "turntrail.refreshAccountQuota",
+        "title": "Turntrail: Refresh Account Quota",
         "icon": "$(refresh)"
       },
       {
-        "command": "contextBridge.openAccountTerminal",
-        "title": "Context Bridge: Open Terminal for Account",
+        "command": "turntrail.openAccountTerminal",
+        "title": "Turntrail: Open Terminal for Account",
         "icon": "$(terminal)"
       },
       {
-        "command": "contextBridge.switchAccount",
-        "title": "Context Bridge: Switch Account",
+        "command": "turntrail.switchAccount",
+        "title": "Turntrail: Switch Account",
         "icon": "$(arrow-swap)"
       },
       {
-        "command": "contextBridge.undoAccountSwitch",
-        "title": "Context Bridge: Undo Account Switch"
+        "command": "turntrail.undoAccountSwitch",
+        "title": "Turntrail: Undo Account Switch"
       },
       {
-        "command": "contextBridge.showRawUsage",
-        "title": "Context Bridge: Show Raw Response",
+        "command": "turntrail.showRawUsage",
+        "title": "Turntrail: Show Raw Response",
         "icon": "$(json)"
       },
       {
-        "command": "contextBridge.renameAccount",
-        "title": "Context Bridge: Rename Account",
+        "command": "turntrail.renameAccount",
+        "title": "Turntrail: Rename Account",
         "icon": "$(edit)"
       },
       {
-        "command": "contextBridge.forgetAccount",
-        "title": "Context Bridge: Remove Account",
+        "command": "turntrail.forgetAccount",
+        "title": "Turntrail: Remove Account",
         "icon": "$(trash)"
       },
       {
-        "command": "contextBridge.discoverClaude",
-        "title": "Context Bridge: Discover Claude Sessions"
+        "command": "turntrail.discoverClaude",
+        "title": "Turntrail: Discover Claude Sessions"
       },
       {
-        "command": "contextBridge.discoverCodex",
-        "title": "Context Bridge: Discover Codex Sessions"
+        "command": "turntrail.discoverCodex",
+        "title": "Turntrail: Discover Codex Sessions"
       },
       {
-        "command": "contextBridge.importLatestClaude",
-        "title": "Context Bridge: Import Latest Claude Session"
+        "command": "turntrail.importLatestClaude",
+        "title": "Turntrail: Import Latest Claude Session"
       },
       {
-        "command": "contextBridge.importLatestCodex",
-        "title": "Context Bridge: Import Latest Codex Session"
+        "command": "turntrail.importLatestCodex",
+        "title": "Turntrail: Import Latest Codex Session"
       },
       {
-        "command": "contextBridge.handoffToClaudeExisting",
-        "title": "Context Bridge: Handoff to Existing Claude Session"
+        "command": "turntrail.handoffToClaudeExisting",
+        "title": "Turntrail: Handoff to Existing Claude Session"
       },
       {
-        "command": "contextBridge.handoffToClaudeNew",
-        "title": "Context Bridge: Handoff to New Claude Session"
+        "command": "turntrail.handoffToClaudeNew",
+        "title": "Turntrail: Handoff to New Claude Session"
       },
       {
-        "command": "contextBridge.handoffToCodexExisting",
-        "title": "Context Bridge: Handoff to Existing Codex Session"
+        "command": "turntrail.handoffToCodexExisting",
+        "title": "Turntrail: Handoff to Existing Codex Session"
       },
       {
-        "command": "contextBridge.handoffToCodexNew",
-        "title": "Context Bridge: Handoff to New Codex Session"
+        "command": "turntrail.handoffToCodexNew",
+        "title": "Turntrail: Handoff to New Codex Session"
       },
       {
-        "command": "contextBridge.openLatestHandoff",
-        "title": "Context Bridge: Open Latest Handoff"
+        "command": "turntrail.openLatestHandoff",
+        "title": "Turntrail: Open Latest Handoff"
       },
       {
-        "command": "contextBridge.copyLatestHandoffPrompt",
-        "title": "Context Bridge: Copy Latest Handoff Prompt"
+        "command": "turntrail.copyLatestHandoffPrompt",
+        "title": "Turntrail: Copy Latest Handoff Prompt"
       },
       {
-        "command": "contextBridge.createHandoff",
-        "title": "Context Bridge: Create Handoff"
+        "command": "turntrail.createHandoff",
+        "title": "Turntrail: Create Handoff"
       }
     ],
     "configuration": {
-      "title": "Context Bridge",
+      "title": "Turntrail",
       "properties": {
-        "contextBridge.maxExportChars": {
+        "turntrail.maxExportChars": {
           "type": "number",
           "default": 120000,
           "description": "Character budget for the transcript embedded in a handoff. Receiving agents refuse or silently truncate oversized files, so an unbounded handoff delivers less than a budgeted one. User turns are reserved first, then the most recent remaining turns fill the budget; anything dropped is reported in the handoff header. 0 disables clipping."
         },
-        "contextBridge.sinceLastExport": {
+        "turntrail.sinceLastExport": {
           "type": "boolean",
           "default": false,
           "description": "Send only what the receiving agent has not seen. Its watermark is its own last turn or the last handoff aimed at it, whichever is later, so a round trip delivers just the other agent's work and never re-sends an agent its own history. Leave this off if you paste handoffs into fresh sessions, which have no memory of what an earlier handoff delivered."
         },
-        "contextBridge.dedupeTurns": {
+        "turntrail.dedupeTurns": {
           "type": "boolean",
           "default": true,
           "description": "Collapse consecutive duplicate turns. Native logs (e.g. Codex) record each message under several event types, producing 2-3 identical copies; this removes the repeats."
         },
-        "contextBridge.toolMaxChars": {
+        "turntrail.toolMaxChars": {
           "type": "number",
           "default": 2000,
           "description": "Truncate tool-output turns longer than this many characters (keeping head and tail). 0 disables truncation. Tool outputs like git diffs and directory listings dominate handoff size."
         },
-        "contextBridge.systemMaxChars": {
+        "turntrail.systemMaxChars": {
           "type": "number",
           "default": 800,
           "description": "Truncate system turns (e.g. repeated turn-context blobs) longer than this many characters. 0 disables truncation."
         },
-        "contextBridge.snapshotDiffMaxChars": {
+        "turntrail.snapshotDiffMaxChars": {
           "type": "number",
           "default": 4000,
           "description": "How much of the uncommitted diff (staged and unstaged, vs HEAD) to include in the handoff. A handoff taken mid-edit is exactly when this matters. 0 omits the diff body; the file-level stat is still shown."
         },
-        "contextBridge.keepExports": {
+        "turntrail.keepExports": {
           "type": "number",
           "default": 10,
-          "description": "How many past handoff files to keep in .context-bridge/exports. Older ones are deleted after each export. 0 keeps all of them."
+          "description": "How many past handoff files to keep in .turntrail/exports. Older ones are deleted after each export. 0 keeps all of them."
         },
-        "contextBridge.openHandoffDocument": {
+        "turntrail.openHandoffDocument": {
           "type": "boolean",
           "default": true,
           "description": "Open the generated handoff markdown document after export."
         },
-        "contextBridge.claudeUri": {
+        "turntrail.claudeUri": {
           "type": "string",
           "scope": "application",
           "default": "vscode://anthropic.claude-code/open",
           "description": "Optional application-level URI used to open Claude Code. Only the current editor scheme with anthropic.claude-code/open is accepted."
         },
-        "contextBridge.allowExternalClaudeUri": {
+        "turntrail.allowExternalClaudeUri": {
           "type": "boolean",
           "scope": "application",
           "default": false,
-          "description": "Allow Context Bridge to open the validated Claude extension URI using the current editor's URI scheme."
+          "description": "Allow Turntrail to open the validated Claude extension URI using the current editor's URI scheme."
         },
-        "contextBridge.claudeOpenCommand": {
+        "turntrail.claudeOpenCommand": {
           "type": "string",
           "scope": "application",
           "default": "",
           "description": "Optional application-level installed command used to open or focus Claude. Unrelated and destructive command ids are rejected."
         },
-        "contextBridge.codexOpenCommand": {
+        "turntrail.codexOpenCommand": {
           "type": "string",
           "scope": "application",
           "default": "",
           "description": "Optional application-level installed command used to open or focus Codex. Unrelated and destructive command ids are rejected."
         },
-        "contextBridge.alwaysUseLatestSession": {
+        "turntrail.alwaysUseLatestSession": {
           "type": "boolean",
           "default": false,
           "description": "When several agent sessions were started in this workspace, use the most recently active one without asking. Off by default: sessions in one folder are not interchangeable, and the most recently touched is often not the one worth continuing."
+        },
+        "contextBridge.maxExportChars": {
+          "type": "number",
+          "deprecationMessage": "Renamed to turntrail.maxExportChars. Existing values remain supported."
+        },
+        "contextBridge.sinceLastExport": {
+          "type": "boolean",
+          "deprecationMessage": "Renamed to turntrail.sinceLastExport. Existing values remain supported."
+        },
+        "contextBridge.dedupeTurns": {
+          "type": "boolean",
+          "deprecationMessage": "Renamed to turntrail.dedupeTurns. Existing values remain supported."
+        },
+        "contextBridge.toolMaxChars": {
+          "type": "number",
+          "deprecationMessage": "Renamed to turntrail.toolMaxChars. Existing values remain supported."
+        },
+        "contextBridge.systemMaxChars": {
+          "type": "number",
+          "deprecationMessage": "Renamed to turntrail.systemMaxChars. Existing values remain supported."
+        },
+        "contextBridge.snapshotDiffMaxChars": {
+          "type": "number",
+          "deprecationMessage": "Renamed to turntrail.snapshotDiffMaxChars. Existing values remain supported."
+        },
+        "contextBridge.keepExports": {
+          "type": "number",
+          "deprecationMessage": "Renamed to turntrail.keepExports. Existing values remain supported."
+        },
+        "contextBridge.openHandoffDocument": {
+          "type": "boolean",
+          "deprecationMessage": "Renamed to turntrail.openHandoffDocument. Existing values remain supported."
+        },
+        "contextBridge.claudeUri": {
+          "type": "string",
+          "scope": "application",
+          "deprecationMessage": "Renamed to turntrail.claudeUri. Existing values remain supported."
+        },
+        "contextBridge.allowExternalClaudeUri": {
+          "type": "boolean",
+          "scope": "application",
+          "deprecationMessage": "Renamed to turntrail.allowExternalClaudeUri. Existing values remain supported."
+        },
+        "contextBridge.claudeOpenCommand": {
+          "type": "string",
+          "scope": "application",
+          "deprecationMessage": "Renamed to turntrail.claudeOpenCommand. Existing values remain supported."
+        },
+        "contextBridge.codexOpenCommand": {
+          "type": "string",
+          "scope": "application",
+          "deprecationMessage": "Renamed to turntrail.codexOpenCommand. Existing values remain supported."
+        },
+        "contextBridge.alwaysUseLatestSession": {
+          "type": "boolean",
+          "deprecationMessage": "Renamed to turntrail.alwaysUseLatestSession. Existing values remain supported."
         }
       }
     },
     "menus": {
       "view/title": [
         {
-          "command": "contextBridge.addAccount",
+          "command": "turntrail.addAccount",
           "when": "view == contextBridgeAccounts",
           "group": "navigation@1"
         },
         {
-          "command": "contextBridge.refreshAccountQuota",
+          "command": "turntrail.refreshAccountQuota",
           "when": "view == contextBridgeAccounts",
           "group": "navigation@2"
         },
         {
-          "command": "contextBridge.importAccount",
+          "command": "turntrail.importAccount",
           "when": "view == contextBridgeAccounts",
           "group": "1_add"
         }
       ],
       "commandPalette": [
         {
-          "command": "contextBridge.handoffToClaudeExisting"
+          "command": "turntrail.handoffToClaudeExisting"
         },
         {
-          "command": "contextBridge.handoffToClaudeNew"
+          "command": "turntrail.handoffToClaudeNew"
         },
         {
-          "command": "contextBridge.handoffToCodexExisting"
+          "command": "turntrail.handoffToCodexExisting"
         },
         {
-          "command": "contextBridge.handoffToCodexNew"
+          "command": "turntrail.handoffToCodexNew"
         },
         {
-          "command": "contextBridge.discoverClaude"
+          "command": "turntrail.discoverClaude"
         },
         {
-          "command": "contextBridge.discoverCodex"
+          "command": "turntrail.discoverCodex"
         },
         {
-          "command": "contextBridge.createHandoff",
+          "command": "turntrail.createHandoff",
           "when": "false"
         }
       ]
     }
   },
   "dependencies": {
-    "@context-bridge/core": "0.11.1"
+    "@turntrail/core": "0.12.0"
   },
   "devDependencies": {
     "@types/vscode": "^1.95.0"

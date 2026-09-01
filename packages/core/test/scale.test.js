@@ -30,7 +30,7 @@ test('an oversized latest user request is truncated into the budget instead of d
   assert.ok(user.size <= 700);
   assert.match(user.block, /START-/);
   assert.match(user.block, /-END/);
-  assert.match(user.block, /Context Bridge truncated/);
+  assert.match(user.block, /Turntrail truncated/);
 
   const impossiblySmall = selectPreparedTurns(prepared, 10);
   assert.equal(impossiblySmall.prepared.some((item) => item.role === 'user'), true, 'intent wins even when header overhead exceeds the budget');

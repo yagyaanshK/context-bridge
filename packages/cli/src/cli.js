@@ -19,26 +19,27 @@ import {
   normalizeNativeProvider,
   readManifest,
   removeAccount,
+  resolveLedger,
   defaultCodexHome
-} from '@context-bridge/core';
+} from '@turntrail/core';
 import { spawn } from 'node:child_process';
 
-const HELP = `Context Bridge
+const HELP = `Turntrail
 
 Usage:
-  context-bridge init [--cwd <path>]
-  context-bridge import --provider <name> [--surface <name>] <file> [--cwd <path>]
-  context-bridge discover --provider claude|codex [--all] [--cwd <path>]
-  context-bridge import-native --provider claude|codex [--last|--session <id>] [--all] [--cwd <path>]
-  context-bridge run claude|codex [-- <native args>] [--cwd <path>]
-  context-bridge snapshot [--cwd <path>]
-  context-bridge export --to <target> [--max-chars <n>] [--no-dedupe] [--since-last-export]
+  turntrail init [--cwd <path>]
+  turntrail import --provider <name> [--surface <name>] <file> [--cwd <path>]
+  turntrail discover --provider claude|codex [--all] [--cwd <path>]
+  turntrail import-native --provider claude|codex [--last|--session <id>] [--all] [--cwd <path>]
+  turntrail run claude|codex [-- <native args>] [--cwd <path>]
+  turntrail snapshot [--cwd <path>]
+  turntrail export --to <target> [--max-chars <n>] [--no-dedupe] [--since-last-export]
                         [--tool-max-chars <n>] [--system-max-chars <n>] [--cwd <path>]
-  context-bridge status [--cwd <path>]
-  context-bridge accounts [--provider codex] [--refresh]
-  context-bridge account add <label> [--import]
-  context-bridge account use <id>
-  context-bridge account remove <id> [--purge]
+  turntrail status [--cwd <path>]
+  turntrail accounts [--provider codex] [--refresh]
+  turntrail account add <label> [--import]
+  turntrail account use <id>
+  turntrail account remove <id> [--purge]
 
 Account options:
   --import                Adopt the login already in the default CODEX_HOME
@@ -66,13 +67,16 @@ Export options:
   --no-summary            Omit the extractive "Where This Left Off" section.
 
 Examples:
-  context-bridge init
-  context-bridge import --provider claude --surface cli ./transcript.jsonl
-  context-bridge discover --provider codex
-  context-bridge import-native --provider claude --last
-  context-bridge run codex -- --approval-mode auto-edit
-  context-bridge snapshot
-  context-bridge export --to codex --max-chars 60000
+  turntrail init
+  turntrail import --provider claude --surface cli ./transcript.jsonl
+  turntrail discover --provider codex
+  turntrail import-native --provider claude --last
+  turntrail run codex -- --approval-mode auto-edit
+  turntrail snapshot
+  turntrail export --to codex --max-chars 60000
+
+Compatibility:
+  The legacy context-bridge executable remains an alias for turntrail.
 `;
 
 export async function runCli(argv, io = process) {
@@ -86,7 +90,7 @@ export async function runCli(argv, io = process) {
 
   if (command === 'init') {
     await initStore(cwd);
-    io.stdout.write(`Initialized Context Bridge at ${path.join(cwd, '.context-bridge')}\n`);
+    io.stdout.write(`Initialized Turntrail at ${resolveLedger(cwd)}\n`);
     return;
   }
 
@@ -172,7 +176,7 @@ export async function runCli(argv, io = process) {
   if (command === 'accounts') {
     const accounts = await listAccounts({ provider: flags.provider || 'codex' });
     if (accounts.length === 0) {
-      io.stdout.write('No accounts yet. Add one with `context-bridge account add <label>`.\n');
+      io.stdout.write('No accounts yet. Add one with `turntrail account add <label>`.\n');
       return;
     }
     const rows = [];
@@ -442,7 +446,7 @@ function renderAccountRow(account, usage, signedIn) {
 
 function renderStatus(manifest) {
   return [
-    'Context Bridge status',
+    'Turntrail status',
     '',
     `Project root: ${manifest.projectRoot}`,
     `Schema version: ${manifest.schemaVersion}`,

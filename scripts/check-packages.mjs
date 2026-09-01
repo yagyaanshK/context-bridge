@@ -19,10 +19,10 @@ for (const workspacePath of workspacePaths) {
   assert.equal(manifest.version, rootPackage.version, `${workspacePath} version must match the workspace`);
   assert.equal(locked.version, manifest.version, `${workspacePath} lockfile version is stale`);
 
-  const coreVersion = manifest.dependencies?.['@context-bridge/core'];
+  const coreVersion = manifest.dependencies?.['@turntrail/core'];
   if (coreVersion !== undefined) {
     assert.equal(coreVersion, rootPackage.version, `${workspacePath} must depend on the matching core release`);
-    assert.equal(locked.dependencies?.['@context-bridge/core'], coreVersion, `${workspacePath} core lock is stale`);
+    assert.equal(locked.dependencies?.['@turntrail/core'], coreVersion, `${workspacePath} core lock is stale`);
   }
 }
 

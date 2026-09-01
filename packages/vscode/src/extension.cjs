@@ -21,41 +21,41 @@ async function activateExtension(context) {
   // The panel is only visible when its view is open, so the account in use also
   // lives in the status bar - that is where you look while actually working.
   accountStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  accountStatus.command = 'contextBridge.switchAccount';
-  accountStatus.name = 'Context Bridge: active account';
+  accountStatus.command = 'turntrail.switchAccount';
+  accountStatus.name = 'Turntrail: active account';
   accountsProvider.onDidChange(() => accountsProvider.summary().then(renderStatus));
 
   context.subscriptions.push(
     accountStatus,
     accountsProvider.emitter,
     vscode.window.registerWebviewViewProvider('contextBridgeAccounts', accountsWebview),
-    command('contextBridge.switchAccount', (item) => switchAccount(item)),
-    command('contextBridge.showRawUsage', (item) => showRawUsage(item)),
-    command('contextBridge.undoAccountSwitch', () => undoAccountSwitch()),
-    command('contextBridge.addAccount', (item) => addAccount(item)),
-    command('contextBridge.importAccount', (item) => importAccount(item)),
-    command('contextBridge.addCodexAccount', () => addAccount({ provider: 'codex' })),
-    command('contextBridge.addClaudeAccount', () => addAccount({ provider: 'claude' })),
-    command('contextBridge.importCodexAccount', () => importAccount({ provider: 'codex' })),
-    command('contextBridge.importClaudeAccount', () => importAccount({ provider: 'claude' })),
-    command('contextBridge.signInAccount', (item) => signInAccount(item)),
-    command('contextBridge.refreshAccountQuota', (item) => refreshAccountQuota(item)),
-    command('contextBridge.openAccountTerminal', (item) => openAccountTerminal(item)),
-    command('contextBridge.renameAccount', (item) => renameAccount(item)),
-    command('contextBridge.forgetAccount', (item) => forgetAccount(item)),
-    command('contextBridge.discoverClaude', () => discover('claude')),
-    command('contextBridge.discoverCodex', () => discover('codex')),
-    command('contextBridge.importLatestClaude', () => importLatest('claude')),
-    command('contextBridge.importLatestCodex', () => importLatest('codex')),
-    command('contextBridge.createHandoff', (item) =>
+    ...compatibleCommands('switchAccount', (item) => switchAccount(item)),
+    ...compatibleCommands('showRawUsage', (item) => showRawUsage(item)),
+    ...compatibleCommands('undoAccountSwitch', () => undoAccountSwitch()),
+    ...compatibleCommands('addAccount', (item) => addAccount(item)),
+    ...compatibleCommands('importAccount', (item) => importAccount(item)),
+    ...compatibleCommands('addCodexAccount', () => addAccount({ provider: 'codex' })),
+    ...compatibleCommands('addClaudeAccount', () => addAccount({ provider: 'claude' })),
+    ...compatibleCommands('importCodexAccount', () => importAccount({ provider: 'codex' })),
+    ...compatibleCommands('importClaudeAccount', () => importAccount({ provider: 'claude' })),
+    ...compatibleCommands('signInAccount', (item) => signInAccount(item)),
+    ...compatibleCommands('refreshAccountQuota', (item) => refreshAccountQuota(item)),
+    ...compatibleCommands('openAccountTerminal', (item) => openAccountTerminal(item)),
+    ...compatibleCommands('renameAccount', (item) => renameAccount(item)),
+    ...compatibleCommands('forgetAccount', (item) => forgetAccount(item)),
+    ...compatibleCommands('discoverClaude', () => discover('claude')),
+    ...compatibleCommands('discoverCodex', () => discover('codex')),
+    ...compatibleCommands('importLatestClaude', () => importLatest('claude')),
+    ...compatibleCommands('importLatestCodex', () => importLatest('codex')),
+    ...compatibleCommands('createHandoff', (item) =>
       handoff(item?.target === 'codex' ? 'codex' : 'claude', item?.mode === 'existing' ? 'existing' : 'new')
     ),
-    command('contextBridge.handoffToClaudeExisting', () => handoff('claude', 'existing')),
-    command('contextBridge.handoffToClaudeNew', () => handoff('claude', 'new')),
-    command('contextBridge.handoffToCodexExisting', () => handoff('codex', 'existing')),
-    command('contextBridge.handoffToCodexNew', () => handoff('codex', 'new')),
-    command('contextBridge.openLatestHandoff', () => openLatestHandoff()),
-    command('contextBridge.copyLatestHandoffPrompt', () => copyLatestHandoffPrompt())
+    ...compatibleCommands('handoffToClaudeExisting', () => handoff('claude', 'existing')),
+    ...compatibleCommands('handoffToClaudeNew', () => handoff('claude', 'new')),
+    ...compatibleCommands('handoffToCodexExisting', () => handoff('codex', 'existing')),
+    ...compatibleCommands('handoffToCodexNew', () => handoff('codex', 'new')),
+    ...compatibleCommands('openLatestHandoff', () => openLatestHandoff()),
+    ...compatibleCommands('copyLatestHandoffPrompt', () => copyLatestHandoffPrompt())
   );
 
   // Populate the panel and status bar from cache on activation. Offline, so
@@ -93,7 +93,7 @@ async function switchAccount(item) {
   const activate = account.provider === 'claude' ? activateClaudeAccount : activateCodexAccount;
   const result = await activate(account.id).catch((error) => ({ error: error.message }));
   if (result?.error) {
-    vscode.window.showErrorMessage(`Context Bridge: could not switch to "${account.label}" — ${result.error}`);
+    vscode.window.showErrorMessage(`Turntrail: could not switch to "${account.label}" — ${result.error}`);
     return;
   }
   await accountsProvider.reloadUsage({ offline: true });
@@ -125,7 +125,7 @@ async function undoAccountSwitch(item) {
   const restore = provider === 'claude' ? restoreClaudeBackup : restoreCodexBackup;
   await restore();
   await accountsProvider.reloadUsage({ offline: true });
-  vscode.window.showInformationMessage(`Context Bridge: restored the previous ${agentName(provider)} login.`);
+  vscode.window.showInformationMessage(`Turntrail: restored the previous ${agentName(provider)} login.`);
 }
 
 // The usage payload is not a published contract, so when the panel cannot find
@@ -153,7 +153,7 @@ async function showRawUsage(item) {
     : {
         Authorization: `Bearer ${auth.accessToken}`,
         Accept: 'application/json',
-        'User-Agent': 'context-bridge',
+        'User-Agent': 'turntrail',
         ...(auth.accountId ? { 'ChatGPT-Account-Id': auth.accountId } : {})
       };
 
@@ -164,11 +164,11 @@ async function showRawUsage(item) {
     language: 'json',
     content: JSON.stringify(
       {
-        note: `Raw response from the ${agentName(account.provider)} usage endpoint, plus how Context Bridge parsed it. No tokens are included.`,
+        note: `Raw response from the ${agentName(account.provider)} usage endpoint, plus how Turntrail parsed it. No tokens are included.`,
         endpoint,
         httpStatus: raw.status,
         rawResponse: raw.body,
-        parsedByContextBridge: raw.parsed
+        parsedByTurntrail: raw.parsed
       },
       null,
       2
@@ -271,13 +271,13 @@ async function importAccount(item) {
 
     await accountsProvider.reloadUsage({ force: true });
     vscode.window.showInformationMessage(
-      `Context Bridge: imported ${auth?.claims?.email || auth?.email || label.trim()} as "${account.label}". The original login is untouched.`
+      `Turntrail: imported ${auth?.claims?.email || auth?.email || label.trim()} as "${account.label}". The original login is untouched.`
     );
   } catch (error) {
     try {
       await api.removeAccount(account.id, { purge: true, purgeLive: false });
     } catch (cleanupError) {
-      throw new Error(`${error.message} Context Bridge could not remove the incomplete account: ${cleanupError.message}`);
+      throw new Error(`${error.message} Turntrail could not remove the incomplete account: ${cleanupError.message}`);
     }
     throw error;
   }
@@ -351,7 +351,7 @@ async function forgetAccount(item) {
   let purge = Boolean(item?.purge);
   if (!item?.confirmed) {
     const choice = await vscode.window.showWarningMessage(
-      `Remove "${account.label}" from Context Bridge?`,
+      `Remove "${account.label}" from Turntrail?`,
       {
         modal: true,
         detail:
@@ -370,7 +370,7 @@ async function forgetAccount(item) {
   accountsProvider.usage.delete(account.id);
   await accountsProvider.reloadUsage({ offline: true });
   vscode.window.setStatusBarMessage(
-    `Context Bridge: removed "${account.label}"${purge ? ' and deleted its credentials' : ''}.`,
+    `Turntrail: removed "${account.label}"${purge ? ' and deleted its credentials' : ''}.`,
     4000
   );
 }
@@ -384,7 +384,7 @@ async function refreshAccountQuota(item) {
       accountsProvider.reloadUsageOne(item.accountId, item.provider, { force: true, signal })
     );
     if (usage?.error) {
-      vscode.window.showWarningMessage(`Context Bridge: could not read that account's usage — ${usage.error}`);
+      vscode.window.showWarningMessage(`Turntrail: could not read that account's usage — ${usage.error}`);
     }
     return;
   }
@@ -398,7 +398,7 @@ async function refreshAccountQuota(item) {
     accountsProvider.reloadUsage({ force: true, signal })
   );
   if (accounts.length === 0) {
-    vscode.window.showInformationMessage('Context Bridge: no accounts yet. Add one from the Context Bridge panel.');
+    vscode.window.showInformationMessage('Turntrail: no accounts yet. Add one from the Turntrail panel.');
   }
 }
 
@@ -418,7 +418,7 @@ async function resolveAccount(item, options = {}) {
   }
 
   if (accounts.length === 0) {
-    throw new Error('No accounts yet. Add one from the Context Bridge panel first.');
+    throw new Error('No accounts yet. Add one from the Turntrail panel first.');
   }
 
   // "Active" is per agent: switching Codex says nothing about Claude, so each
@@ -432,7 +432,7 @@ async function resolveAccount(item, options = {}) {
 
   const pool = options.excludeActive ? accounts.filter((account) => !activeIds.has(account.id)) : accounts;
   if (pool.length === 0) {
-    vscode.window.showInformationMessage('Context Bridge: every account is already in use by its agent.');
+    vscode.window.showInformationMessage('Turntrail: every account is already in use by its agent.');
     return undefined;
   }
 
@@ -474,20 +474,24 @@ function command(name, handler) {
       await handler(...args);
     } catch (error) {
       if (error?.name === 'AbortError' || error?.name === 'Canceled') return;
-      vscode.window.showErrorMessage(`Context Bridge: ${error.message}`);
+      vscode.window.showErrorMessage(`Turntrail: ${error.message}`);
     }
   });
 }
 
+function compatibleCommands(name, handler) {
+  return [command(`turntrail.${name}`, handler), command(`contextBridge.${name}`, handler)];
+}
+
 async function core() {
-  return import('@context-bridge/core');
+  return import('@turntrail/core');
 }
 
 async function workspaceRoot() {
   const folders = vscode.workspace.workspaceFolders || [];
   if (folders.length === 0) throw new Error('Open a workspace folder first.');
   if (folders.length === 1) return folders[0].uri.fsPath;
-  const picked = await vscode.window.showWorkspaceFolderPick({ placeHolder: 'Choose workspace for Context Bridge' });
+  const picked = await vscode.window.showWorkspaceFolderPick({ placeHolder: 'Choose workspace for Turntrail' });
   if (!picked) throw new Error('No workspace selected.');
   return picked.uri.fsPath;
 }
@@ -515,7 +519,7 @@ async function resolveSourceSession(provider, root) {
   // recently touched one silently hands off whichever chat happened to be
   // focused last, which is often not the one worth continuing.
   if (matched.length > 1) {
-    if (vscode.workspace.getConfiguration('contextBridge').get('alwaysUseLatestSession')) {
+    if (setting('alwaysUseLatestSession')) {
       return { status: 'matched', session: matched[0] };
     }
     const picked = await vscode.window.showQuickPick(pickableSessions(matched, origin), {
@@ -529,7 +533,7 @@ async function resolveSourceSession(provider, root) {
 
   const recent = sessions[0];
   const choice = await vscode.window.showWarningMessage(
-    `Context Bridge: no ${provider} session was started in this workspace.`,
+    `Turntrail: no ${provider} session was started in this workspace.`,
     {
       modal: true,
       detail:
@@ -641,7 +645,7 @@ async function discover(provider) {
   );
 
   if (sessions.length === 0) {
-    vscode.window.showInformationMessage(`Context Bridge: no ${provider} sessions found on this machine.`);
+    vscode.window.showInformationMessage(`Turntrail: no ${provider} sessions found on this machine.`);
     return;
   }
 
@@ -649,7 +653,7 @@ async function discover(provider) {
   let pool = matched;
   if (matched.length === 0) {
     const choice = await vscode.window.showWarningMessage(
-      `Context Bridge: no ${provider} session was started in this workspace. Browse ${sessions.length} importable session(s) from other folders? This will not create a handoff.`,
+      `Turntrail: no ${provider} session was started in this workspace. Browse ${sessions.length} importable session(s) from other folders? This will not create a handoff.`,
       'Browse All Sessions'
     );
     if (choice !== 'Browse All Sessions') return;
@@ -682,7 +686,7 @@ async function importLatest(provider) {
   const resolved = await resolveSourceSession(provider, root);
   if (resolved.status === 'cancelled') return;
   if (resolved.status === 'none') {
-    vscode.window.showWarningMessage(`Context Bridge: no ${provider} sessions were found anywhere on this machine.`);
+    vscode.window.showWarningMessage(`Turntrail: no ${provider} sessions were found anywhere on this machine.`);
     return;
   }
   const result = await withProgress(`Importing ${provider} session`, async ({ signal }) => {
@@ -706,7 +710,7 @@ async function importSession(provider, session) {
 // modally — a transient toast was easy to miss and felt like "nothing happened".
 async function reportImport(provider, result) {
   await vscode.window.showInformationMessage(
-    `Context Bridge: imported ${result.turnCount} turns from ${provider} into the ledger. This only updated local Context Bridge data; no handoff was created. Run "Context Bridge: Handoff to Claude/Codex" separately when you want one.`,
+    `Turntrail: imported ${result.turnCount} turns from ${provider} into the ledger. This only updated local Turntrail data; no handoff was created. Run "Turntrail: Handoff to Claude/Codex" separately when you want one.`,
     { modal: true },
     'OK'
   );
@@ -720,24 +724,23 @@ function formatSessionFolder(cwd) {
 async function handoff(target, mode) {
   const root = await workspaceRoot();
   const source = target === 'claude' ? 'codex' : 'claude';
-  const settings = vscode.workspace.getConfiguration('contextBridge');
   // 0 is a meaningful value here ("no clipping"), so it must reach the core
   // instead of collapsing to undefined and picking up the default budget.
-  const maxChars = numberSetting(settings.get('maxExportChars'));
-  const dedupe = settings.get('dedupeTurns') !== false;
-  const sinceLastExport = Boolean(settings.get('sinceLastExport'));
-  const toolMaxChars = numberSetting(settings.get('toolMaxChars'));
-  const systemMaxChars = numberSetting(settings.get('systemMaxChars'));
-  const snapshotDiffMaxChars = numberSetting(settings.get('snapshotDiffMaxChars'));
-  const keepExports = numberSetting(settings.get('keepExports'));
-  const openDocument = Boolean(settings.get('openHandoffDocument'));
+  const maxChars = numberSetting(setting('maxExportChars'));
+  const dedupe = setting('dedupeTurns') !== false;
+  const sinceLastExport = Boolean(setting('sinceLastExport'));
+  const toolMaxChars = numberSetting(setting('toolMaxChars'));
+  const systemMaxChars = numberSetting(setting('systemMaxChars'));
+  const snapshotDiffMaxChars = numberSetting(setting('snapshotDiffMaxChars'));
+  const keepExports = numberSetting(setting('keepExports'));
+  const openDocument = Boolean(setting('openHandoffDocument'));
   const { initStore, importNativeSession, captureSnapshot, exportHandoff } = await core();
 
   const resolved = await resolveSourceSession(source, root);
   if (resolved.status === 'cancelled') return;
   if (resolved.status === 'none') {
     const choice = await vscode.window.showWarningMessage(
-      `Context Bridge: no ${source} sessions were found anywhere on this machine. Create a handoff from the existing ledger only?`,
+      `Turntrail: no ${source} sessions were found anywhere on this machine. Create a handoff from the existing ledger only?`,
       'Continue Without Import',
       'Cancel'
     );
@@ -779,7 +782,7 @@ async function handoff(target, mode) {
   const wordCount = countWords(prompt);
   const into = chatLabel(destination) ? ` chat "${chatLabel(destination)}"` : '';
   vscode.window.showInformationMessage(
-    `Context Bridge: ${wordCount}-word handoff prompt copied to clipboard — paste it into ${targetLabel}${into} to continue.`,
+    `Turntrail: ${wordCount}-word handoff prompt copied to clipboard — paste it into ${targetLabel}${into} to continue.`,
     'Copy Prompt Again',
     'Open Handoff'
   ).then((choice) => {
@@ -804,7 +807,7 @@ async function copyLatestHandoffPrompt() {
   if (!latest?.prompt) throw new Error('No latest handoff prompt recorded in this VS Code window.');
   await vscode.env.clipboard.writeText(latest.prompt);
   vscode.window.showInformationMessage(
-    `Context Bridge: ${countWords(latest.prompt)}-word handoff prompt copied to clipboard.`
+    `Turntrail: ${countWords(latest.prompt)}-word handoff prompt copied to clipboard.`
   );
 }
 
@@ -816,13 +819,12 @@ async function openTarget(target) {
   }
 
   if (target === 'claude') {
-    const settings = vscode.workspace.getConfiguration('contextBridge');
-    if (userOnlySetting(settings, 'allowExternalClaudeUri')) {
+    if (userOnlySetting('allowExternalClaudeUri')) {
       const editorScheme = vscode.env.uriScheme || 'vscode';
-      const configuredUri = userOnlySetting(settings, 'claudeUri', false) || `${editorScheme}://anthropic.claude-code/open`;
+      const configuredUri = userOnlySetting('claudeUri', false) || `${editorScheme}://anthropic.claude-code/open`;
       const uri = safeClaudeUri(configuredUri, editorScheme);
       if (!uri) {
-        throw new Error(`Context Bridge blocked an unsafe Claude URI setting. Use ${editorScheme}://anthropic.claude-code/open.`);
+        throw new Error(`Turntrail blocked an unsafe Claude URI setting. Use ${editorScheme}://anthropic.claude-code/open.`);
       }
       await vscode.env.openExternal(vscode.Uri.parse(uri));
       return;
@@ -830,28 +832,40 @@ async function openTarget(target) {
   }
 
   vscode.window.showInformationMessage(
-    `Context Bridge: no ${target} open command was found. The prompt is copied; paste it into your ${target} extension session.`
+    `Turntrail: no ${target} open command was found. The prompt is copied; paste it into your ${target} extension session.`
   );
 }
 
 async function findAgentCommand(target) {
-  const settings = vscode.workspace.getConfiguration('contextBridge');
   const commands = await vscode.commands.getCommands(true);
-  const configured = userOnlySetting(settings, `${target}OpenCommand`);
+  const configured = userOnlySetting(`${target}OpenCommand`);
   if (configured) {
     const safe = safeAgentCommand(configured, target, commands);
-    if (!safe) throw new Error(`Context Bridge blocked unsafe or unavailable command setting "${configured}".`);
+    if (!safe) throw new Error(`Turntrail blocked unsafe or unavailable command setting "${configured}".`);
     return safe;
   }
   return commands.find((item) => safeAgentCommand(item, target, commands));
 }
 
-function userOnlySetting(settings, key, includeDefault = true) {
-  const inspected = settings.inspect(key);
-  if (inspected?.workspaceValue !== undefined || inspected?.workspaceFolderValue !== undefined) {
-    throw new Error(`Context Bridge does not allow workspace-controlled ${key} settings.`);
+function setting(key) {
+  const canonical = vscode.workspace.getConfiguration('turntrail').inspect(key);
+  const legacy = vscode.workspace.getConfiguration('contextBridge').inspect(key);
+  return explicitSetting(canonical) ?? explicitSetting(legacy) ?? canonical?.defaultValue;
+}
+
+function explicitSetting(inspected) {
+  return inspected?.workspaceFolderValue ?? inspected?.workspaceValue ?? inspected?.globalValue;
+}
+
+function userOnlySetting(key, includeDefault = true) {
+  const canonical = vscode.workspace.getConfiguration('turntrail').inspect(key);
+  const legacy = vscode.workspace.getConfiguration('contextBridge').inspect(key);
+  for (const inspected of [canonical, legacy]) {
+    if (inspected?.workspaceValue !== undefined || inspected?.workspaceFolderValue !== undefined) {
+      throw new Error(`Turntrail does not allow workspace-controlled ${key} settings.`);
+    }
   }
-  return inspected?.globalValue ?? (includeDefault ? inspected?.defaultValue : undefined);
+  return canonical?.globalValue ?? legacy?.globalValue ?? (includeDefault ? canonical?.defaultValue : undefined);
 }
 
 // Only a chat the agent named itself is worth quoting back. An unnamed one is
@@ -865,7 +879,7 @@ function handoffPrompt(target, mode, handoffPath, destination) {
   const sessionText = mode === 'new' ? 'Start a new session' : 'Continue in this existing session';
   const named = chatLabel(destination);
   return [
-    `${sessionText} using this Context Bridge handoff:`,
+    `${sessionText} using this Turntrail handoff:`,
     ...(named && mode !== 'new' ? ['', `This is a continuation of the chat named "${named}".`] : []),
     '',
     // Backticks keep the path literal. Real project paths contain spaces,
@@ -884,7 +898,7 @@ async function openDocumentAt(filePath) {
 
 async function withProgress(title, task) {
   return vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: `Context Bridge: ${title}`, cancellable: true },
+    { location: vscode.ProgressLocation.Notification, title: `Turntrail: ${title}`, cancellable: true },
     async (progress, token) => {
       return runWithCancellation(token, task, progress);
     }
@@ -930,12 +944,16 @@ const extensionApi = {
   async activate(context) {
     extensionContext = context;
     await activateExtension(context);
-    return process.env.CONTEXT_BRIDGE_EXTENSION_TESTS === '1' ? { __test: extensionApi.__test } : undefined;
+    return extensionTestsEnabled() ? { __test: extensionApi.__test } : undefined;
   },
   deactivate
 };
 
-if (process.env.CONTEXT_BRIDGE_EXTENSION_TESTS === '1') {
+function extensionTestsEnabled() {
+  return process.env.TURNTRAIL_EXTENSION_TESTS === '1' || process.env.CONTEXT_BRIDGE_EXTENSION_TESTS === '1';
+}
+
+if (extensionTestsEnabled()) {
   extensionApi.__test = {
     integrationState() {
       return {

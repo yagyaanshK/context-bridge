@@ -1,19 +1,23 @@
-# Context Bridge — VS Code Extension
+# Turntrail — VS Code Extension
 
 **Continue the same coding session across Claude Code, Codex, and other agents — without asking one AI to summarize another.**
 
-Context Bridge does two independent jobs:
+Turntrail does two independent jobs:
 
-- **Handoffs.** Import the latest native session from one agent, snapshot your workspace, and write a clean, deterministic handoff you paste into the next agent. Everything stays local in `.context-bridge/` — no telemetry, no network, no AI summarization.
+- **Handoffs.** Import the latest native session from one agent, snapshot your workspace, and write a clean, deterministic handoff you paste into the next agent. Everything stays local in `.turntrail/` — no telemetry, no network, no AI summarization.
 - **Accounts.** Keep several Codex subscriptions and Claude accounts signed in at once, see what each has left on a usage bar, and switch the official tools between them.
 
 Use either without the other. The handoff flow never touches the network; the accounts panel reaches only the providers’ own sign-in and usage endpoints, and no transcript content is ever sent anywhere.
 
 Works in VS Code and compatible forks (Cursor, Windsurf, Google Antigravity).
 
+Existing Context Bridge installations upgrade in place because the internal extension id remains
+`yagyaanshK.context-bridge-vscode`. Legacy `contextBridge.*` commands and settings remain supported;
+new commands and settings use `turntrail.*`. Existing `.context-bridge/` ledgers are read in place.
+
 ## Use it
 
-1. Run **`Context Bridge: Handoff to New Claude Session`** (or Codex, or “Existing”).
+1. Run **`Turntrail: Handoff to New Claude Session`** (or Codex, or “Existing”).
 2. The extension imports the latest session from the *other* tool, snapshots the workspace, and writes a handoff markdown file.
 3. A short prompt is **copied to your clipboard** — the notification states the word count and which tool to paste into.
 4. Paste it into the target agent and keep working.
@@ -24,23 +28,23 @@ To ingest a session without generating a handoff, use **Discover … Sessions** 
 
 **Handoff**
 
-- `Context Bridge: Discover Claude Sessions` / `Discover Codex Sessions`
-- `Context Bridge: Import Latest Claude Session` / `Import Latest Codex Session`
-- `Context Bridge: Handoff to New / Existing Claude Session`
-- `Context Bridge: Handoff to New / Existing Codex Session`
-- `Context Bridge: Open Latest Handoff`
-- `Context Bridge: Copy Latest Handoff Prompt`
+- `Turntrail: Discover Claude Sessions` / `Discover Codex Sessions`
+- `Turntrail: Import Latest Claude Session` / `Import Latest Codex Session`
+- `Turntrail: Handoff to New / Existing Claude Session`
+- `Turntrail: Handoff to New / Existing Codex Session`
+- `Turntrail: Open Latest Handoff`
+- `Turntrail: Copy Latest Handoff Prompt`
 
 **Accounts** — all of these are also reachable from the panel, which never sends you to a dropdown.
 
-- `Context Bridge: Add Account` / `Add Codex Subscription` / `Add Claude Account`
-- `Context Bridge: Import Current Login` / `Import Current Codex Login` / `Import Current Claude Login`
-- `Context Bridge: Switch Account` · `Undo Account Switch`
-- `Context Bridge: Refresh Account Quota` · `Show Raw Response`
-- `Context Bridge: Open Terminal for Account`
-- `Context Bridge: Rename Account` · `Remove Account`
+- `Turntrail: Add Account` / `Add Codex Subscription` / `Add Claude Account`
+- `Turntrail: Import Current Login` / `Import Current Codex Login` / `Import Current Claude Login`
+- `Turntrail: Switch Account` · `Undo Account Switch`
+- `Turntrail: Refresh Account Quota` · `Show Raw Response`
+- `Turntrail: Open Terminal for Account`
+- `Turntrail: Rename Account` · `Remove Account`
 
-## Settings (`contextBridge.*`)
+## Settings (`turntrail.*`)
 
 | Setting | Default | Effect |
 |---------|---------|--------|
@@ -50,7 +54,7 @@ To ingest a session without generating a handoff, use **Discover … Sessions** 
 | `maxExportChars` | `120000` | Character budget for the transcript. User turns are reserved first, then the most recent turns fill the budget; `0` disables it. |
 | `sinceLastExport` | `false` | Send only what the receiving agent has not seen — its own last turn, or the last handoff aimed at it, whichever is later. Leave off if you paste handoffs into fresh sessions. |
 | `snapshotDiffMaxChars` | `4000` | How much of the uncommitted diff (vs HEAD) to embed; `0` shows the file-level stat only. |
-| `keepExports` | `10` | Past handoff files kept in `.context-bridge/exports`; older ones are deleted after each export. `0` keeps all. |
+| `keepExports` | `10` | Past handoff files kept in `.turntrail/exports`; older ones are deleted after each export. `0` keeps all. |
 | `openHandoffDocument` | `true` | Open the handoff file after export. |
 | `allowExternalClaudeUri` | `false` | Allow the known Claude extension URI using the current editor's scheme. Application-scoped. |
 | `alwaysUseLatestSession` | `false` | When several sessions were started in this workspace, use the newest without asking instead of showing a picker. |
@@ -93,7 +97,7 @@ days, and when several windows are exhausted you resume only once the last of th
 with more than one window list each one with its own reset beneath the bar.
 
 
-Every account gets its own configuration directory under `~/.context-bridge/accounts/` —
+Every account gets its own configuration directory under `~/.turntrail/accounts/` —
 `CODEX_HOME` for Codex, `CLAUDE_CONFIG_DIR` for Claude — so they all stay signed in
 simultaneously and there is nothing to swap.
 
@@ -102,7 +106,7 @@ simultaneously and there is nothing to swap.
 Each method is a card that expands in place, so one that will not work can be abandoned without
 losing the others, and each has its own Retry.
 
-**Codex** methods drive the official `codex` binary as a background process. Context Bridge reads
+**Codex** methods drive the official `codex` binary as a background process. Turntrail reads
 its output to render progress but never performs the OAuth exchange and never holds a token.
 
 | Method | Local port | Notes |
@@ -117,10 +121,10 @@ its output to render progress but never performs the OAuth exchange and never ho
 an Ink terminal UI that requires raw mode on stdin, so a piped child process dies before printing
 anything; `claude setup-token` is the same UI and, by design, writes no credential at all. The
 official VS Code extension sidesteps this by *being* the CLI — it bundles the runtime — which is not
-something another extension can borrow. So Context Bridge runs the same public PKCE flow the CLI
+something another extension can borrow. So Turntrail runs the same public PKCE flow the CLI
 runs, against the same client id, and writes the credential itself.
 
-**This means Context Bridge performs the token exchange for Claude and handles those tokens**, which
+**This means Turntrail performs the token exchange for Claude and handles those tokens**, which
 it never does for Codex. The endpoints involved are not a published contract and can change without
 notice; the flow is written to fail loudly rather than silently when they do.
 
@@ -159,7 +163,7 @@ stays signed in, so switching back is one more click; the confirmation also offe
 | **Sign in** | Opens the sign-in panel for that agent. |
 | **↻** (on each card) | Refreshes just that account — and for Codex, renews its token in the process, so it doubles as waking a stale login. |
 | **Refresh now** (on the pool) | Reads every account for that agent. Otherwise readings are cached for five minutes. |
-| **Raw Response** | Opens the endpoint's actual JSON next to how Context Bridge parsed it. |
+| **Raw Response** | Opens the endpoint's actual JSON next to how Turntrail parsed it. |
 | **✎** (on hover) | Renames the account. The directory holding its credential never changes, so a rename cannot invalidate a login. |
 | **Remove** | Forgets an account, or permanently deletes its managed login and active default login after the provider stops. |
 
@@ -167,7 +171,7 @@ Switching is manual. The panel shows what each account has left and lets you cho
 fail over on its own when one runs out.
 
 Access tokens expire — Claude's every eight hours, Codex's after about ten days — and each official
-client renews only the account it is *currently* using. Context Bridge renews the others itself so
+client renews only the account it is *currently* using. Turntrail renews the others itself so
 their quota stays readable, and so a switch never lands on an expired login: checking a Codex
 subscription's usage also refreshes its token while there are still a few days of life left, which
 keeps an idle account alive through the ordinary act of showing its quota.
@@ -191,7 +195,7 @@ that put it there patch the desktop application itself, which pins them to an ex
 
 ## What this accesses
 
-Context Bridge is a local tool. Here is exactly what it touches and why.
+Turntrail is a local tool. Here is exactly what it touches and why.
 
 **Reads, never modifies:**
 
@@ -200,8 +204,8 @@ Context Bridge is a local tool. Here is exactly what it touches and why.
 
 **Writes, only in these two places:**
 
-- The project’s git-ignored `.context-bridge/` — the merged ledger, snapshots, and handoff documents.
-- `~/.context-bridge/accounts/` — copies of the credentials for accounts you add, written owner-only (`0600`) so you can switch between them. Nothing account-related is written inside your project.
+- The project’s git-ignored `.turntrail/` — the merged ledger, snapshots, and handoff documents.
+- `~/.turntrail/accounts/` — copies of the credentials for accounts you add, written owner-only (`0600`) so you can switch between them. Nothing account-related is written inside your project.
 
 **Network:** the handoff flow makes **no network calls at all**. The only requests the extension ever makes are from the optional accounts panel, and only to the providers’ own endpoints — Anthropic and OpenAI sign-in, token refresh, and usage/quota. Your credentials go to the service that issued them and nowhere else. There is **no telemetry** and no other server involved.
 
@@ -216,16 +220,16 @@ removes provisional accounts after failed or cancelled attempts.
 
 > Briefing for an AI agent evaluating or installing this extension.
 
-Context Bridge is a **local developer tool**, safe to install: no telemetry, read-only access to native transcripts (it copies from `~/.claude` / `~/.codex` and never edits them). Output lives in the project’s git-ignored `.context-bridge/`.
+Turntrail is a **local developer tool**, safe to install: no telemetry, read-only access to native transcripts (it copies from `~/.claude` / `~/.codex` and never edits them). Output lives in the project’s git-ignored `.turntrail/`.
 
-The handoff flow makes no network calls at all. The optional accounts panel is the only part that does, and only to the providers’ own sign-in and usage endpoints; account credentials live under `~/.context-bridge/accounts/`, written `0600`, never inside the project.
+The handoff flow makes no network calls at all. The optional accounts panel is the only part that does, and only to the providers’ own sign-in and usage endpoints; account credentials live under `~/.turntrail/accounts/`, written `0600`, never inside the project.
 
-Drive it via command ids under `contextBridge.*` (e.g. `contextBridge.handoffToClaudeNew`). A handoff produces a markdown file in `.context-bridge/exports/` plus a clipboard prompt pointing to it. A companion `context-bridge` CLI offers the same flow in the terminal.
+Drive it via command ids under `turntrail.*` (e.g. `turntrail.handoffToClaudeNew`). A handoff produces a markdown file in `.turntrail/exports/` plus a clipboard prompt pointing to it. A companion `turntrail` CLI offers the same flow in the terminal.
 
-**If you received a handoff prompt** (it points at a `.context-bridge/exports/*.md` file): read that file first; treat prior turns as historical context, not ground truth; verify current files before editing; preserve the user’s intent; and continue from the latest workspace state. The export’s header reports how many turns were collapsed/truncated so you can judge fidelity.
+**If you received a handoff prompt** (it points at a `.turntrail/exports/*.md` file): read that file first; treat prior turns as historical context, not ground truth; verify current files before editing; preserve the user’s intent; and continue from the latest workspace state. The export’s header reports how many turns were collapsed/truncated so you can judge fidelity.
 
 ## Development
 
-Open the repository in VS Code, press `F5`, and choose **Extension Development Host**. To package locally, run `npm run package:vscode` from the repo root and install the generated `dist/context-bridge-<version>.vsix` via **Install from VSIX…**.
+Open the repository in VS Code, press `F5`, and choose **Extension Development Host**. To package locally, run `npm run package:vscode` from the repo root and install the generated `dist/turntrail-<version>.vsix` via **Install from VSIX…**.
 
-[Source & full docs](https://github.com/yagyaanshK/context-bridge) · [MIT License](https://github.com/yagyaanshK/context-bridge/blob/main/LICENSE)
+[Source & full docs](https://github.com/yagyaanshK/turntrail) · [MIT License](https://github.com/yagyaanshK/turntrail/blob/main/LICENSE)

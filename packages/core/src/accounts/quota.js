@@ -223,7 +223,7 @@ export async function fetchCodexUsage(auth, options = {}) {
   const headers = {
     Authorization: `Bearer ${auth.accessToken}`,
     Accept: 'application/json',
-    'User-Agent': options.userAgent || 'context-bridge'
+    'User-Agent': options.userAgent || 'turntrail'
   };
   const accountId = auth.accountId || auth.claims?.accountId;
   if (accountId) headers['ChatGPT-Account-Id'] = accountId;

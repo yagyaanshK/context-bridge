@@ -48,4 +48,4 @@ jobs:
           dist/*.vsix dist/SHA256SUMS.txt
           --verify-tag
           --generate-notes
-          --title "Context Bridge ${GITHUB_REF_NAME#v}"
+          --title "Turntrail ${GITHUB_REF_NAME#v}"

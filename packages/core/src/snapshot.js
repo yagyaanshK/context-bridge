@@ -169,7 +169,12 @@ async function topLevelFiles(root, options = {}) {
   options.signal?.throwIfAborted();
   const entries = await fs.readdir(root, { withFileTypes: true });
   return entries
-    .filter((entry) => entry.name !== '.git' && entry.name !== '.context-bridge' && entry.name !== 'node_modules')
+    .filter((entry) =>
+      entry.name !== '.git' &&
+      entry.name !== '.turntrail' &&
+      entry.name !== '.context-bridge' &&
+      entry.name !== 'node_modules'
+    )
     .map((entry) => ({
       name: entry.name,
       type: entry.isDirectory() ? 'directory' : entry.isFile() ? 'file' : 'other'

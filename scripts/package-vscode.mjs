@@ -9,13 +9,13 @@ const sourceExtensionPkg = JSON.parse(await fs.readFile(path.join(vscodePackage,
 const sourceCorePkg = JSON.parse(await fs.readFile(path.join(corePackage, 'package.json'), 'utf8'));
 const dist = path.join(root, 'dist');
 const stage = path.join(dist, 'stage-vscode');
-const vsixName = `context-bridge-${sourceExtensionPkg.version}.vsix`;
+const vsixName = `turntrail-${sourceExtensionPkg.version}.vsix`;
 const vsixOut = path.join(dist, vsixName);
 const stagedVsix = path.join(stage, vsixName);
 
 await fs.rm(stage, { recursive: true, force: true });
 await fs.mkdir(path.join(stage, 'src'), { recursive: true });
-await fs.mkdir(path.join(stage, 'node_modules', '@context-bridge', 'core'), { recursive: true });
+await fs.mkdir(path.join(stage, 'node_modules', '@turntrail', 'core'), { recursive: true });
 await fs.mkdir(dist, { recursive: true });
 
 await copyFile(path.join(vscodePackage, 'README.md'), path.join(stage, 'README.md'));
@@ -26,29 +26,29 @@ await copyDir(path.join(vscodePackage, 'media'), path.join(stage, 'media'));
 // Copy the whole source directory rather than naming one entry file, so a new
 // module cannot be left out of the VSIX and fail only at runtime.
 await copyDir(path.join(vscodePackage, 'src'), path.join(stage, 'src'));
-await copyDir(path.join(corePackage, 'src'), path.join(stage, 'node_modules', '@context-bridge', 'core', 'src'));
+await copyDir(path.join(corePackage, 'src'), path.join(stage, 'node_modules', '@turntrail', 'core', 'src'));
 
 const extensionPkg = sourceExtensionPkg;
 delete extensionPkg.devDependencies;
 extensionPkg.dependencies = {
-  '@context-bridge/core': sourceCorePkg.version
+  '@turntrail/core': sourceCorePkg.version
 };
 extensionPkg.repository = {
   type: 'git',
-  url: 'https://github.com/yagyaanshK/context-bridge.git'
+  url: 'https://github.com/yagyaanshK/turntrail.git'
 };
 extensionPkg.files = [
   'src/**',
   'media/**',
   'README.md',
   'LICENSE',
-  'node_modules/@context-bridge/core/**'
+  'node_modules/@turntrail/core/**'
 ];
 await writeJson(path.join(stage, 'package.json'), extensionPkg);
 
 const corePkg = sourceCorePkg;
 delete corePkg.devDependencies;
-await writeJson(path.join(stage, 'node_modules', '@context-bridge', 'core', 'package.json'), corePkg);
+await writeJson(path.join(stage, 'node_modules', '@turntrail', 'core', 'package.json'), corePkg);
 
 await run(process.execPath, [
   path.join(root, 'node_modules', '@vscode', 'vsce', 'vsce'),

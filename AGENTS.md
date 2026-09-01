@@ -1,6 +1,6 @@
 # Agent Instructions
 
-This repository builds Context Bridge: a local handoff layer for continuing developer agent sessions across Codex, Claude, and other tools.
+This repository builds Turntrail: a local handoff layer for continuing developer agent sessions across Codex, Claude, and other tools.
 
 The repository has two independent halves: **handoff** (local-only, no network) and **accounts**
 (optional multi-account management for Codex and Claude). Neither depends on the other.
@@ -24,11 +24,11 @@ These are invariants, not preferences. Breaking one is a security regression.
 - **Validate before writing.** A rejected paste must leave any existing credential untouched.
 - **Secrets go to stdin, never argv**, so they never appear in a process listing.
 - **Credentials are written `0600`** (best-effort; Windows ignores POSIX modes) and live under
-  `~/.context-bridge/accounts/`, never inside a project's `.context-bridge/`.
+  `~/.turntrail/accounts/`, never inside a project's `.turntrail/`.
 - **Never log or echo a token**, including in error messages and the raw-response viewer.
-- **Delegate the OAuth exchange when the provider's CLI can perform it.** Codex can, so Context
-  Bridge only spawns `codex login` and reads its output. Claude cannot — its login is an Ink TUI
-  requiring raw mode on stdin, and `setup-token` writes no credential — so Context Bridge runs the
+- **Delegate the OAuth exchange when the provider's CLI can perform it.** Codex can, so Turntrail
+  only spawns `codex login` and reads its output. Claude cannot — its login is an Ink TUI
+  requiring raw mode on stdin, and `setup-token` writes no credential — so Turntrail runs the
   PKCE flow itself. That asymmetry is deliberate; do not "simplify" it by making Codex match Claude.
 - **Fail loudly on undocumented endpoints.** The Claude OAuth endpoints are not a published
   contract. Every error path must name what the user can do about it rather than degrade silently.
@@ -36,7 +36,7 @@ These are invariants, not preferences. Breaking one is a security regression.
 ## Code Guidelines
 
 - Use Node.js built-ins unless a dependency materially simplifies the code.
-- Keep filesystem writes scoped to the selected workspace and `.context-bridge/`.
+- Keep filesystem writes scoped to the selected workspace and `.turntrail/`.
 - Avoid changing generated local ledgers in tests.
 - Add tests for importer/exporter behavior when changing schema logic.
 - Add tests for credential handling when changing the accounts subsystem, including the rejection

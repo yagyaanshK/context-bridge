@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run Context Bridge Extension",
+      "name": "Run Turntrail Extension",
       "type": "extensionHost",
       "request": "launch",
       "args": [

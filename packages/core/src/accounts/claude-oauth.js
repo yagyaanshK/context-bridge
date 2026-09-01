@@ -8,9 +8,9 @@ import {
   validateTokenPayload
 } from './provider-contracts.js';
 
-// The Claude Code sign-in flow, performed by Context Bridge.
+// The Claude Code sign-in flow, performed by Turntrail.
 //
-// This is the one place Context Bridge departs from "let the official binary do
+// This is the one place Turntrail departs from "let the official binary do
 // it". For Codex we spawn `codex login` and only read its output. That is not
 // possible here: Claude Code's login is an Ink terminal UI that requires raw
 // mode on stdin, so a piped child process dies before it prints anything, and
@@ -20,7 +20,7 @@ import {
 //
 // So we run the same public PKCE flow the CLI runs, against the same client id.
 // Two consequences worth stating plainly, because they are the cost of this
-// choice: Context Bridge performs the token exchange and therefore handles the
+// choice: Turntrail performs the token exchange and therefore handles the
 // tokens, and none of these endpoints are a published contract, so they can
 // change without notice. Everything below is written to fail loudly rather than
 // silently when that happens.
@@ -176,7 +176,7 @@ function oauthErrorMessage(payload, status, raw, grant) {
     return 'The authorization code was rejected. Codes are single-use and expire within minutes; start the sign-in again.';
   }
   if (code === 'invalid_client') {
-    return 'Anthropic rejected the client id. Context Bridge may need updating.';
+    return 'Anthropic rejected the client id. Turntrail may need updating.';
   }
   if (code === 'invalid_request' && /code_verifier/i.test(detail || '')) {
     return 'The PKCE verifier did not match. Start the sign-in again rather than reusing an old code.';
@@ -348,7 +348,7 @@ export function startLoopbackServer(options = {}) {
 
 function callbackPage(ok) {
   const message = ok ? 'Signed in. You can close this tab and return to VS Code.' : 'Sign-in did not complete.';
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Context Bridge</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Turntrail</title>
 <style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;height:100vh;margin:0;background:#1a1a19;color:#f5f4ef}
 p{font-size:1.1rem}</style></head><body><p>${message}</p></body></html>`;
 }

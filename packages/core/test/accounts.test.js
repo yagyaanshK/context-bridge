@@ -321,7 +321,7 @@ test('a switch can be undone from the backup it leaves behind', async () => {
 
 test('undo with nothing to restore reports it rather than corrupting the login', async () => {
   const { home, options } = await sandbox();
-  await assert.rejects(() => restoreCodexBackup({ ...options, defaultCodexHome: path.join(home, '.codex') }), /No Context Bridge backup/);
+  await assert.rejects(() => restoreCodexBackup({ ...options, defaultCodexHome: path.join(home, '.codex') }), /No Turntrail backup/);
 });
 
 test('activating an account that never signed in fails loudly', async () => {
@@ -345,6 +345,18 @@ test('forgetting an account leaves credentials unless purge is requested', async
   const purged = await removeAccount(restored.id, { ...options, purge: true });
   assert.equal(purged.purged, true);
   assert.equal(await readCodexAuth(codexHome(restored.id, options)), null);
+});
+
+test('undo recognizes a backup created before the Turntrail rename', async () => {
+  const { home, options } = await sandbox();
+  const account = await createAccount({ label: 'Legacy', provider: 'codex' }, options);
+  const source = await signIn(account.id, options, { accessToken: 'legacy-access' });
+  const defaultHome = path.join(home, '.codex');
+  await fs.mkdir(defaultHome, { recursive: true });
+  await fs.copyFile(path.join(source, 'auth.json'), path.join(defaultHome, 'auth.context-bridge-backup.json'));
+
+  await restoreCodexBackup({ ...options, defaultCodexHome: defaultHome });
+  assert.equal((await readCodexAuth(defaultHome)).accessToken, 'legacy-access');
 });
 
 test('purging an active Codex account removes both managed and live credentials', async () => {

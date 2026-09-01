@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -285,6 +286,26 @@ test('an undone switch restores both files', async () => {
   const config = JSON.parse(await fs.readFile(claudeConfigPath(target, options), 'utf8'));
   assert.equal(credentials.claudeAiOauth.accessToken, 'sk-ant-oat01-before');
   assert.equal(config.oauthAccount.emailAddress, 'before@example.com');
+});
+
+test('Claude undo recognizes credential and config backups from before the rename', async () => {
+  const { options } = await sandbox();
+  const target = defaultClaudeHome(options);
+  const config = claudeConfigPath(target, options);
+  await fs.mkdir(target, { recursive: true });
+  await fs.mkdir(path.dirname(config), { recursive: true });
+  await fs.writeFile(
+    path.join(target, '.credentials.context-bridge-backup.json'),
+    JSON.stringify(credential({ accessToken: 'sk-ant-oat01-legacy' })),
+    'utf8'
+  );
+  await fs.writeFile(`${config}.context-bridge-backup`, JSON.stringify({ oauthAccount: { emailAddress: 'legacy@example.com' } }), 'utf8');
+
+  await restoreClaudeBackup(options);
+  const restored = JSON.parse(await fs.readFile(claudeCredentialsPath(target), 'utf8'));
+  const restoredConfig = JSON.parse(await fs.readFile(config, 'utf8'));
+  assert.equal(restored.claudeAiOauth.accessToken, 'sk-ant-oat01-legacy');
+  assert.equal(restoredConfig.oauthAccount.emailAddress, 'legacy@example.com');
 });
 
 test('the account in use is matched on the refresh token', async () => {
@@ -706,9 +727,20 @@ test('a failed read keeps the previous number rather than showing nothing', asyn
 
 // --- the loopback callback --------------------------------------------------
 
+async function freeLoopbackPort() {
+  const probe = net.createServer();
+  await new Promise((resolve, reject) => {
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', resolve);
+  });
+  const port = probe.address().port;
+  await new Promise((resolve, reject) => probe.close((error) => error ? reject(error) : resolve()));
+  return port;
+}
+
 test('the loopback server returns the code the browser brings back', async () => {
   const { startLoopbackServer } = await import('../src/index.js');
-  const server = startLoopbackServer({ port: 54321, state: 'state456' });
+  const server = startLoopbackServer({ port: await freeLoopbackPort(), state: 'state456' });
   await server.listening;
 
   const page = await fetch(`${server.redirectUri}?code=abc123&state=state456`);
@@ -719,7 +751,7 @@ test('the loopback server returns the code the browser brings back', async () =>
 
 test('a refused sign-in rejects, even when nothing is awaiting it yet', async () => {
   const { startLoopbackServer } = await import('../src/index.js');
-  const server = startLoopbackServer({ port: 54322, state: 'state456' });
+  const server = startLoopbackServer({ port: await freeLoopbackPort(), state: 'state456' });
   await server.listening;
 
   await fetch(`${server.redirectUri}?error=access_denied&error_description=User+refused`);
@@ -732,20 +764,21 @@ test('a refused sign-in rejects, even when nothing is awaiting it yet', async ()
 
 test('a taken port fails with the alternative named', async () => {
   const { startLoopbackServer } = await import('../src/index.js');
-  const held = startLoopbackServer({ port: 54323, state: 'held-state' });
+  const port = await freeLoopbackPort();
+  const held = startLoopbackServer({ port, state: 'held-state' });
   await held.listening;
 
-  const clash = startLoopbackServer({ port: 54323, state: 'clash-state' });
+  const clash = startLoopbackServer({ port, state: 'clash-state' });
   await assert.rejects(() => clash.listening, /already in use.*code flow/s);
   held.close();
 });
 
 test('the loopback callback requires exact path and matching non-empty state', async () => {
   const { startLoopbackServer } = await import('../src/index.js');
-  const server = startLoopbackServer({ port: 54324, state: 'expected-state' });
+  const server = startLoopbackServer({ port: await freeLoopbackPort(), state: 'expected-state' });
   await server.listening;
 
-  assert.equal((await fetch(`http://127.0.0.1:54324/callback-extra?code=wrong&state=expected-state`)).status, 404);
+  assert.equal((await fetch(`${server.redirectUri}-extra?code=wrong&state=expected-state`)).status, 404);
   const missing = await fetch(`${server.redirectUri}?code=abc123`);
   assert.equal(missing.status, 400);
   await assert.rejects(() => server.result, /did not match this request/i);
@@ -753,11 +786,11 @@ test('the loopback callback requires exact path and matching non-empty state', a
 
 test('the loopback callback expires and close cancels a pending wait', async () => {
   const { startLoopbackServer } = await import('../src/index.js');
-  const expiring = startLoopbackServer({ port: 54325, state: 'expiring', timeoutMs: 20 });
+  const expiring = startLoopbackServer({ port: await freeLoopbackPort(), state: 'expiring', timeoutMs: 20 });
   await expiring.listening;
   await assert.rejects(() => expiring.result, /timed out/i);
 
-  const cancelled = startLoopbackServer({ port: 54326, state: 'cancelled' });
+  const cancelled = startLoopbackServer({ port: await freeLoopbackPort(), state: 'cancelled' });
   await cancelled.listening;
   cancelled.close();
   await assert.rejects(() => cancelled.result, /cancelled/i);

@@ -13,11 +13,11 @@ export function sanitizeContentForHandoff(content) {
   let text = String(content || '');
   text = text.replace(QUOTED_DATA_IMAGE_RE, (match) => {
     stats.inlineImages++;
-    return `[Context Bridge omitted inline base64 image: ${match.length} chars]`;
+    return `[Turntrail omitted inline base64 image: ${match.length} chars]`;
   });
   text = text.replace(INLINE_DATA_IMAGE_RE, (match) => {
     stats.inlineImages++;
-    return `[Context Bridge omitted inline base64 image: ${match.length} chars]`;
+    return `[Turntrail omitted inline base64 image: ${match.length} chars]`;
   });
   text = replaceJsonBase64Fields(text, stats);
   text = replaceLongBase64Tokens(text, stats);
@@ -180,7 +180,7 @@ function replaceJsonBase64Fields(text, stats) {
     if (JSON_BASE64_FIELD_RE.test(field) && value.length >= 800 && isBase64Token(value)) {
       stats.jsonFields++;
       output += text.slice(last, cursor);
-      output += `"[Context Bridge omitted base64 payload: ${value.length} chars]"`;
+      output += `"[Turntrail omitted base64 payload: ${value.length} chars]"`;
       last = valueEnd + 1;
     }
     i = valueEnd + 1;
@@ -206,7 +206,7 @@ function replaceLongBase64Tokens(text, stats) {
     if (token.length >= 1200 && looksLikeBase64(token)) {
       stats.base64Tokens++;
       output += text.slice(last, start);
-      output += `[Context Bridge omitted base64 blob: ${token.length} chars]`;
+      output += `[Turntrail omitted base64 blob: ${token.length} chars]`;
       last = i;
     }
   }
