@@ -7,7 +7,9 @@ Turntrail does two independent jobs:
 - **Handoffs.** Import the latest native session from one agent, snapshot your workspace, and write a clean, deterministic handoff you paste into the next agent. Everything stays local in `.turntrail/` — no telemetry, no network, no AI summarization.
 - **Accounts.** Keep several Codex subscriptions and Claude accounts signed in at once, see what each has left on a usage bar, and switch the official tools between them.
 
-Use either without the other. The handoff flow never touches the network; the accounts panel reaches only the providers’ own sign-in and usage endpoints, and no transcript content is ever sent anywhere.
+Use either without the other. The handoff flow never touches the network. Account actions, and
+background maintenance only when explicitly enabled, reach only the providers' own sign-in, token,
+and usage endpoints; no transcript content is ever sent anywhere.
 
 Works in VS Code and compatible forks (Cursor, Windsurf, Google Antigravity).
 
@@ -178,19 +180,18 @@ minutes and contains no tokens; failures leave the live credential unchanged.
 Switching is manual. The panel shows what each account has left and lets you choose — it does not
 fail over on its own when one runs out.
 
-Access tokens expire — Claude's every eight hours, Codex's after about ten days — and each official
-client renews only the account it is *currently* using. Turntrail renews the others itself so
-their quota stays readable, and so a switch never lands on an expired login: checking a Codex
-subscription's usage also refreshes its token while there are still a few days of life left, which
-keeps an idle account alive through the ordinary act of showing its quota.
+Access tokens expire, and each official client normally renews only the account it is *currently*
+using. A quota read renews an inactive OAuth account only when its recorded access-token expiry says
+renewal is due. The **active** account is never refreshed by Turntrail — the live official client
+owns its rotating token. Turntrail synchronizes the live credential back into the managed snapshot
+instead, so a later switch does not reinstall an older refresh token.
 
-Two rules keep this safe. The **active** Codex account is never refreshed here — the live Codex CLI
-owns its token, and OpenAI rotates the refresh token on every use, so two refreshers would revoke
-each other. And **switching away** first saves whatever the live client last refreshed back into that
-account's stored copy, so its snapshot never falls behind. The catch is that this only runs while VS
-Code is open to poll: an account left unused with the app closed past its refresh token's own
-lifetime still needs a fresh sign-in, and the switch will tell you so rather than installing a dead
-token.
+Background maintenance is **off by default**. Run **Turntrail: Toggle Background Account
+Maintenance** to opt in. While the editor is open, Turntrail then performs a jittered maintenance
+run about every five hours: refresh due inactive OAuth credentials, read quota, and update the local
+cache. A machine-wide lock prevents simultaneous refreshes from multiple VS Code-compatible editors
+or a CLI scheduler. API-key accounts are skipped, and no model/inference request is used as a
+keep-alive. An account whose provider login has fully expired still requires a fresh sign-in.
 
 API-key Codex accounts can be activated and launched normally. They do not have subscription quota,
 so the panel reports quota as unavailable instead of treating the account as signed out.
@@ -215,7 +216,11 @@ Turntrail is a local tool. Here is exactly what it touches and why.
 - The project’s git-ignored `.turntrail/` — the merged ledger, snapshots, and handoff documents.
 - `~/.turntrail/accounts/` — copies of the credentials for accounts you add, written owner-only (`0600`) so you can switch between them. Nothing account-related is written inside your project.
 
-**Network:** the handoff flow makes **no network calls at all**. The only requests the extension ever makes are from the optional accounts panel, and only to the providers’ own endpoints — Anthropic and OpenAI sign-in, token refresh, and usage/quota. Your credentials go to the service that issued them and nowhere else. There is **no telemetry** and no other server involved.
+**Network:** the handoff flow makes **no network calls at all**. The optional accounts panel and the
+separately opt-in background maintenance setting contact only the providers' own endpoints —
+Anthropic and OpenAI sign-in, token refresh, and usage/quota. Background maintenance is disabled by
+default. Your credentials go to the service that issued them and nowhere else. There is **no
+telemetry** and no other server involved.
 
 Provider HTTP calls have a 20-second timeout and support cancellation. Provider response bodies are
 not copied into error messages. The Claude loopback callback requires exact PKCE state and expires;

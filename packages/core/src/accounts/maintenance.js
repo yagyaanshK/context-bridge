@@ -79,14 +79,14 @@ async function maintainCodexAccount(account, options) {
   if (!before?.accessToken) return result(account, 'skipped', { reason: 'not-signed-in' });
 
   const active = await isActiveCodexAccount(account.id, options);
-  if (active) await syncActiveCodexAccount(account.id, options);
+  const synchronizedActive = active ? await syncActiveCodexAccount(account.id, options) : false;
   const synchronized = await readCodexAuth(codexHome(account.id, options));
   const usage = await getCodexUsage(account.id, maintenanceUsageOptions(options));
   const after = await readCodexAuth(codexHome(account.id, options));
   return usageResult(account, usage, {
     active,
     refreshed: credentialChanged(synchronized, after),
-    synchronized: active && credentialChanged(before, synchronized)
+    synchronized: synchronizedActive && credentialChanged(before, synchronized)
   });
 }
 
@@ -95,14 +95,14 @@ async function maintainClaudeAccount(account, options) {
   if (!before?.accessToken) return result(account, 'skipped', { reason: 'not-signed-in' });
 
   const active = await isActiveClaudeAccount(account.id, options);
-  if (active) await syncActiveClaudeAccount(account.id, options);
+  const synchronizedActive = active ? await syncActiveClaudeAccount(account.id, options) : false;
   const synchronized = await readClaudeAuth(claudeHome(account.id, options), options);
   const usage = await getClaudeUsage(account.id, maintenanceUsageOptions(options));
   const after = await readClaudeAuth(claudeHome(account.id, options), options);
   return usageResult(account, usage, {
     active,
     refreshed: credentialChanged(synchronized, after),
-    synchronized: active && credentialChanged(before, synchronized)
+    synchronized: synchronizedActive && credentialChanged(before, synchronized)
   });
 }
 

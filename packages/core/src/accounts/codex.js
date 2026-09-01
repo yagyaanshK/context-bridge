@@ -143,6 +143,16 @@ export async function syncActiveCodexAccount(accountId, options = {}) {
     throw new Error(`Could not parse ${source}: ${error.message}`);
   }
   validateCodexCredentialPayload(credential);
+  const tokens = credential.tokens || {};
+  const exact = {
+    apiKey: credential.OPENAI_API_KEY || credential.openai_api_key,
+    accessToken: tokens.access_token || tokens.accessToken,
+    refreshToken: tokens.refresh_token || tokens.refreshToken,
+    accountId: tokens.account_id || tokens.accountId,
+    claims: decodeJwtClaims(tokens.id_token || tokens.idToken)
+  };
+  const managed = await readCodexAuth(codexHome(accountId, options));
+  if (!sameCodexIdentity(exact, managed)) return false;
   await writeFileAtomic(codexAuthPath(codexHome(accountId, options)), contents, { mode: 0o600 });
   return true;
 }

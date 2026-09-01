@@ -4,7 +4,7 @@
 
 Turntrail is a local, vendor-neutral handoff layer for developers who switch between agentic coding tools such as **Claude Code** and **Codex**. It captures an exact transcript and workspace snapshot, then generates a clean handoff you paste into the next tool.
 
-- 🔒 **Local-only** — everything lives in your project under `.turntrail/`. No accounts, no telemetry, no network calls.
+- 🔒 **Local handoffs** — transcripts and snapshots stay under `.turntrail/`; the handoff path has no telemetry or network calls.
 - 🧾 **Lossless** — native transcripts are imported verbatim as JSONL. No AI summary in the core flow.
 - ✂️ **Lean handoffs** — duplicate turns are collapsed, noisy tool output is trimmed, inline screenshots are stripped, and common credential formats are redacted before export.
 - 🧰 **Two ways to use it** — a `turntrail` CLI and a VS Code extension (works in forks like Cursor, Windsurf, and Google Antigravity).
@@ -214,6 +214,8 @@ The extension contributes an **Accounts** panel in the activity bar (see below) 
 | `claudeUri` | `vscode://anthropic.claude-code/open` | URI used to open Claude, when the setting above is on. |
 | `claudeOpenCommand` | `""` | Exact command id to open Claude. Empty means auto-detect. |
 | `codexOpenCommand` | `""` | Exact command id to open Codex. Empty means auto-detect. |
+| `accountMaintenance.enabled` | `false` | Opt into background OAuth maintenance and quota reads while the editor is open. |
+| `accountMaintenance.intervalHours` | `5` | Hours between background runs, with timing jitter (1-24). |
 
 ---
 
@@ -285,19 +287,23 @@ That time is the reset of the window actually holding you — which is not alway
 five-hour window can clear in an hour while an exhausted weekly allowance keeps you blocked for
 days, and when several windows are exhausted you resume only once the last of them clears. Accounts
 with more than one window list each one with its own reset beneath the bar.
- Access tokens
-expire — Claude's every eight hours, Codex's after about ten days — and each official client renews
-only the account it is currently using, so Turntrail renews the others itself, otherwise their
-bars would go dark. For Codex this doubles as keep-alive: reading an idle subscription's quota
-refreshes its token while a few days of life remain, so a later switch never lands on an expired
-login. The account the live Codex is using is left alone — OpenAI rotates the refresh token on each
-use and two refreshers would revoke each other — and switching away first saves the live client's
-latest token back into that account's snapshot so it never falls behind.
+Access tokens expire, and each official client normally renews only the account it is currently
+using. A quota read renews an inactive OAuth account only when its access-token expiry says renewal
+is due. The active account is never refreshed by Turntrail because the official client owns its
+rotating token; Turntrail copies the client's latest credential back into the managed snapshot
+instead. API-key accounts have no OAuth token to maintain and are skipped.
+
+Background maintenance is **off by default**. Run **Turntrail: Toggle Background Account
+Maintenance** to opt in to a jittered run about every five hours while the editor is open. Each run
+updates quota caches and renews only due inactive OAuth accounts. A machine-wide lock prevents
+several VS Code-compatible editors or CLI jobs from refreshing the same token concurrently. There
+is no inference request, generated prompt, telemetry, or Turntrail server involved.
 
 ```bash
 turntrail account add "Primary" --import   # Codex: adopt the login you already have
 turntrail account add "Subscription 2"     # then run the printed `codex login`
 turntrail accounts --refresh               # remaining quota per subscription
+turntrail account maintain --json          # maintain all providers; suitable for an OS scheduler
 ```
 
 ### Switching

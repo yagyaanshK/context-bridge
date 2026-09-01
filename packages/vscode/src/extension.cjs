@@ -2,6 +2,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const vscode = require('vscode');
 const { safeAgentCommand, safeClaudeUri } = require('./security.cjs');
+const { AccountMaintenanceScheduler } = require('./account-maintenance.cjs');
 const { readRawUsage } = require('./raw-usage.cjs');
 const { AccountsStore, AccountsWebview } = require('./accounts-view.cjs');
 const { handoffForRoot } = require('./handoff-state.cjs');
@@ -18,6 +19,8 @@ let accountsProvider;
 let accountStatus;
 let loginPanel;
 let accountsWebview;
+let accountMaintenance;
+let accountMaintenanceOutput;
 
 async function activateExtension(context) {
   accountsProvider = new AccountsStore(core);
@@ -30,9 +33,13 @@ async function activateExtension(context) {
   accountStatus.command = 'turntrail.switchAccount';
   accountStatus.name = 'Turntrail: active account';
   accountsProvider.onDidChange(() => accountsProvider.summary().then(renderStatus));
+  accountMaintenanceOutput = vscode.window.createOutputChannel('Turntrail Accounts');
+  accountMaintenance = createAccountMaintenance(context);
 
   context.subscriptions.push(
     accountStatus,
+    accountMaintenanceOutput,
+    accountMaintenance,
     accountsProvider.emitter,
     vscode.window.registerWebviewViewProvider('contextBridgeAccounts', accountsWebview),
     ...compatibleCommands('switchAccount', (item) => switchAccount(item)),
@@ -49,6 +56,7 @@ async function activateExtension(context) {
     ...compatibleCommands('openAccountTerminal', (item) => openAccountTerminal(item)),
     ...compatibleCommands('renameAccount', (item) => renameAccount(item)),
     ...compatibleCommands('forgetAccount', (item) => forgetAccount(item)),
+    ...compatibleCommands('toggleAccountMaintenance', () => toggleAccountMaintenance()),
     ...compatibleCommands('discoverClaude', () => discover('claude')),
     ...compatibleCommands('discoverCodex', () => discover('codex')),
     ...compatibleCommands('importLatestClaude', () => importLatest('claude')),
@@ -61,7 +69,15 @@ async function activateExtension(context) {
     ...compatibleCommands('handoffToCodexExisting', () => handoff('codex', 'existing')),
     ...compatibleCommands('handoffToCodexNew', () => handoff('codex', 'new')),
     ...compatibleCommands('openLatestHandoff', () => openLatestHandoff()),
-    ...compatibleCommands('copyLatestHandoffPrompt', () => copyLatestHandoffPrompt())
+    ...compatibleCommands('copyLatestHandoffPrompt', () => copyLatestHandoffPrompt()),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (
+        event.affectsConfiguration('turntrail.accountMaintenance') ||
+        event.affectsConfiguration('contextBridge.accountMaintenance')
+      ) {
+        accountMaintenance.reschedule();
+      }
+    })
   );
 
   // Populate the panel and status bar from cache on activation. Offline, so
@@ -69,6 +85,7 @@ async function activateExtension(context) {
   accountsProvider.reloadUsage({ offline: true }).catch(() => {});
   publishHandoffState().catch(() => {});
   startSwitchResultMonitor(context);
+  accountMaintenance.start();
 }
 
 function deactivate() {}
@@ -597,6 +614,52 @@ function compatibleCommands(name, handler) {
 
 async function core() {
   return import('@turntrail/core');
+}
+
+function createAccountMaintenance(context) {
+  return new AccountMaintenanceScheduler({
+    readConfig: accountMaintenanceConfig,
+    readLastRun: () => context.globalState.get('accountMaintenance.lastRunAt'),
+    writeLastRun: (value) => context.globalState.update('accountMaintenance.lastRunAt', value),
+    run: async ({ signal }) => {
+      const api = await core();
+      return api.maintainAccounts({ signal });
+    },
+    onComplete: async (maintenance) => {
+      const counts = maintenance.results.reduce((all, item) => {
+        all[item.status] = (all[item.status] || 0) + 1;
+        return all;
+      }, {});
+      const summary = Object.entries(counts).map(([status, count]) => `${count} ${status}`).join(', ') || 'no accounts';
+      accountMaintenanceOutput.appendLine(`[${maintenance.completedAt}] Account maintenance: ${summary}.`);
+      await accountsProvider.reloadUsage({ offline: true });
+    },
+    onError: (error) => {
+      accountMaintenanceOutput.appendLine(`[${new Date().toISOString()}] Account maintenance failed: ${error.message}`);
+    },
+    setTimer: (callback, delay) => setTimeout(callback, delay),
+    clearTimer: (timer) => clearTimeout(timer)
+  });
+}
+
+function accountMaintenanceConfig() {
+  const enabled = Boolean(userOnlySetting('accountMaintenance.enabled'));
+  const hours = numberSetting(userOnlySetting('accountMaintenance.intervalHours'));
+  return {
+    enabled,
+    intervalMs: Math.max(1, Math.min(24, hours || 5)) * 60 * 60 * 1000
+  };
+}
+
+async function toggleAccountMaintenance() {
+  const configuration = vscode.workspace.getConfiguration('turntrail');
+  const enabled = !accountMaintenanceConfig().enabled;
+  await configuration.update('accountMaintenance.enabled', enabled, vscode.ConfigurationTarget.Global);
+  accountMaintenance.reschedule();
+  const message = enabled
+    ? 'Background account maintenance is enabled. Turntrail will contact provider token and usage endpoints about every five hours.'
+    : 'Background account maintenance is disabled.';
+  vscode.window.showInformationMessage(`Turntrail: ${message}`);
 }
 
 async function workspaceRoot() {

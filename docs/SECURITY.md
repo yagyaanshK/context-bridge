@@ -32,6 +32,20 @@ contain an account id, a bounded blocker description, a deadline, and editor rel
 never contain access tokens, refresh tokens, API keys, or credential contents. Requests expire after
 15 minutes; malformed, expired, raced, or failed requests do not modify the live provider login.
 
+## Background account maintenance
+
+Background maintenance is disabled by default and can be enabled only through an application-level
+user setting. A workspace cannot opt the user in. When enabled, the editor contacts only the
+configured OpenAI and Anthropic token and usage endpoints on a jittered interval. It sends no
+transcript content, telemetry, or model/inference request. API-key accounts are skipped.
+
+A machine-wide lock serializes editor windows, VS Code forks, and CLI schedulers. Inactive OAuth
+accounts are refreshed only when their access-token expiry says renewal is due. Turntrail never
+refreshes an account currently owned by a live official client; it validates and synchronizes that
+client's rotated credential back into the managed snapshot instead. Provider calls retain the same
+bounded timeout, cancellation, payload validation, and redacted error handling as manual quota
+reads.
+
 ## Untrusted metadata
 
 Transcript content is intentionally passed to the receiving agent as historical conversation. Paths, branch names, session labels, media references, and other metadata are separately flattened and escaped so they cannot add Markdown sections or close a fenced block. Handoffs explicitly tell the receiving agent to treat metadata as data, never instructions.

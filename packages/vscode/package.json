@@ -2,7 +2,7 @@
   "name": "context-bridge-vscode",
   "displayName": "Turntrail",
   "description": "Continue developer agent sessions across Claude, Codex, and other tools from VS Code.",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "publisher": "turntrail",
   "license": "MIT",
   "type": "commonjs",
@@ -36,6 +36,7 @@
   },
   "homepage": "https://github.com/yagyaanshK/turntrail#readme",
   "activationEvents": [
+    "onStartupFinished",
     "onView:contextBridgeAccounts",
     "onCommand:turntrail.switchAccount",
     "onCommand:turntrail.refreshAccountQuota",
@@ -62,6 +63,7 @@
     "onCommand:turntrail.renameAccount",
     "onCommand:turntrail.forgetAccount",
     "onCommand:turntrail.createHandoff",
+    "onCommand:turntrail.toggleAccountMaintenance",
     "onCommand:contextBridge.switchAccount",
     "onCommand:contextBridge.refreshAccountQuota",
     "onCommand:contextBridge.discoverClaude",
@@ -86,7 +88,8 @@
     "onCommand:contextBridge.openAccountTerminal",
     "onCommand:contextBridge.renameAccount",
     "onCommand:contextBridge.forgetAccount",
-    "onCommand:contextBridge.createHandoff"
+    "onCommand:contextBridge.createHandoff",
+    "onCommand:contextBridge.toggleAccountMaintenance"
   ],
   "main": "./src/extension.cjs",
   "contributes": {
@@ -174,6 +177,11 @@
         "command": "turntrail.forgetAccount",
         "title": "Turntrail: Remove Account",
         "icon": "$(trash)"
+      },
+      {
+        "command": "turntrail.toggleAccountMaintenance",
+        "title": "Turntrail: Toggle Background Account Maintenance",
+        "icon": "$(history)"
       },
       {
         "command": "turntrail.discoverClaude",
@@ -292,6 +300,20 @@
           "default": false,
           "description": "When several agent sessions were started in this workspace, use the most recently active one without asking. Off by default: sessions in one folder are not interchangeable, and the most recently touched is often not the one worth continuing."
         },
+        "turntrail.accountMaintenance.enabled": {
+          "type": "boolean",
+          "scope": "application",
+          "default": false,
+          "description": "Periodically refresh due managed OAuth credentials and fetch account usage while the editor is open. This makes background requests only to the configured OpenAI and Anthropic token and usage endpoints. API-key accounts are skipped."
+        },
+        "turntrail.accountMaintenance.intervalHours": {
+          "type": "number",
+          "scope": "application",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 24,
+          "description": "Hours between background account maintenance runs. Timing is jittered to avoid simultaneous requests from several editor windows."
+        },
         "contextBridge.maxExportChars": {
           "type": "number",
           "deprecationMessage": "Renamed to turntrail.maxExportChars. Existing values remain supported."
@@ -395,7 +417,7 @@
     }
   },
   "dependencies": {
-    "@turntrail/core": "0.12.1"
+    "@turntrail/core": "0.13.0"
   },
   "devDependencies": {
     "@types/vscode": "^1.95.0"

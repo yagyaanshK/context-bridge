@@ -126,6 +126,7 @@ turntrail account add "Primary" --import
 turntrail account add "Subscription 2"
 turntrail account use <id>
 turntrail account remove <id> [--purge]
+turntrail account maintain [--json]
 ```
 
 `account add --import` adopts the login already at `~/.codex` — it **copies**, so the original stays
@@ -155,3 +156,19 @@ state instead of appearing signed out.
 
 Quota is cached for five minutes per account. A failed refresh keeps the last good reading rather
 than blanking the display.
+
+`account maintain` is the exception to the Codex-only note above: it processes every managed Codex
+and Claude account. It skips API-key and unsigned accounts, refreshes an inactive OAuth credential
+only when due, synchronizes provider-owned active credentials without refreshing them, and updates
+quota caches. A machine-wide lock makes it safe to invoke from several editor windows or an OS
+scheduler; a contended invocation exits successfully and reports that another run is active.
+
+Use the machine-readable form as the target of Task Scheduler, cron, launchd, or systemd when you
+want maintenance to continue while no editor is open:
+
+```bash
+turntrail account maintain --json
+```
+
+Schedule it about every five hours. Running it more frequently does not force token rotation, but it
+does force provider quota requests and provides no benefit.

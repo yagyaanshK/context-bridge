@@ -428,6 +428,10 @@ export async function syncActiveClaudeAccount(accountId, options = {}) {
     throw new Error(`Could not parse ${source}: ${error.message}`);
   }
   validateClaudeCredentialPayload(credential);
+  const oauth = credential.claudeAiOauth || {};
+  const live = await readClaudeAuth(defaultClaudeHome(options), options);
+  const managed = await readClaudeAuth(claudeHome(accountId, options), options);
+  if (live?.accessToken !== oauth.accessToken || !sameClaudeIdentity(live, managed)) return false;
   await writeFileAtomic(claudeCredentialsPath(claudeHome(accountId, options)), contents, { mode: 0o600 });
   return true;
 }

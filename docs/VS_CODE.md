@@ -32,6 +32,7 @@ Open the command palette and run:
 - `Turntrail: Rename Account`
 - `Turntrail: Remove Account`
 - `Turntrail: Show Raw Response`
+- `Turntrail: Toggle Background Account Maintenance`
 
 Everything in the accounts group is also reachable from the panel, which never hands you off to a
 dropdown: confirmations and renames happen inline in the card you clicked.
@@ -56,6 +57,13 @@ holding the credential, so it cannot invalidate a login.
 | **Refresh now** | Forces a usage read; otherwise readings are cached for five minutes. |
 | **Raw Response** | Shows the endpoint's actual JSON next to how Turntrail parsed it. |
 | **Remove** | Forget the account, or delete its managed credentials and active default login. Confirmed inline. |
+
+Background account maintenance is disabled by default. The toggle command enables an
+application-scoped, jittered run about every five hours while the editor is open. It refreshes only
+due inactive OAuth credentials, fetches quota, synchronizes the active provider-owned credential
+back into Turntrail's snapshot, and skips API-key accounts. A machine-wide lock prevents duplicate
+refreshes across VS Code forks and CLI schedulers. The interval can be changed with
+`turntrail.accountMaintenance.intervalHours` (1-24).
 
 ### Signing in
 

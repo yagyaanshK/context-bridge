@@ -305,6 +305,14 @@ windows out of codenamed buckets sitting at 100% remaining and inflates the head
 Claude access tokens expire every eight hours and the official client renews only the account it is
 using, so Turntrail renews the others before reading their quota.
 
+`accounts/maintenance.js` orchestrates periodic maintenance across both providers. It serializes
+accounts behind a machine-wide lock under `~/.turntrail/`, skips API-key and unsigned accounts,
+forces one useful quota read, and lets the existing expiry-aware provider functions decide whether
+an inactive OAuth credential is due for renewal. Active credentials are copied from the official
+client's live home back into the managed snapshot but are never refreshed by Turntrail. The VS Code
+scheduler is application-scoped, disabled by default, and jittered around a five-hour interval;
+`turntrail account maintain` exposes the same operation to OS schedulers.
+
 ## Privacy Model
 
 `.turntrail/` is gitignored because it may contain:

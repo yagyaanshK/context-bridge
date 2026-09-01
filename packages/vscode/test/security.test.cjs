@@ -57,6 +57,13 @@ test('executable command and URI settings are application-scoped', () => {
   ]) {
     assert.equal(properties[key].scope, 'application', key);
   }
+
+  for (const key of [
+    'turntrail.accountMaintenance.enabled',
+    'turntrail.accountMaintenance.intervalHours'
+  ]) {
+    assert.equal(properties[key].scope, 'application', key);
+  }
 });
 
 test('every Turntrail command activates both canonical and legacy command ids', () => {
