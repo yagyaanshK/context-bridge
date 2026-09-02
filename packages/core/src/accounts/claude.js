@@ -8,6 +8,7 @@ import { isProviderContractError, validateClaudeCredentialPayload } from './prov
 import { assertAgentStopped } from './processes.js';
 
 export const CLAUDE_PROVIDER = 'claude';
+export const CLAUDE_PROACTIVE_REFRESH_MS = 4 * 60 * 60 * 1000;
 
 // Same mechanism as Codex, different environment variable. Claude Code keeps
 // its whole world - credential, config, project history - under
@@ -55,16 +56,9 @@ export function claudeEnv(accountId, options = {}) {
 // credential alone cannot say who signed in: unlike Codex there is no JWT to
 // decode, and the email is only ever recorded in the config.
 export async function readClaudeAuth(home, options = {}) {
-  const file = claudeCredentialsPath(home);
-  if (!(await pathExists(file))) return null;
-
-  let raw;
-  try {
-    raw = await readJson(file);
-  } catch (error) {
-    throw new Error(`Could not parse ${file}: ${error.message}`);
-  }
-  validateClaudeCredentialPayload(raw);
+  const state = await readClaudeCredentialState(home);
+  if (state.kind === 'missing') return null;
+  const { file, raw } = state;
 
   const oauth = raw.claudeAiOauth || {};
   const profile = await readClaudeProfile(home, options);
@@ -81,6 +75,38 @@ export async function readClaudeAuth(home, options = {}) {
     plan: claudePlan(oauth, profile),
     profile
   };
+}
+
+// Claude has shipped failure modes that leave the OAuth object present but its
+// token strings blank. That state is repairable, unlike malformed JSON: no
+// process can authenticate with it, and retaining it only forces another login.
+async function readClaudeCredentialState(home) {
+  const file = claudeCredentialsPath(home);
+  if (!(await pathExists(file))) return { kind: 'missing', file };
+
+  let raw;
+  try {
+    raw = await readJson(file);
+  } catch (error) {
+    throw new Error(`Could not parse ${file}: ${error.message}`);
+  }
+
+  if (isBlankClaudeCredential(raw)) return { kind: 'blank', file, raw };
+  validateClaudeCredentialPayload(raw);
+  return { kind: raw.claudeAiOauth?.accessToken ? 'usable' : 'blank', file, raw };
+}
+
+function isBlankClaudeCredential(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  if (raw.claudeAiOauth === undefined) return true;
+  const oauth = raw.claudeAiOauth;
+  return Boolean(
+    oauth &&
+      typeof oauth === 'object' &&
+      !Array.isArray(oauth) &&
+      !String(oauth.accessToken || '').trim() &&
+      !String(oauth.refreshToken || '').trim()
+  );
 }
 
 // The `oauthAccount` block Claude Code writes into its config: who is signed in,
@@ -263,13 +289,154 @@ async function firstExistingPath(candidates) {
 // so profile identity is the fallback after direct token matches.
 export async function activeClaudeAccountId(accounts, options = {}) {
   const current = await readClaudeAuth(defaultClaudeHome(options), options);
-  if (!current) return undefined;
+  if (!current?.accessToken) return undefined;
 
   for (const account of accounts) {
     const auth = await readClaudeAuth(claudeHome(account.id, options), options);
     if (sameClaudeIdentity(current, auth)) return account.id;
   }
   return undefined;
+}
+
+// Determine which managed account may safely own the live Claude credential
+// during maintenance. A usable live token wins. If Claude has erased or blanked
+// it, a retained live profile can still identify the account. With no identity
+// at all, repair is safe only when exactly one managed Claude login exists.
+export async function claudeMaintenanceAccountId(accounts, options = {}) {
+  const claudeAccounts = (accounts || []).filter((account) => account.provider === CLAUDE_PROVIDER);
+  const liveState = await readClaudeCredentialState(defaultClaudeHome(options));
+
+  if (liveState.kind === 'usable') return activeClaudeAccountId(claudeAccounts, options);
+
+  const signedIn = [];
+  for (const account of claudeAccounts) {
+    const auth = await readClaudeAuth(claudeHome(account.id, options), options);
+    if (auth?.accessToken && auth?.refreshToken) signedIn.push({ account, auth });
+  }
+
+  const liveProfile = await readClaudeProfile(defaultClaudeHome(options), options);
+  if (liveProfile) {
+    const matches = signedIn.filter(({ auth }) => sameClaudeProfile(liveProfile, auth.profile));
+    if (matches.length === 1) return matches[0].account.id;
+    if (matches.length > 1) return undefined;
+  }
+
+  return signedIn.length === 1 ? signedIn[0].account.id : undefined;
+}
+
+// Keep the official Claude Code credential and Turntrail's managed copy on the
+// same refresh-token generation while Claude is stopped. The live file is
+// written first after a refresh because Anthropic invalidates the old refresh
+// token; a failure between writes must leave the official client usable.
+export async function maintainIdleClaudeLogin(accountId, options = {}) {
+  await assertAgentStopped(CLAUDE_PROVIDER, options);
+
+  const managedHome = claudeHome(accountId, options);
+  const managedState = await readClaudeCredentialState(managedHome);
+  const managed = await readClaudeAuth(managedHome, options);
+  if (managedState.kind !== 'usable' || !managed?.accessToken || !managed?.refreshToken) {
+    return { active: false, refreshed: false, repaired: false, synchronized: false };
+  }
+
+  const liveHome = defaultClaudeHome(options);
+  const liveState = await readClaudeCredentialState(liveHome);
+  const live = liveState.kind === 'usable' ? await readClaudeAuth(liveHome, options) : null;
+  if (live && !sameClaudeIdentity(live, managed)) {
+    return { active: false, refreshed: false, repaired: false, synchronized: false };
+  }
+
+  // A failed Claude refresh can leave the live file one generation behind
+  // while Turntrail still holds a newer credential. Prefer the copy with the
+  // later access-token expiry; ties remain owned by the official live file.
+  const managedIsNewer = Boolean(
+    live &&
+      credentialsDiffer(liveState.raw, managedState.raw) &&
+      credentialExpiry(managed) > credentialExpiry(live)
+  );
+  const sourceState = !live || managedIsNewer ? managedState : liveState;
+  const source = !live || managedIsNewer ? managed : live;
+  const refreshSkewMs = Number.isFinite(options.claudeRefreshSkewMs)
+    ? Math.max(0, options.claudeRefreshSkewMs)
+    : CLAUDE_PROACTIVE_REFRESH_MS;
+  const expiresAt = Number(source.expiresAt);
+  const due = Number.isFinite(expiresAt) && expiresAt - refreshSkewMs <= Date.now();
+  let credential = sourceState.raw;
+  let refreshed = false;
+
+  if (due) {
+    // Re-check immediately before consuming a single-use refresh token. This
+    // narrows the unavoidable gap between OS process inspection and the token
+    // request without ever racing a Claude process that is already visible.
+    await assertAgentStopped(CLAUDE_PROVIDER, options);
+    const tokens = await refreshClaudeToken(source.refreshToken, options);
+    credential = claudeCredentialWithTokens(credential, tokens);
+    refreshed = true;
+  }
+
+  const repaired = !live;
+  await writeClaudeCredentialFile(liveHome, credential);
+
+  const profile = managed.profile;
+  if (repaired && profile) {
+    await writeClaudeProfile(claudeConfigPath(liveHome, options), profile);
+  }
+
+  // A crash here is recoverable: the live credential is authoritative and the
+  // next maintenance pass copies it back into the managed account.
+  await writeClaudeCredentialFile(managedHome, credential);
+  return {
+    active: true,
+    refreshed,
+    repaired,
+    synchronized: credentialsDiffer(managedState.raw, credential)
+  };
+}
+
+function sameClaudeProfile(left, right) {
+  if (!left || !right) return false;
+  const leftEmail = String(left.emailAddress || '').trim().toLowerCase();
+  const rightEmail = String(right.emailAddress || '').trim().toLowerCase();
+  if (!leftEmail || leftEmail !== rightEmail) return false;
+  const leftOrganization = left.organizationUuid;
+  const rightOrganization = right.organizationUuid;
+  return !leftOrganization || !rightOrganization || leftOrganization === rightOrganization;
+}
+
+function claudeCredentialWithTokens(credential, tokens) {
+  const oauth = credential?.claudeAiOauth || {};
+  return removeUndefined({
+    ...credential,
+    claudeAiOauth: removeUndefined({
+      ...oauth,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresAt: tokens.expiresAt,
+      scopes: tokens.scopes,
+      tokenType: tokens.tokenType || oauth.tokenType
+    })
+  });
+}
+
+function credentialsDiffer(left, right) {
+  const leftOauth = left?.claudeAiOauth || {};
+  const rightOauth = right?.claudeAiOauth || {};
+  return leftOauth.accessToken !== rightOauth.accessToken || leftOauth.refreshToken !== rightOauth.refreshToken;
+}
+
+function credentialExpiry(auth) {
+  const expiresAt = Number(auth?.expiresAt);
+  return Number.isFinite(expiresAt) ? expiresAt : 0;
+}
+
+async function writeClaudeCredentialFile(home, credential) {
+  const file = claudeCredentialsPath(home);
+  validateClaudeCredentialPayload(credential);
+  await writeFileAtomic(file, `${JSON.stringify(credential, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  try {
+    await fs.chmod(file, 0o600);
+  } catch {
+    // Windows and some network filesystems do not support POSIX modes.
+  }
 }
 
 export async function refreshClaudeAccountIdentity(accountId, options = {}) {

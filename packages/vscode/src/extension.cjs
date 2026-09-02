@@ -2,7 +2,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const vscode = require('vscode');
 const { safeAgentCommand, safeClaudeUri } = require('./security.cjs');
-const { AccountMaintenanceScheduler } = require('./account-maintenance.cjs');
+const { AccountMaintenanceScheduler, shouldOfferClaudeMaintenance } = require('./account-maintenance.cjs');
 const { readRawUsage } = require('./raw-usage.cjs');
 const { AccountsStore, AccountsWebview } = require('./accounts-view.cjs');
 const { handoffForRoot } = require('./handoff-state.cjs');
@@ -21,6 +21,7 @@ let loginPanel;
 let accountsWebview;
 let accountMaintenance;
 let accountMaintenanceOutput;
+let accountMaintenanceOffer;
 
 async function activateExtension(context) {
   accountsProvider = new AccountsStore(core);
@@ -41,6 +42,7 @@ async function activateExtension(context) {
     accountMaintenanceOutput,
     accountMaintenance,
     accountsProvider.emitter,
+    accountsProvider.onDidChange(() => queueClaudeAccountMaintenanceOffer(context)),
     vscode.window.registerWebviewViewProvider('contextBridgeAccounts', accountsWebview),
     ...compatibleCommands('switchAccount', (item) => switchAccount(item)),
     ...compatibleCommands('showRawUsage', (item) => showRawUsage(item)),
@@ -86,6 +88,7 @@ async function activateExtension(context) {
   publishHandoffState().catch(() => {});
   startSwitchResultMonitor(context);
   accountMaintenance.start();
+  queueClaudeAccountMaintenanceOffer(context);
 }
 
 function deactivate() {}
@@ -660,6 +663,45 @@ async function toggleAccountMaintenance() {
     ? 'Background account maintenance is enabled. Turntrail will contact provider token and usage endpoints about every five hours.'
     : 'Background account maintenance is disabled.';
   vscode.window.showInformationMessage(`Turntrail: ${message}`);
+}
+
+async function offerClaudeAccountMaintenance(context) {
+  const promptKey = 'accountMaintenance.claudeOptInPrompted';
+  const claudeAccounts = await accountsProvider.accounts('claude');
+  if (!shouldOfferClaudeMaintenance({
+    enabled: accountMaintenanceConfig().enabled,
+    prompted: context.globalState.get(promptKey) === true,
+    claudeAccounts: claudeAccounts.length
+  })) return;
+
+  await context.globalState.update(promptKey, true);
+  const choice = await vscode.window.showInformationMessage(
+    'Turntrail can maintain Claude OAuth credentials while Claude is stopped, reducing daily sign-outs caused by expired or rotated tokens.',
+    'Enable maintenance',
+    'Not now'
+  );
+  if (choice !== 'Enable maintenance') return;
+
+  await vscode.workspace
+    .getConfiguration('turntrail')
+    .update('accountMaintenance.enabled', true, vscode.ConfigurationTarget.Global);
+  accountMaintenance.reschedule();
+  const maintenance = await accountMaintenance.runNow();
+  const message = maintenance
+    ? 'Claude account maintenance is enabled and the first check completed.'
+    : 'Claude account maintenance is enabled. The first check will retry automatically.';
+  vscode.window.showInformationMessage(`Turntrail: ${message}`);
+}
+
+function queueClaudeAccountMaintenanceOffer(context) {
+  if (accountMaintenanceOffer) return;
+  accountMaintenanceOffer = offerClaudeAccountMaintenance(context)
+    .catch((error) => {
+      accountMaintenanceOutput.appendLine(`[${new Date().toISOString()}] Could not offer Claude maintenance: ${error.message}`);
+    })
+    .finally(() => {
+      accountMaintenanceOffer = undefined;
+    });
 }
 
 async function workspaceRoot() {

@@ -3,6 +3,10 @@ const DEFAULT_INITIAL_DELAY_MAX_MS = 2 * 60 * 1000;
 const DEFAULT_RETRY_DELAY_MS = 15 * 60 * 1000;
 const DEFAULT_JITTER_RATIO = 0.1;
 
+function shouldOfferClaudeMaintenance({ enabled, prompted, claudeAccounts }) {
+  return !enabled && !prompted && Number(claudeAccounts) > 0;
+}
+
 class AccountMaintenanceScheduler {
   constructor(options) {
     this.options = options;
@@ -36,15 +40,20 @@ class AccountMaintenanceScheduler {
     this.controller = new AbortController();
     try {
       const maintenance = await this.options.run({ signal: this.controller.signal });
+      const deferred = maintenance?.results?.some((item) => item.status === 'deferred');
       if (!maintenance?.locked) {
-        const completedAt = Date.parse(maintenance?.completedAt || '') || this.now();
-        await this.options.writeLastRun(completedAt);
+        if (!deferred) {
+          const completedAt = Date.parse(maintenance?.completedAt || '') || this.now();
+          await this.options.writeLastRun(completedAt);
+        }
         await this.options.onComplete?.(maintenance);
       }
-      this.scheduleNext(maintenance?.locked ? DEFAULT_RETRY_DELAY_MS : undefined);
+      this.scheduleNext(maintenance?.locked || deferred ? DEFAULT_RETRY_DELAY_MS : undefined);
+      return maintenance;
     } catch (error) {
       if (!this.disposed && error?.name !== 'AbortError') this.options.onError?.(error);
       this.scheduleNext(DEFAULT_RETRY_DELAY_MS);
+      return undefined;
     } finally {
       this.controller = undefined;
       this.running = false;
@@ -103,5 +112,6 @@ module.exports = {
   AccountMaintenanceScheduler,
   initialDelay,
   jitter,
-  DEFAULT_RETRY_DELAY_MS
+  DEFAULT_RETRY_DELAY_MS,
+  shouldOfferClaudeMaintenance
 };

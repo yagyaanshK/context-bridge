@@ -127,6 +127,7 @@ export {
   activateClaudeAccount,
   activeClaudeAccountId,
   backfillClaudeProfile,
+  claudeMaintenanceAccountId,
   claudeConfigPath,
   claudeCredentialsPath,
   claudeEnv,
@@ -134,6 +135,7 @@ export {
   defaultClaudeHome,
   ensureClaudeAccessToken,
   isActiveClaudeAccount,
+  maintainIdleClaudeLogin,
   ensureClaudeHome,
   importClaudeAuth,
   importClaudeAuthText,
@@ -146,6 +148,7 @@ export {
   restoreClaudeBackup,
   syncActiveClaudeAccount,
   writeClaudeCredential,
+  CLAUDE_PROACTIVE_REFRESH_MS,
   CLAUDE_PROVIDER
 } from './accounts/claude.js';
 export {

@@ -304,7 +304,7 @@
           "type": "boolean",
           "scope": "application",
           "default": false,
-          "description": "Periodically refresh due managed OAuth credentials and fetch account usage while the editor is open. This makes background requests only to the configured OpenAI and Anthropic token and usage endpoints. API-key accounts are skipped."
+          "description": "Periodically refresh due managed OAuth credentials and fetch account usage while the editor is open. When Claude is stopped, Turntrail also keeps its live and managed OAuth credentials synchronized and repairs a missing live login when the account identity is unambiguous. This makes background requests only to the configured OpenAI and Anthropic token and usage endpoints. API-key accounts are skipped."
         },
         "turntrail.accountMaintenance.intervalHours": {
           "type": "number",

@@ -4,8 +4,16 @@ const {
   AccountMaintenanceScheduler,
   DEFAULT_RETRY_DELAY_MS,
   initialDelay,
-  jitter
+  jitter,
+  shouldOfferClaudeMaintenance
 } = require('../src/account-maintenance.cjs');
+
+test('Claude maintenance opt-in is offered once only when it can help', () => {
+  assert.equal(shouldOfferClaudeMaintenance({ enabled: false, prompted: false, claudeAccounts: 1 }), true);
+  assert.equal(shouldOfferClaudeMaintenance({ enabled: true, prompted: false, claudeAccounts: 1 }), false);
+  assert.equal(shouldOfferClaudeMaintenance({ enabled: false, prompted: true, claudeAccounts: 1 }), false);
+  assert.equal(shouldOfferClaudeMaintenance({ enabled: false, prompted: false, claudeAccounts: 0 }), false);
+});
 
 test('maintenance delay is jittered and overdue work starts shortly after activation', () => {
   assert.equal(jitter(1000, 0), 900);
@@ -67,5 +75,33 @@ test('a contended maintenance lock retries without advancing last-run state', as
 
   await scheduler.runNow();
   assert.equal(writes, 0);
+  assert.equal(scheduled.delay, DEFAULT_RETRY_DELAY_MS);
+});
+
+test('a due Claude login retries after the client exits without advancing last-run state', async () => {
+  let writes = 0;
+  let completed = 0;
+  let scheduled;
+  const scheduler = new AccountMaintenanceScheduler({
+    readConfig: () => ({ enabled: true, intervalMs: 5 * 60 * 60 * 1000 }),
+    readLastRun: () => 0,
+    writeLastRun: async () => { writes++; },
+    run: async () => ({
+      locked: false,
+      completedAt: new Date().toISOString(),
+      results: [{ provider: 'claude', status: 'deferred', reason: 'claude-running' }]
+    }),
+    onComplete: async () => { completed++; },
+    random: () => 0.5,
+    setTimer: (callback, delay) => {
+      scheduled = { callback, delay };
+      return scheduled;
+    },
+    clearTimer: () => {}
+  });
+
+  await scheduler.runNow();
+  assert.equal(writes, 0);
+  assert.equal(completed, 1);
   assert.equal(scheduled.delay, DEFAULT_RETRY_DELAY_MS);
 });

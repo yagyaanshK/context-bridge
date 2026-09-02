@@ -12,14 +12,14 @@ const WINDOWS_POWERSHELL = path.join(
 );
 
 export async function listAgentProcesses(options = {}) {
-  if (Array.isArray(options.agentProcesses)) return options.agentProcesses.map(normalizeProcess);
-  if (typeof options.listAgentProcesses === 'function') {
-    return (await options.listAgentProcesses()).map(normalizeProcess);
-  }
-
-  const platform = options.platform || process.platform;
-  const run = options.execFile || execFileAsync;
   try {
+    if (Array.isArray(options.agentProcesses)) return options.agentProcesses.map(normalizeProcess);
+    if (typeof options.listAgentProcesses === 'function') {
+      return (await options.listAgentProcesses()).map(normalizeProcess);
+    }
+
+    const platform = options.platform || process.platform;
+    const run = options.execFile || execFileAsync;
     if (platform === 'win32') return await listWindowsProcesses(run);
     if (platform === 'linux' || platform === 'darwin') return await listPosixProcesses(run);
     throw new Error(`unsupported platform ${platform}`);

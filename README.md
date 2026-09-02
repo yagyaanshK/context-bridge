@@ -289,15 +289,21 @@ days, and when several windows are exhausted you resume only once the last of th
 with more than one window list each one with its own reset beneath the bar.
 Access tokens expire, and each official client normally renews only the account it is currently
 using. A quota read renews an inactive OAuth account only when its access-token expiry says renewal
-is due. The active account is never refreshed by Turntrail because the official client owns its
-rotating token; Turntrail copies the client's latest credential back into the managed snapshot
-instead. API-key accounts have no OAuth token to maintain and are skipped.
+is due. While Claude is running, the official client owns its rotating refresh token and Turntrail
+only copies the latest credential back into the managed snapshot. While Claude is stopped,
+Turntrail can proactively renew the active login and atomically update both copies, writing the live
+credential first. It can also restore a missing or blank live credential when one managed account,
+or the retained Claude profile, identifies the account unambiguously. API-key accounts have no
+OAuth token to maintain and are skipped.
 
-Background maintenance is **off by default**. Run **Turntrail: Toggle Background Account
-Maintenance** to opt in to a jittered run about every five hours while the editor is open. Each run
-updates quota caches and renews only due inactive OAuth accounts. A machine-wide lock prevents
-several VS Code-compatible editors or CLI jobs from refreshing the same token concurrently. There
-is no inference request, generated prompt, telemetry, or Turntrail server involved.
+Background maintenance is **off by default**. When a managed Claude account is first detected,
+Turntrail offers a one-time opt-in; you can also run **Turntrail: Toggle Background Account
+Maintenance**. Enabled maintenance runs about every five hours while the editor is open, with
+timing jitter. Each run updates quota caches and renews due OAuth accounts only when credential
+ownership is safe. A machine-wide lock prevents several VS Code-compatible editors or CLI jobs from
+refreshing the same token concurrently. If Claude is still running when renewal becomes due,
+Turntrail makes no provider request and retries locally after 15 minutes. There is no inference request, generated prompt,
+telemetry, or Turntrail server involved.
 
 ```bash
 turntrail account add "Primary" --import   # Codex: adopt the login you already have

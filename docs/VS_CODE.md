@@ -58,12 +58,15 @@ holding the credential, so it cannot invalidate a login.
 | **Raw Response** | Shows the endpoint's actual JSON next to how Turntrail parsed it. |
 | **Remove** | Forget the account, or delete its managed credentials and active default login. Confirmed inline. |
 
-Background account maintenance is disabled by default. The toggle command enables an
-application-scoped, jittered run about every five hours while the editor is open. It refreshes only
-due inactive OAuth credentials, fetches quota, synchronizes the active provider-owned credential
-back into Turntrail's snapshot, and skips API-key accounts. A machine-wide lock prevents duplicate
-refreshes across VS Code forks and CLI schedulers. The interval can be changed with
-`turntrail.accountMaintenance.intervalHours` (1-24).
+Background account maintenance is disabled by default. Turntrail offers a one-time opt-in after a
+managed Claude account is detected, and the toggle command remains available. Maintenance runs
+about every five hours while the editor is open. It fetches quota, renews inactive OAuth accounts,
+and synchronizes provider-owned credentials back into Turntrail's snapshot. When no Claude process
+is running, it also proactively renews the active Claude credential and updates the official live
+store first; missing or blank live credentials are repaired only when their account is
+unambiguous. If Claude is running when renewal becomes due, Turntrail makes no provider request and
+retries after 15 minutes. A machine-wide lock prevents duplicate refreshes across VS Code forks and CLI
+schedulers. The interval can be changed with `turntrail.accountMaintenance.intervalHours` (1-24).
 
 ### Signing in
 

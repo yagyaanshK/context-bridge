@@ -41,10 +41,15 @@ transcript content, telemetry, or model/inference request. API-key accounts are 
 
 A machine-wide lock serializes editor windows, VS Code forks, and CLI schedulers. Inactive OAuth
 accounts are refreshed only when their access-token expiry says renewal is due. Turntrail never
-refreshes an account currently owned by a live official client; it validates and synchronizes that
-client's rotated credential back into the managed snapshot instead. Provider calls retain the same
-bounded timeout, cancellation, payload validation, and redacted error handling as manual quota
-reads.
+refreshes a Claude credential while a Claude process is detected; it validates and synchronizes
+that client's rotated credential back into the managed snapshot instead. When Claude is stopped,
+Turntrail may refresh the active credential and writes the official live copy before its managed
+copy to minimize the chance of stranding the official client with the invalidated refresh token. Missing
+or blank live credentials are restored only when account identity is unambiguous. Process detection
+cannot provide a cross-vendor lock: starting Claude during the short refresh request remains an
+inherent race, so malformed credentials and unknown or ambiguous identities fail closed. Provider
+calls retain the same bounded timeout, cancellation, payload validation, and redacted error
+handling as manual quota reads.
 
 ## Untrusted metadata
 

@@ -307,11 +307,15 @@ using, so Turntrail renews the others before reading their quota.
 
 `accounts/maintenance.js` orchestrates periodic maintenance across both providers. It serializes
 accounts behind a machine-wide lock under `~/.turntrail/`, skips API-key and unsigned accounts,
-forces one useful quota read, and lets the existing expiry-aware provider functions decide whether
-an inactive OAuth credential is due for renewal. Active credentials are copied from the official
-client's live home back into the managed snapshot but are never refreshed by Turntrail. The VS Code
-scheduler is application-scoped, disabled by default, and jittered around a five-hour interval;
-`turntrail account maintain` exposes the same operation to OS schedulers.
+and inspects the process list before touching Claude's rotating refresh token. While Claude is
+running, its live credential remains provider-owned and is only synchronized into the managed
+snapshot. While Claude is stopped, Turntrail proactively refreshes a due active credential and
+writes the live copy before the managed copy. A missing or blank live credential is repaired only
+when a single account or retained live profile identifies its owner; ambiguity leaves it untouched.
+Due maintenance is deferred without a provider request while Claude is running and retried after
+15 minutes.
+The VS Code scheduler is application-scoped, disabled by default, and jittered around a five-hour
+interval; `turntrail account maintain` exposes the same operation to OS schedulers.
 
 ## Privacy Model
 
