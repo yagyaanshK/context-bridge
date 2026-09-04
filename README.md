@@ -287,6 +287,12 @@ That time is the reset of the window actually holding you — which is not alway
 five-hour window can clear in an hour while an exhausted weekly allowance keeps you blocked for
 days, and when several windows are exhausted you resume only once the last of them clears. Accounts
 with more than one window list each one with its own reset beneath the bar.
+
+For Codex subscriptions, the card also shows any **banked usage resets** reported by OpenAI. When
+details are available it shows the earliest expiry. **Use reset** asks for confirmation, consumes
+one reset through the same endpoint used by the official Codex client, and immediately refreshes
+that account's quota. Turntrail never redeems a reset automatically and never retries the
+account-changing request; after a timeout it tells you to refresh before trying again.
 Access tokens expire, and each official client normally renews only the account it is currently
 using. A quota read renews an inactive OAuth account only when its access-token expiry says renewal
 is due. While Claude is running, the official client owns its rotating refresh token and Turntrail

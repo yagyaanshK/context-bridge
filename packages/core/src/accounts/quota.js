@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ensureDir, pathExists, readJson, writeJson } from '../fs-utils.js';
 import { accountDir } from './store.js';
@@ -12,6 +14,8 @@ import {
 } from './provider-contracts.js';
 
 export const CODEX_USAGE_URL = PROVIDER_CONTRACTS.codex.usage.url;
+export const CODEX_RESET_CREDITS_URL = PROVIDER_CONTRACTS.codex.resetCredits.listUrl;
+export const CODEX_RESET_CREDIT_CONSUME_URL = PROVIDER_CONTRACTS.codex.resetCredits.consumeUrl;
 export const CLAUDE_USAGE_URL = PROVIDER_CONTRACTS.claude.usage.url;
 
 // Poll slowly and cache. Provider usage endpoints are rate limited in their own
@@ -43,6 +47,10 @@ export async function readQuotaCache(accountId, options = {}) {
 async function writeQuotaCache(accountId, usage, options = {}) {
   await ensureDir(accountDir(accountId, options));
   await writeJson(quotaCachePath(accountId, options), usage);
+}
+
+export async function clearQuotaCache(accountId, options = {}) {
+  await fs.rm(quotaCachePath(accountId, options), { force: true });
 }
 
 // Returns the cached reading unless it is older than the TTL. `force` refreshes
@@ -123,7 +131,7 @@ export async function fetchClaudeUsage(auth, options = {}) {
     throw new Error(`Usage request failed: ${response.status} ${response.statusText || ''}`.trim());
   }
 
-  const payload = await readUsageJson(response, 'claude');
+  const payload = await readResponseJson(response, 'claude', 'usage response');
   const usage = validateUsagePayload('claude', payload, normalizeClaudeUsage(payload));
   return { ...usage, plan: auth.plan, email: auth.email };
 }
@@ -216,6 +224,103 @@ function readClaudeCredits(payload) {
 }
 
 export async function fetchCodexUsage(auth, options = {}) {
+  const headers = codexHeaders(auth, options);
+
+  const response = await providerFetch(options.usageUrl || CODEX_USAGE_URL, { headers }, options);
+  if (!response.ok) {
+    throw new Error(`Usage request failed: ${response.status} ${response.statusText || ''}`.trim());
+  }
+
+  const payload = await readResponseJson(response, 'codex', 'usage response');
+  const usage = validateUsagePayload('codex', payload, normalizeCodexUsage(payload));
+
+  // The usage response carries the count but not necessarily the individual
+  // expiry dates. Only fetch details when there is something to show, and keep
+  // a valid usage reading if that optional request fails.
+  if (usage.resetCredits?.availableCount > 0 && options.includeResetCreditDetails !== false) {
+    try {
+      const details = await fetchCodexResetCredits(auth, options);
+      usage.resetCredits = {
+        ...usage.resetCredits,
+        availableCount: details.availableCount,
+        credits: details.credits,
+        nextExpiresAt: details.nextExpiresAt
+      };
+    } catch (error) {
+      usage.resetCredits.detailsError = error.message;
+    }
+  }
+
+  return usage;
+}
+
+export async function fetchCodexResetCredits(auth, options = {}) {
+  if (!auth?.accessToken) throw new Error('A Codex OAuth login is required to read banked resets.');
+  const response = await providerFetch(options.resetCreditsUrl || CODEX_RESET_CREDITS_URL, {
+    headers: codexHeaders(auth, options)
+  }, options);
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('This Codex login has expired. Sign in again.');
+    throw new Error(`Banked-reset request failed: ${response.status} ${response.statusText || ''}`.trim());
+  }
+  const payload = await readResponseJson(response, 'codex', 'banked-reset details response');
+  return normalizeCodexResetCredits(payload);
+}
+
+export async function consumeCodexResetCredit(accountId, options = {}) {
+  const auth = await ensureCodexAccessToken(accountId, {
+    refreshSkewMs: CODEX_PROACTIVE_REFRESH_MS,
+    ...options
+  });
+  if (!auth?.accessToken) {
+    throw new Error(auth?.apiKey
+      ? 'Banked resets are unavailable for API-key authentication.'
+      : 'This Codex account is not signed in.');
+  }
+
+  const redeemRequestId = options.redeemRequestId || crypto.randomUUID();
+  const body = { redeem_request_id: redeemRequestId };
+  if (options.creditId) body.credit_id = options.creditId;
+
+  // This mutates account state. Make exactly one request: providerFetch bounds
+  // its duration but deliberately performs no retries.
+  let response;
+  try {
+    response = await providerFetch(options.consumeResetCreditUrl || CODEX_RESET_CREDIT_CONSUME_URL, {
+      method: 'POST',
+      headers: {
+        ...codexHeaders(auth, options),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    }, options);
+  } catch (error) {
+    if (error?.code === 'ETIMEDOUT' || error?.name === 'AbortError') {
+      throw new Error(
+        'The banked-reset request did not return a result. It may have succeeded; refresh quota before trying again.'
+      );
+    }
+    throw error;
+  }
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('This Codex login has expired. Sign in again.');
+    throw new Error(`Banked reset could not be used: ${response.status} ${response.statusText || ''}`.trim());
+  }
+
+  const payload = await readResponseJson(response, 'codex', 'banked-reset response');
+  const code = String(payload?.code || '');
+  const outcomes = new Set(['reset', 'nothing_to_reset', 'no_credit', 'already_redeemed']);
+  if (!outcomes.has(code)) throw new ProviderContractError('codex', 'banked-reset response');
+
+  if (code === 'reset') await clearQuotaCache(accountId, options);
+  return {
+    code,
+    windowsReset: Number.isFinite(Number(payload.windows_reset)) ? Number(payload.windows_reset) : undefined,
+    redeemRequestId
+  };
+}
+
+function codexHeaders(auth, options = {}) {
   const headers = {
     Authorization: `Bearer ${auth.accessToken}`,
     Accept: 'application/json',
@@ -223,21 +328,14 @@ export async function fetchCodexUsage(auth, options = {}) {
   };
   const accountId = auth.accountId || auth.claims?.accountId;
   if (accountId) headers['ChatGPT-Account-Id'] = accountId;
-
-  const response = await providerFetch(options.usageUrl || CODEX_USAGE_URL, { headers }, options);
-  if (!response.ok) {
-    throw new Error(`Usage request failed: ${response.status} ${response.statusText || ''}`.trim());
-  }
-
-  const payload = await readUsageJson(response, 'codex');
-  return validateUsagePayload('codex', payload, normalizeCodexUsage(payload));
+  return headers;
 }
 
-async function readUsageJson(response, provider) {
+async function readResponseJson(response, provider, operation) {
   try {
     return await response.json();
   } catch {
-    throw new ProviderContractError(provider, 'usage response');
+    throw new ProviderContractError(provider, operation);
   }
 }
 
@@ -273,7 +371,53 @@ export function normalizeCodexUsage(payload) {
     plan,
     email: typeof payload?.email === 'string' ? payload.email : undefined,
     ...readLimitState(payload),
-    credits: readCredits(payload)
+    credits: readCredits(payload),
+    resetCredits: normalizeCodexResetCredits(
+      payload?.rate_limit_reset_credits ?? payload?.rateLimitResetCredits
+    )
+  };
+}
+
+export function normalizeCodexResetCredits(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+
+  const credits = Array.isArray(payload.credits)
+    ? payload.credits.flatMap((credit) => {
+        if (!credit || typeof credit !== 'object') return [];
+        const id = firstString(credit.id);
+        if (!id) return [];
+        const status = firstString(credit.status) || 'unknown';
+        const expiresAt = timestampToIso(credit.expires_at ?? credit.expiresAt);
+        const grantedAt = timestampToIso(credit.granted_at ?? credit.grantedAt);
+        return [{
+          id,
+          status,
+          resetType: firstString(credit.reset_type, credit.resetType),
+          title: firstString(credit.title),
+          description: firstString(credit.description),
+          grantedAt,
+          expiresAt
+        }];
+      })
+    : [];
+
+  const availableDetails = credits.filter((credit) => credit.status === 'available');
+  const availableCount = nonNegativeInteger(
+    payload.available_count ?? payload.availableCount,
+    availableDetails.length
+  );
+  const applicableAvailableCount = optionalNonNegativeInteger(
+    payload.applicable_available_count ?? payload.applicableAvailableCount
+  );
+  const expiries = availableDetails
+    .map((credit) => Date.parse(credit.expiresAt || ''))
+    .filter(Number.isFinite);
+
+  return {
+    availableCount,
+    applicableAvailableCount,
+    credits: availableDetails,
+    nextExpiresAt: expiries.length > 0 ? new Date(Math.min(...expiries)).toISOString() : undefined
   };
 }
 
@@ -451,6 +595,26 @@ function firstNumber(...values) {
 
 function firstString(...values) {
   return values.find((value) => typeof value === 'string' && value.trim())?.trim();
+}
+
+function optionalNonNegativeInteger(value) {
+  const number = Number(value);
+  if (value === null || value === undefined || value === '' || !Number.isFinite(number)) return undefined;
+  return Math.max(0, Math.trunc(number));
+}
+
+function nonNegativeInteger(value, fallback = 0) {
+  return optionalNonNegativeInteger(value) ?? fallback;
+}
+
+function timestampToIso(value) {
+  if (typeof value === 'string' && Number.isFinite(Date.parse(value))) {
+    return new Date(value).toISOString();
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number)) return undefined;
+  const date = new Date(number < 10_000_000_000 ? number * 1000 : number);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
 function humanizeLimitName(value) {

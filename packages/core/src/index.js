@@ -111,15 +111,21 @@ export {
 export {
   fetchClaudeUsage,
   fetchCodexUsage,
+  fetchCodexResetCredits,
   getClaudeUsage,
   getCodexUsage,
+  consumeCodexResetCredit,
+  clearQuotaCache,
   headlineRemaining,
   nextResetAt,
   resumesAt,
   normalizeClaudeUsage,
   normalizeCodexUsage,
+  normalizeCodexResetCredits,
   readQuotaCache,
   CLAUDE_USAGE_URL,
+  CODEX_RESET_CREDITS_URL,
+  CODEX_RESET_CREDIT_CONSUME_URL,
   CODEX_USAGE_URL,
   DEFAULT_QUOTA_TTL_MS
 } from './accounts/quota.js';

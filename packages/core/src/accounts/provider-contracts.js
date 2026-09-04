@@ -7,7 +7,12 @@ const contracts = {
       clientId: 'app_EMoamEEZ73f0CkXaXp7hrann',
       tokenUrl: 'https://auth.openai.com/oauth/token'
     },
-    usage: { url: 'https://chatgpt.com/backend-api/wham/usage', schema: 'codex-usage-v1' }
+    usage: { url: 'https://chatgpt.com/backend-api/wham/usage', schema: 'codex-usage-v1' },
+    resetCredits: {
+      listUrl: 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits',
+      consumeUrl: 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume',
+      schema: 'codex-reset-credits-v1'
+    }
   },
   claude: {
     version: 'claude-observed-v1',

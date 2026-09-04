@@ -99,6 +99,10 @@ five-hour window can clear in an hour while an exhausted weekly allowance keeps 
 days, and when several windows are exhausted you resume only once the last of them clears. Accounts
 with more than one window list each one with its own reset beneath the bar.
 
+Codex cards also show the number of **banked resets** available and the earliest expiry when OpenAI
+provides detail rows. **Use reset** requires confirmation, consumes one reset, and then refreshes
+the account. It is never automatic, and the redemption POST is never retried.
+
 
 Every account gets its own configuration directory under `~/.turntrail/accounts/` —
 `CODEX_HOME` for Codex, `CLAUDE_CONFIG_DIR` for Claude — so they all stay signed in
@@ -174,6 +178,7 @@ minutes and contains no tokens; failures leave the live credential unchanged.
 | **↻** (on each card) | Refreshes just that account — and for Codex, renews its token in the process, so it doubles as waking a stale login. |
 | **Refresh now** (on the pool) | Reads every account for that agent. Otherwise readings are cached for five minutes. |
 | **Raw Response** | Opens the endpoint's actual JSON next to how Turntrail parsed it. |
+| **Use reset** | Confirms and consumes one available Codex banked reset, then refreshes quota. |
 | **✎** (on hover) | Renames the account. The directory holding its credential never changes, so a rename cannot invalidate a login. |
 | **Remove** | Forgets an account, or permanently deletes its managed login and active default login after the provider stops. |
 

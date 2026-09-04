@@ -10,9 +10,11 @@ import {
   codexEnv,
   codexHome,
   createAccount,
+  consumeCodexResetCredit,
   decodeJwtClaims,
   ensureCodexHome,
   fetchCodexUsage,
+  fetchCodexResetCredits,
   getAccount,
   getCodexUsage,
   headlineRemaining,
@@ -22,9 +24,12 @@ import {
   isSignedIn,
   listAccounts,
   normalizeCodexUsage,
+  normalizeCodexResetCredits,
   readCodexAuth,
   removeAccount,
   updateAccount,
+  CODEX_RESET_CREDITS_URL,
+  CODEX_RESET_CREDIT_CONSUME_URL,
   CODEX_USAGE_URL
 } from '../src/index.js';
 
@@ -506,7 +511,158 @@ test('usage normalization handles the live Codex payload', () => {
   assert.equal(usage.limitReached, true);
   assert.equal(usage.credits.hasCredits, false);
   assert.equal(usage.credits.balance, 0);
+  assert.deepEqual(usage.resetCredits, {
+    availableCount: 0,
+    applicableAvailableCount: 0,
+    credits: [],
+    nextExpiresAt: undefined
+  });
   assert.equal(headlineRemaining(usage), 0);
+});
+
+test('Codex reset credits retain count, applicability, and earliest expiry', () => {
+  const resetCredits = normalizeCodexResetCredits({
+    available_count: '3',
+    applicable_available_count: 2,
+    credits: [
+      {
+        id: 'later',
+        reset_type: 'codex_rate_limits',
+        status: 'available',
+        granted_at: '2026-08-01T00:00:00Z',
+        expires_at: '2026-09-20T00:00:00Z',
+        title: 'Full reset'
+      },
+      {
+        id: 'earlier',
+        reset_type: 'codex_rate_limits',
+        status: 'available',
+        granted_at: 1788220800,
+        expires_at: 1789171200
+      },
+      {
+        id: 'spent',
+        status: 'redeemed',
+        expires_at: '2026-09-01T00:00:00Z'
+      }
+    ]
+  });
+
+  assert.equal(resetCredits.availableCount, 3);
+  assert.equal(resetCredits.applicableAvailableCount, 2);
+  assert.equal(resetCredits.credits.length, 2, 'redeemed credits must not be displayed as available');
+  assert.equal(resetCredits.nextExpiresAt, new Date(1789171200 * 1000).toISOString());
+});
+
+test('Codex usage fetch enriches banked resets without losing quota if details fail', async () => {
+  const requested = [];
+  const fetch = async (url) => {
+    requested.push(url);
+    if (url === CODEX_USAGE_URL) {
+      return {
+        ok: true,
+        json: async () => ({
+          rate_limit: { primary_window: { used_percent: 20, limit_window_seconds: 18000 } },
+          rate_limit_reset_credits: { available_count: 1, applicable_available_count: 1 }
+        })
+      };
+    }
+    return { ok: false, status: 503, statusText: 'Unavailable' };
+  };
+
+  const usage = await fetchCodexUsage({ accessToken: 'token', accountId: 'acct' }, { fetch });
+  assert.deepEqual(requested, [CODEX_USAGE_URL, CODEX_RESET_CREDITS_URL]);
+  assert.equal(usage.resetCredits.availableCount, 1);
+  assert.match(usage.resetCredits.detailsError, /503/);
+  assert.equal(usage.windows[0].remainingPercent, 80);
+});
+
+test('Codex reset-credit details normalize the official response shape', async () => {
+  const result = await fetchCodexResetCredits(
+    { accessToken: 'token', accountId: 'acct' },
+    {
+      fetch: async (url, init) => {
+        assert.equal(url, CODEX_RESET_CREDITS_URL);
+        assert.equal(init.headers.Authorization, 'Bearer token');
+        assert.equal(init.headers['ChatGPT-Account-Id'], 'acct');
+        return {
+          ok: true,
+          json: async () => ({
+            available_count: 1,
+            credits: [{
+              id: 'credit-1',
+              reset_type: 'codex_rate_limits',
+              status: 'available',
+              granted_at: '2026-08-01T00:00:00Z',
+              expires_at: '2026-09-01T00:00:00Z',
+              title: 'Full reset (Weekly + 5 hr)'
+            }]
+          })
+        };
+      }
+    }
+  );
+
+  assert.equal(result.availableCount, 1);
+  assert.equal(result.credits[0].id, 'credit-1');
+  assert.equal(result.nextExpiresAt, '2026-09-01T00:00:00.000Z');
+});
+
+test('using a Codex banked reset sends one idempotent consume request', async () => {
+  const { options } = await sandbox();
+  const account = await createAccount({ label: 'Resettable', provider: 'codex' }, options);
+  await signIn(account.id, options, { accountId: 'acct-reset' });
+  const calls = [];
+
+  const result = await consumeCodexResetCredit(account.id, {
+    ...options,
+    redeemRequestId: 'redeem-123',
+    fetch: async (url, init) => {
+      calls.push({ url, init });
+      return { ok: true, json: async () => ({ code: 'reset', windows_reset: 2 }) };
+    }
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, CODEX_RESET_CREDIT_CONSUME_URL);
+  assert.equal(calls[0].init.method, 'POST');
+  assert.equal(calls[0].init.headers['ChatGPT-Account-Id'], 'acct-reset');
+  assert.deepEqual(JSON.parse(calls[0].init.body), { redeem_request_id: 'redeem-123' });
+  assert.deepEqual(result, { code: 'reset', windowsReset: 2, redeemRequestId: 'redeem-123' });
+});
+
+test('using a Codex banked reset rejects unknown provider outcomes', async () => {
+  const { options } = await sandbox();
+  const account = await createAccount({ label: 'Changed', provider: 'codex' }, options);
+  await signIn(account.id, options);
+
+  await assert.rejects(
+    consumeCodexResetCredit(account.id, {
+      ...options,
+      fetch: async () => ({ ok: true, json: async () => ({ code: 'new_backend_outcome' }) })
+    }),
+    /banked-reset response no longer matches/i
+  );
+});
+
+test('a timed-out banked reset reports an unknown outcome and is not retried', async () => {
+  const { options } = await sandbox();
+  const account = await createAccount({ label: 'Slow', provider: 'codex' }, options);
+  await signIn(account.id, options);
+  let calls = 0;
+
+  await assert.rejects(
+    consumeCodexResetCredit(account.id, {
+      ...options,
+      requestTimeoutMs: 5,
+      fetch: async () => {
+        calls++;
+        return new Promise(() => {});
+      }
+    }),
+    /may have succeeded; refresh quota before trying again/i
+  );
+  assert.equal(calls, 1, 'an account-changing request must never be retried automatically');
 });
 
 test('additional Codex limits remain separate from the main quota', () => {

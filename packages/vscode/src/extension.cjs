@@ -55,6 +55,7 @@ async function activateExtension(context) {
     ...compatibleCommands('importClaudeAccount', () => importAccount({ provider: 'claude' })),
     ...compatibleCommands('signInAccount', (item) => signInAccount(item)),
     ...compatibleCommands('refreshAccountQuota', (item) => refreshAccountQuota(item)),
+    ...compatibleCommands('useCodexReset', (item) => useCodexReset(item)),
     ...compatibleCommands('openAccountTerminal', (item) => openAccountTerminal(item)),
     ...compatibleCommands('renameAccount', (item) => renameAccount(item)),
     ...compatibleCommands('forgetAccount', (item) => forgetAccount(item)),
@@ -531,6 +532,54 @@ async function refreshAccountQuota(item) {
   );
   if (accounts.length === 0) {
     vscode.window.showInformationMessage('Turntrail: no accounts yet. Add one from the Turntrail panel.');
+  }
+}
+
+async function useCodexReset(item) {
+  const account = await resolveAccount({ ...item, provider: 'codex' });
+  if (!account) return;
+  if (account.provider !== 'codex') throw new Error('Banked resets are available only for Codex accounts.');
+
+  const reset = accountsProvider.usage.get(account.id)?.resetCredits;
+  if (!reset || reset.availableCount <= 0) {
+    vscode.window.showInformationMessage(`Turntrail: "${account.label}" has no banked resets available.`);
+    return;
+  }
+  const choice = await vscode.window.showWarningMessage(
+    `Use one banked reset for "${account.label}"?`,
+    {
+      modal: true,
+      detail:
+        `This immediately resets the eligible Codex usage windows and consumes one of the account's ` +
+        `${reset.availableCount} banked reset${reset.availableCount === 1 ? '' : 's'}. This cannot be undone.`
+    },
+    'Use reset'
+  );
+  if (choice !== 'Use reset') return;
+
+  const { consumeCodexResetCredit } = await core();
+  const result = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `Using banked reset for ${account.label}`,
+      cancellable: false
+    },
+    () => consumeCodexResetCredit(account.id)
+  );
+
+  const usage = await accountsProvider.reloadUsageOne(account.id, 'codex', { force: true });
+  if (result.code === 'reset') {
+    const windows = result.windowsReset === undefined
+      ? 'Eligible usage windows were reset.'
+      : `${result.windowsReset} usage window${result.windowsReset === 1 ? ' was' : 's were'} reset.`;
+    const refresh = usage?.error ? ` The refreshed usage could not be read: ${usage.error}` : '';
+    vscode.window.showInformationMessage(`Turntrail: banked reset applied. ${windows}${refresh}`);
+  } else if (result.code === 'nothing_to_reset') {
+    vscode.window.showInformationMessage('Turntrail: no current Codex usage window was eligible for a reset.');
+  } else if (result.code === 'no_credit') {
+    vscode.window.showInformationMessage('Turntrail: this account no longer has a banked reset available.');
+  } else {
+    vscode.window.showInformationMessage('Turntrail: this reset request had already completed successfully.');
   }
 }
 

@@ -291,6 +291,10 @@ One cache path and one staleness policy for both providers, so they cannot drift
   and would otherwise survive the upgrade that fixed it
 - a failed refresh keeps the previous reading with its age, rather than blanking the display
 - the Raw Response command makes one request and normalizes that same payload instead of polling twice
+- Codex banked-reset counts come from `/wham/usage`; when non-zero, a best-effort details read adds
+  individual expiry dates without making normal quota dependent on that second endpoint
+- redemption uses the official Codex `/wham/rate-limit-reset-credits/consume` contract, a fresh UUID
+  idempotency key, one non-retried POST, cache invalidation, and a forced usage refresh
 - the headline number is the account's **tightest** window, because that is the one that stops you
 - `resumesAt()` answers "when does this start working again", which is deliberately not the next
   reset: a window with room can reset sooner than the one blocking you, and several exhausted

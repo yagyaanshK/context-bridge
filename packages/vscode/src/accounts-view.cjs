@@ -136,6 +136,7 @@ class AccountsStore {
       error: usage?.error === 'not-signed-in' ? undefined : usage?.error,
       limitReached: Boolean(usage?.limitReached),
       credits: usage?.credits,
+      resetCredits: provider.id === 'codex' ? usage?.resetCredits : undefined,
       remaining: remainingOf(usage),
       resetsAt: nextReset(windows),
       // When a blocked account starts working again, which is not the same as
@@ -224,6 +225,7 @@ class AccountsWebview {
         add: 'turntrail.addAccount',
         import: 'turntrail.importAccount',
         refresh: 'turntrail.refreshAccountQuota',
+        useReset: 'turntrail.useCodexReset',
         handoff: 'turntrail.createHandoff',
         openHandoff: 'turntrail.openLatestHandoff',
         copyHandoff: 'turntrail.copyLatestHandoffPrompt'
@@ -481,6 +483,16 @@ function html(webview) {
   .additional-title b { font-size: 0.88em; font-weight: 600; }
   .additional-title span, .additional-status { color: var(--dim); font-size: 0.78em; }
   .additional-limit .meters { margin-top: 6px; }
+  .reset-credits {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 10px; padding-top: 9px;
+    border-top: 1px solid var(--hairline);
+  }
+  .reset-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .reset-copy b { font-size: 0.88em; font-weight: 600; }
+  .reset-copy span { color: var(--dim); font-size: 0.78em; }
+  button:disabled { opacity: 0.55; cursor: default; }
+  button:disabled:hover { background: var(--vscode-button-secondaryBackground); }
 
   /* Handoff */
   .handoff { display: flex; flex-direction: column; gap: 10px; }
@@ -563,6 +575,17 @@ function until(iso) {
   if (hours < 48) return 'resets in ' + hours + 'h';
   return 'resets in ' + Math.round(hours / 24) + 'd';
 }
+
+function expires(iso) {
+  const at = Date.parse(iso || '');
+  if (!isFinite(at)) return '';
+  const minutes = Math.round((at - Date.now()) / 60000);
+  if (minutes <= 0) return 'expiry pending refresh';
+  if (minutes < 60) return 'expires in ' + minutes + 'm';
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return 'expires in ' + hours + 'h';
+  return 'expires in ' + Math.round(hours / 24) + 'd';
+}
 function level(row) {
   if (row.limitReached || (typeof row.remaining === 'number' && row.remaining <= 5)) return 'crit';
   if (typeof row.remaining === 'number' && row.remaining <= 20) return 'warn';
@@ -612,6 +635,18 @@ function renderAdditionalLimit(limit) {
   '</div>';
 }
 
+function renderResetCredits(row) {
+  const reset = row.resetCredits;
+  if (!reset || reset.availableCount <= 0) return '';
+  const count = reset.availableCount;
+  const expiry = reset.nextExpiresAt ? expires(reset.nextExpiresAt) : '';
+  return '<div class="reset-credits">' +
+    '<span class="reset-copy"><b>' + count + ' banked reset' + (count === 1 ? '' : 's') + '</b>' +
+      (expiry ? '<span>' + esc(expiry) + '</span>' : '') + '</span>' +
+    '<button data-act="useReset" data-id="' + esc(row.id) + '" data-provider="codex">Use reset</button>' +
+  '</div>';
+}
+
 function renderRow(row) {
   const state = level(row);
   const width = barWidth(row.remaining);
@@ -642,6 +677,7 @@ function renderRow(row) {
   const additionalLimits = (row.additionalLimits || []).length > 0
     ? '<div class="additional-limits">' + row.additionalLimits.map(renderAdditionalLimit).join('') + '</div>'
     : '';
+  const resetCredits = renderResetCredits(row);
 
   const act = (action, text, cls) =>
     '<button class="' + (cls || '') + '" data-act="' + action + '" data-id="' + id +
@@ -672,6 +708,7 @@ function renderRow(row) {
     '</div>' +
     meters +
     additionalLimits +
+    resetCredits +
     '<div class="meta"><span>' + status + esc(credits) + '</span>' +
       (row.active ? '<span class="badge' + (state === 'crit' ? ' crit' : '') + '">In use</span>' : '') +
     '</div>' +

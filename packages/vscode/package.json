@@ -2,7 +2,7 @@
   "name": "context-bridge-vscode",
   "displayName": "Turntrail",
   "description": "Continue developer agent sessions across Claude, Codex, and other tools from VS Code.",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "publisher": "turntrail",
   "license": "MIT",
   "type": "commonjs",
@@ -40,6 +40,7 @@
     "onView:contextBridgeAccounts",
     "onCommand:turntrail.switchAccount",
     "onCommand:turntrail.refreshAccountQuota",
+    "onCommand:turntrail.useCodexReset",
     "onCommand:turntrail.discoverClaude",
     "onCommand:turntrail.discoverCodex",
     "onCommand:turntrail.importLatestClaude",
@@ -66,6 +67,7 @@
     "onCommand:turntrail.toggleAccountMaintenance",
     "onCommand:contextBridge.switchAccount",
     "onCommand:contextBridge.refreshAccountQuota",
+    "onCommand:contextBridge.useCodexReset",
     "onCommand:contextBridge.discoverClaude",
     "onCommand:contextBridge.discoverCodex",
     "onCommand:contextBridge.importLatestClaude",
@@ -148,6 +150,10 @@
         "command": "turntrail.refreshAccountQuota",
         "title": "Turntrail: Refresh Account Quota",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "turntrail.useCodexReset",
+        "title": "Turntrail: Use Codex Banked Reset"
       },
       {
         "command": "turntrail.openAccountTerminal",
@@ -412,12 +418,16 @@
         {
           "command": "turntrail.createHandoff",
           "when": "false"
+        },
+        {
+          "command": "turntrail.useCodexReset",
+          "when": "false"
         }
       ]
     }
   },
   "dependencies": {
-    "@turntrail/core": "0.13.1"
+    "@turntrail/core": "0.14.0"
   },
   "devDependencies": {
     "@types/vscode": "^1.95.0"

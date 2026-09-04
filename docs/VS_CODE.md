@@ -49,6 +49,11 @@ its own reset. The percentage beside the name is the tightest window, the one th
 first. Hovering reveals a pencil to rename; renaming changes the label only, never the directory
 holding the credential, so it cannot invalidate a login.
 
+Codex cards show **banked resets** when OpenAI reports any, including the earliest known expiry.
+**Use reset** opens a modal confirmation, asks the backend to consume one reset, and refreshes that
+account. The backend can decline with `nothing_to_reset`; Turntrail never uses a reset automatically
+or retries the redemption POST.
+
 | Action | Effect |
 |--------|--------|
 | **Use this** | Points that agent's official CLI and extension at this account (machine-wide). |
@@ -56,6 +61,7 @@ holding the credential, so it cannot invalidate a login.
 | **Sign in** | Opens the sign-in panel for that agent. |
 | **Refresh now** | Forces a usage read; otherwise readings are cached for five minutes. |
 | **Raw Response** | Shows the endpoint's actual JSON next to how Turntrail parsed it. |
+| **Use reset** | Confirms and consumes one available Codex banked reset, then refreshes quota. |
 | **Remove** | Forget the account, or delete its managed credentials and active default login. Confirmed inline. |
 
 Background account maintenance is disabled by default. Turntrail offers a one-time opt-in after a
