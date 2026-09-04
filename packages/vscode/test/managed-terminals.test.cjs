@@ -1,6 +1,11 @@
 const assert = require('node:assert/strict');
 const Module = require('node:module');
+const path = require('node:path');
 const test = require('node:test');
+
+const fixtureRoot = path.resolve('managed-terminal-fixture');
+const executableName = (provider) => process.platform === 'win32' ? `${provider}.exe` : provider;
+const fixtureExecutable = (provider) => path.join(path.parse(fixtureRoot).root, 'bin', executableName(provider));
 
 class EventEmitter {
   constructor() {
@@ -82,22 +87,21 @@ test('managed terminals launch direct agent processes and inject only while live
   const window = fakeWindow();
   const store = new ManagedTerminalStore({
     window,
-    platform: 'win32',
-    resolveLaunch: async (provider, args) => ({ command: `C:\\bin\\${provider}.exe`, args })
+    resolveLaunch: async (provider, args) => ({ command: fixtureExecutable(provider), args })
   });
   const context = { subscriptions: [] };
   store.start(context);
 
   const prompt = 'Continue from C:\\repo';
   const record = await store.launch({
-    provider: 'claude', root: 'C:\\repo', sessionId: 'session-1', title: 'Feature', prompt
+    provider: 'claude', root: fixtureRoot, sessionId: 'session-1', title: 'Feature', prompt
   });
   const terminal = window.created[0];
-  assert.equal(terminal.creationOptions.shellPath, 'C:\\bin\\claude.exe');
+  assert.equal(terminal.creationOptions.shellPath, fixtureExecutable('claude'));
   assert.deepEqual(terminal.creationOptions.shellArgs, ['--resume', 'session-1', prompt]);
   assert.equal(terminal.creationOptions.env[MARKER], '1');
   assert.equal(terminal.shown, 1);
-  assert.equal(store.viewModel('c:\\REPO')[0].id, record.id);
+  assert.equal(store.viewModel(fixtureRoot)[0].id, record.id);
 
   store.inject(record.id, 'second handoff');
   assert.deepEqual(terminal.sent, [['second handoff', true]]);
@@ -111,11 +115,11 @@ test('only valid live Turntrail terminal markers are reattached', () => {
   const id = '12345678-1234-1234-1234-123456789abc';
   const valid = {
     exitStatus: undefined,
-    creationOptions: { shellPath: 'C:\\bin\\codex.exe', shellArgs: [], env: {
+    creationOptions: { shellPath: fixtureExecutable('codex'), shellArgs: [], env: {
       [MARKER]: '1',
       TURNTRAIL_MANAGED_ID: id,
       TURNTRAIL_MANAGED_PROVIDER: 'codex',
-      TURNTRAIL_MANAGED_ROOT: 'C:\\repo',
+      TURNTRAIL_MANAGED_ROOT: fixtureRoot,
       TURNTRAIL_MANAGED_SESSION_ID: 'session-2',
       TURNTRAIL_MANAGED_TITLE: 'Restored'
     } }
@@ -126,7 +130,7 @@ test('only valid live Turntrail terminal markers are reattached', () => {
     TURNTRAIL_MANAGED_ID: '32345678-1234-1234-1234-123456789abc'
   } } };
   const malformed = { exitStatus: undefined, creationOptions: {
-    shellPath: 'C:\\bin\\codex.exe',
+    shellPath: fixtureExecutable('codex'),
     shellArgs: [],
     env: {
       ...valid.creationOptions.env,
@@ -135,7 +139,7 @@ test('only valid live Turntrail terminal markers are reattached', () => {
     }
   } };
   window.terminals.push(valid, foreign, malformed, spoofed);
-  const store = new ManagedTerminalStore({ window, platform: 'win32' });
+  const store = new ManagedTerminalStore({ window });
   store.start({ subscriptions: [] });
   assert.equal(store.get(id).title, 'Restored');
   assert.equal(store.records.size, 1);
@@ -148,24 +152,26 @@ test('managed terminal input is bounded and provider-limited', async () => {
 });
 
 test('restored terminals must still have the expected direct provider launch', () => {
-  assert.equal(matchesProviderLaunch({ shellPath: 'C:\\bin\\claude.exe', shellArgs: [] }, 'claude'), true);
+  assert.equal(matchesProviderLaunch({ shellPath: fixtureExecutable('claude'), shellArgs: [] }, 'claude'), true);
+  assert.equal(matchesProviderLaunch({ shellPath: '/usr/local/bin/claude', shellArgs: [] }, 'claude', 'linux'), true);
+  assert.equal(matchesProviderLaunch({ shellPath: 'C:\\bin\\claude.exe', shellArgs: [] }, 'claude', 'win32'), true);
   assert.equal(matchesProviderLaunch({
     shellPath: 'powershell.exe',
     shellArgs: ['-NoProfile', '-File', 'C:\\npm\\codex.ps1']
-  }, 'codex'), true);
+  }, 'codex', 'win32'), true);
+  assert.equal(matchesProviderLaunch({ shellPath: 'codex', shellArgs: [] }, 'codex', 'win32'), false);
   assert.equal(matchesProviderLaunch({ shellPath: 'powershell.exe', shellArgs: [] }, 'codex'), false);
-  assert.equal(matchesProviderLaunch({ shellPath: 'C:\\bin\\codex.exe', shellArgs: [] }, 'claude'), false);
+  assert.equal(matchesProviderLaunch({ shellPath: fixtureExecutable('codex'), shellArgs: [] }, 'claude'), false);
 });
 
 test('untrusted transcript titles cannot inject terminal control characters', async () => {
   const window = fakeWindow();
   const store = new ManagedTerminalStore({
     window,
-    platform: 'win32',
     resolveLaunch: async (provider, args) => ({ command: provider, args })
   });
   const record = await store.launch({
-    provider: 'codex', root: 'C:\\repo', title: 'Feature\u001b]0;spoofed\u0007\nwork'
+    provider: 'codex', root: fixtureRoot, title: 'Feature\u001b]0;spoofed\u0007\nwork'
   });
   assert.equal(record.title.includes('\u001b'), false);
   assert.equal(record.title.includes('\n'), false);

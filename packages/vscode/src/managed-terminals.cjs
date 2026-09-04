@@ -73,7 +73,7 @@ class ManagedTerminalStore {
       !provider ||
       !root ||
       terminal.exitStatus !== undefined ||
-      !matchesProviderLaunch(terminal.creationOptions, provider)
+      !matchesProviderLaunch(terminal.creationOptions, provider, this.platform)
     ) return undefined;
     let sessionId;
     try {
@@ -207,13 +207,15 @@ function powerShellLaunch(script, args, options) {
   };
 }
 
-function matchesProviderLaunch(options, provider) {
-  const executable = path.basename(String(options?.shellPath || '')).toLowerCase();
+function matchesProviderLaunch(options, provider, platform = process.platform) {
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  const executable = pathApi.basename(String(options?.shellPath || '')).toLowerCase();
+  if (platform !== 'win32' && executable === provider) return true;
   if (executable === `${provider}.exe` || executable === `${provider}.com`) return true;
   if (!/^(?:powershell|powershell\.exe|pwsh|pwsh\.exe)$/.test(executable)) return false;
   const args = Array.isArray(options?.shellArgs) ? options.shellArgs : [];
   const file = args.findIndex((item) => String(item).toLowerCase() === '-file');
-  return file >= 0 && path.basename(String(args[file + 1] || '')).toLowerCase() === `${provider}.ps1`;
+  return file >= 0 && pathApi.basename(String(args[file + 1] || '')).toLowerCase() === `${provider}.ps1`;
 }
 
 async function windowsCandidates(command, options = {}) {
