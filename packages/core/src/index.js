@@ -1,5 +1,11 @@
 export { importTranscript, parseTranscript, DEFAULT_MAX_NON_JSONL_IMPORT_BYTES } from './importer.js';
 export { discoverNativeSessions, importNativeSession, normalizeNativeProvider } from './adapters/index.js';
+export {
+  listSessionIndex,
+  mergeSessionIndex,
+  DEFAULT_SESSION_INDEX_LIMIT,
+  NATIVE_SESSION_PROVIDERS
+} from './session-index.js';
 export { collapseCodexStreamDuplicates } from './adapters/codex.js';
 export {
   exportHandoff,
@@ -37,12 +43,16 @@ export {
   latestSnapshot,
   pruneLedgerEntries,
   readAllTurns,
+  readSessionPreview,
+  renderSessionPreview,
   readManifest,
   writeExport,
   writeSession,
   writeSnapshot,
   DEFAULT_MAX_LEDGER_CHARS,
   DEFAULT_MAX_LEDGER_TURNS,
+  DEFAULT_SESSION_PREVIEW_CHARS,
+  DEFAULT_SESSION_PREVIEW_TURNS,
   DEFAULT_KEEP_EXPORTS,
   DEFAULT_KEEP_SNAPSHOTS
 } from './store.js';

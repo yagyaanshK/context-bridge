@@ -104,6 +104,8 @@ export async function writeSession(root, turns, options = {}) {
 
 export const DEFAULT_MAX_LEDGER_TURNS = 50000;
 export const DEFAULT_MAX_LEDGER_CHARS = 64 * 1024 * 1024;
+export const DEFAULT_SESSION_PREVIEW_TURNS = 1000;
+export const DEFAULT_SESSION_PREVIEW_CHARS = 2 * 1024 * 1024;
 
 export async function readAllTurns(root, options = {}) {
   const ledger = resolveLedger(root);
@@ -133,6 +135,66 @@ export async function readAllTurns(root, options = {}) {
     );
   }
   return turns.sort((a, b) => String(a.timestamp || '').localeCompare(String(b.timestamp || '')));
+}
+
+export async function readSessionPreview(root, sessionId, options = {}) {
+  validatePathSegment(sessionId, 'Session id');
+  const manifest = await readManifest(root);
+  const entry = (manifest.sessions || []).find((item) => item?.id === sessionId);
+  if (!entry?.path) throw new Error(`Session is not recorded in the Turntrail manifest: ${sessionId}`);
+
+  const ledger = resolveLedger(root);
+  const sessionsDir = path.join(ledger, 'sessions');
+  const candidate = resolveInside(ledger, entry.path);
+  const filePath = await resolveExistingInside(sessionsDir, candidate);
+  if (path.extname(filePath).toLowerCase() !== '.jsonl') {
+    throw new Error('Session preview path is not a JSONL file.');
+  }
+
+  const maxTurns = positiveLimit(options.maxTurns, DEFAULT_SESSION_PREVIEW_TURNS);
+  const maxChars = positiveLimit(options.maxChars, DEFAULT_SESSION_PREVIEW_CHARS);
+  const turns = [];
+  let chars = 0;
+  let clipped = false;
+  await readJsonlObjects(filePath, (turn) => {
+    const contentChars = String(turn?.content || '').length;
+    if (turns.length >= maxTurns || chars + contentChars > maxChars) {
+      clipped = true;
+      return false;
+    }
+    turns.push(turn);
+    chars += contentChars;
+    return true;
+  }, options);
+
+  return { entry, filePath, turns, clipped, chars };
+}
+
+export function renderSessionPreview(preview) {
+  const entry = preview?.entry || {};
+  const title = singleLine(entry.title || entry.nativeSessionId || entry.id || 'Session');
+  const lines = [
+    `# ${title}`,
+    '',
+    `- Provider: ${singleLine(entry.provider || 'unknown')}`,
+    `- Surface: ${singleLine(entry.surface || 'unknown')}`,
+    `- Imported: ${singleLine(entry.importedAt || 'unknown')}`,
+    `- Turns shown: ${Array.isArray(preview?.turns) ? preview.turns.length : 0}`,
+    ''
+  ];
+
+  for (const turn of preview?.turns || []) {
+    const role = singleLine(turn?.role || 'unknown').replace(/^./, (character) => character.toUpperCase());
+    const timestamp = singleLine(turn?.timestamp || 'unknown time');
+    const content = String(turn?.content || '');
+    const fence = markdownFence(content);
+    lines.push(`## ${role} | ${timestamp}`, '', fence, content, fence, '');
+  }
+
+  if (preview?.clipped) {
+    lines.push('---', '', '_Preview clipped at the configured safety limit. The imported ledger session remains unchanged._', '');
+  }
+  return `${lines.join('\n').trimEnd()}\n`;
 }
 
 // Snapshots and exports are regenerated artifacts, not source data, and each
@@ -254,4 +316,14 @@ function safeIdPart(value) {
 
 function positiveLimit(value, fallback) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+function singleLine(value) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim();
+}
+
+function markdownFence(content) {
+  const runs = String(content || '').match(/`+/g) || [];
+  const longest = runs.reduce((length, run) => Math.max(length, run.length), 0);
+  return '`'.repeat(Math.max(3, longest + 1));
 }
