@@ -129,4 +129,20 @@ test('only valid live Turntrail terminal markers are reattached', () => {
 test('managed terminal input is bounded and provider-limited', async () => {
   assert.throws(() => managedTerminalArgs('cursor'), /only Claude and Codex/i);
   assert.throws(() => managedTerminalArgs('claude', { prompt: 'x'.repeat(64 * 1024 + 1) }), /too long/i);
+  assert.throws(() => managedTerminalArgs('claude', { sessionId: 'id\n--dangerously-skip-permissions' }), /Invalid session id/i);
+});
+
+test('untrusted transcript titles cannot inject terminal control characters', async () => {
+  const window = fakeWindow();
+  const store = new ManagedTerminalStore({
+    window,
+    platform: 'win32',
+    resolveLaunch: async (provider, args) => ({ command: provider, args })
+  });
+  const record = await store.launch({
+    provider: 'codex', root: 'C:\\repo', title: 'Feature\u001b]0;spoofed\u0007\nwork'
+  });
+  assert.equal(record.title.includes('\u001b'), false);
+  assert.equal(record.title.includes('\n'), false);
+  assert.equal(window.created[0].creationOptions.name.includes('\u001b'), false);
 });

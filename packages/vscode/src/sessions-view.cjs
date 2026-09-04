@@ -17,6 +17,7 @@ class SessionsStore {
     this.loading = false;
     this.errors = [];
     this.updatedAt = undefined;
+    this.managed = [];
     this.generation = 0;
     this.emitter = new vscode.EventEmitter();
     this.onDidChange = this.emitter.event;
@@ -64,6 +65,11 @@ class SessionsStore {
     this.fire();
   }
 
+  setManaged(rows) {
+    this.managed = Array.isArray(rows) ? rows.map(publicManagedRow) : [];
+    this.fire();
+  }
+
   stale(maxAgeMs = 60000) {
     const timestamp = Date.parse(this.updatedAt || '');
     return !Number.isFinite(timestamp) || Date.now() - timestamp > maxAgeMs;
@@ -72,6 +78,7 @@ class SessionsStore {
   viewModel() {
     return {
       sessions: [...this.rows.values()].map(publicRow),
+      managed: this.managed,
       providers: PROVIDERS,
       all: this.all,
       loading: this.loading,
@@ -105,7 +112,10 @@ class SessionsWebview {
         scope: 'turntrail.refreshSessions',
         import: 'turntrail.importIndexedSession',
         view: 'turntrail.viewIndexedSession',
-        handoff: 'turntrail.handoffIndexedSession'
+        handoff: 'turntrail.handoffIndexedSession',
+        openManaged: 'turntrail.openManagedSession',
+        focusManaged: 'turntrail.focusManagedSession',
+        closeManaged: 'turntrail.closeManagedSession'
       };
       const command = commands[message?.type];
       if (!command) return;
@@ -113,7 +123,10 @@ class SessionsWebview {
         rowId: message.id,
         all: message.all,
         target: message.target,
-        mode: message.mode
+        mode: message.mode,
+        delivery: message.delivery,
+        provider: message.provider,
+        managedId: message.managedId
       });
     });
     view.onDidChangeVisibility(() => {
@@ -143,6 +156,16 @@ function publicRow(row) {
     matchesProject: row.matchesProject,
     imported: row.imported,
     importedAt: row.importedAt
+  };
+}
+
+function publicManagedRow(row) {
+  return {
+    id: String(row?.id || ''),
+    provider: String(row?.provider || ''),
+    sessionId: row?.sessionId ? String(row.sessionId) : undefined,
+    title: String(row?.title || 'Managed session'),
+    createdAt: row?.createdAt ? String(row.createdAt) : undefined
   };
 }
 
@@ -207,6 +230,20 @@ function html(webview) {
   .refresh:hover { background: var(--vscode-toolbar-hoverBackground); }
   .refresh:focus-visible, button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
   .errors { margin: 0 0 9px; padding: 7px 8px; border-left: 2px solid var(--vscode-inputValidation-warningBorder); color: var(--dim); font-size: 0.82em; line-height: 1.4; }
+  .managed { margin: 0 -10px 10px; padding: 8px 10px 9px; border-bottom: 1px solid var(--line); }
+  .managed-head { display: flex; align-items: center; gap: 5px; }
+  .managed-head strong { flex: 1; font-size: 0.86em; }
+  .icon-command {
+    width: 25px; height: 24px; padding: 0; cursor: pointer;
+    color: var(--vscode-icon-foreground); background: transparent;
+    border: 1px solid transparent; border-radius: 4px;
+  }
+  .icon-command:hover { background: var(--vscode-toolbar-hoverBackground); }
+  .managed-list { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
+  .managed-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 6px; min-height: 25px; }
+  .managed-row .provider { width: 48px; }
+  .managed-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.82em; }
+  .managed-empty { color: var(--dim); font-size: 0.78em; }
   .list { display: flex; flex-direction: column; gap: 7px; }
   .session {
     --accent: var(--vscode-foreground);
@@ -258,12 +295,13 @@ function html(webview) {
 const vscode = acquireVsCodeApi();
 const root = document.getElementById('root');
 const saved = vscode.getState() || {};
-let model = { sessions: [], providers: [], all: false, loading: true, errors: [] };
+let model = { sessions: [], managed: [], providers: [], all: false, loading: true, errors: [] };
 let query = saved.query || '';
 let provider = saved.provider || 'all';
 let openHandoff = saved.openHandoff || '';
 let target = saved.target || 'claude';
 let mode = saved.mode || 'new';
+let delivery = saved.delivery || 'clipboard';
 
 function esc(value) {
   return String(value == null ? '' : value).replace(/[&<>"']/g, function (character) {
@@ -299,14 +337,30 @@ function handoff(row) {
   return '<div class="handoff-controls">' +
     '<div class="choice"><label>Target</label>' + segments('target', [{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }], target) + '</div>' +
     '<div class="choice"><label>Session</label>' + segments('mode', [{ value: 'new', label: 'New' }, { value: 'existing', label: 'Existing' }], mode) + '</div>' +
+    '<div class="choice"><label>Send to</label>' + segments('delivery', [{ value: 'clipboard', label: 'Clipboard' }, { value: 'managed', label: 'Managed CLI' }], delivery) + '</div>' +
     '<button class="primary" data-act="create-handoff" data-id="' + esc(row.id) + '">Create handoff</button>' +
   '</div>';
+}
+function managedSessions() {
+  const rows = model.managed || [];
+  const list = rows.length ? '<div class="managed-list">' + rows.map(function (row) {
+    return '<div class="managed-row"><span class="provider">' + esc(label(row.provider)) + '</span>' +
+      '<span class="managed-title" title="' + esc(row.title) + '">' + esc(row.title) + '</span>' +
+      '<button class="icon-command" data-act="focus-managed" data-managed-id="' + esc(row.id) + '" title="Focus managed terminal" aria-label="Focus managed terminal">&#x25B6;</button>' +
+      '<button class="icon-command" data-act="close-managed" data-managed-id="' + esc(row.id) + '" title="Close managed terminal" aria-label="Close managed terminal">&#x2715;</button></div>';
+  }).join('') + '</div>' : '<div class="managed-empty">No managed CLI sessions in this workspace.</div>';
+  return '<section class="managed"><div class="managed-head"><strong>Managed CLI</strong>' +
+    '<button class="icon-command" data-act="open-managed" data-provider="claude" title="Open new Claude CLI" aria-label="Open new Claude CLI">+C</button>' +
+    '<button class="icon-command" data-act="open-managed" data-provider="codex" title="Open new Codex CLI" aria-label="Open new Codex CLI">+X</button></div>' + list + '</section>';
 }
 function card(row) {
   const meta = [ago(row.modifiedAt), row.surface, size(row.size)].filter(Boolean);
   const action = row.imported
     ? '<button class="primary" data-act="view" data-id="' + esc(row.id) + '">View</button>' + (row.kind === 'native' ? '<button data-act="import" data-id="' + esc(row.id) + '">Reimport</button>' : '')
     : '<button class="primary" data-act="import" data-id="' + esc(row.id) + '">Import</button><button data-act="view" data-id="' + esc(row.id) + '">Import &amp; view</button>';
+  const managedAction = (row.provider === 'claude' || row.provider === 'codex') && row.sessionId
+    ? '<button data-act="open-managed" data-id="' + esc(row.id) + '" data-provider="' + esc(row.provider) + '">Open CLI</button>'
+    : '';
   return '<article class="session" data-provider="' + esc(row.provider) + '">' +
     '<div class="session-head"><span class="provider">' + esc(label(row.provider)) + '</span><span class="badges">' +
       '<span class="badge">' + esc(row.kind) + '</span>' + (row.imported ? '<span class="badge imported">imported</span>' : '') +
@@ -315,12 +369,12 @@ function card(row) {
     (row.latest && row.latest !== row.title ? '<div class="latest">' + esc(row.latest) + '</div>' : '') +
     '<div class="meta">' + meta.map(function (item) { return '<span>' + esc(item) + '</span>'; }).join('') + '</div>' +
     (row.cwd ? '<div class="folder" title="' + esc(row.cwd) + '">' + esc(row.cwd) + '</div>' : '') +
-    '<div class="actions">' + action + '<button data-act="handoff" data-id="' + esc(row.id) + '">Handoff</button></div>' +
+    '<div class="actions">' + action + managedAction + '<button data-act="handoff" data-id="' + esc(row.id) + '">Handoff</button></div>' +
     handoff(row) +
   '</article>';
 }
 function persist() {
-  vscode.setState({ query: query, provider: provider, openHandoff: openHandoff, target: target, mode: mode });
+  vscode.setState({ query: query, provider: provider, openHandoff: openHandoff, target: target, mode: mode, delivery: delivery });
 }
 function render() {
   const needle = query.trim().toLowerCase();
@@ -339,6 +393,7 @@ function render() {
   }).join('') + '</div>' : '';
   root.className = model.loading ? 'loading' : '';
   root.innerHTML =
+    managedSessions() +
     '<div class="toolbar"><input class="search" type="search" aria-label="Search sessions" placeholder="Search sessions" value="' + esc(query) + '">' +
       '<select aria-label="Filter provider">' + providerOptions + '</select></div>' +
     '<div class="scope"><button data-scope="false" aria-pressed="' + (!model.all) + '">Workspace</button><button data-scope="true" aria-pressed="' + model.all + '">Everywhere</button></div>' +
@@ -359,7 +414,8 @@ root.addEventListener('click', function (event) {
   const choice = event.target.closest('[data-choice]');
   if (choice) {
     if (choice.dataset.choice === 'target') target = choice.dataset.value;
-    else mode = choice.dataset.value;
+    else if (choice.dataset.choice === 'mode') mode = choice.dataset.value;
+    else delivery = choice.dataset.value;
     persist(); render(); return;
   }
   const button = event.target.closest('[data-act]');
@@ -370,7 +426,13 @@ root.addEventListener('click', function (event) {
     persist(); render(); return;
   }
   if (button.dataset.act === 'create-handoff') {
-    vscode.postMessage({ type: 'handoff', id: button.dataset.id, target: target, mode: mode }); return;
+    vscode.postMessage({ type: 'handoff', id: button.dataset.id, target: target, mode: mode, delivery: delivery }); return;
+  }
+  if (button.dataset.act === 'open-managed') {
+    vscode.postMessage({ type: 'openManaged', id: button.dataset.id, provider: button.dataset.provider }); return;
+  }
+  if (button.dataset.act === 'focus-managed' || button.dataset.act === 'close-managed') {
+    vscode.postMessage({ type: button.dataset.act === 'focus-managed' ? 'focusManaged' : 'closeManaged', managedId: button.dataset.managedId }); return;
   }
   vscode.postMessage({ type: button.dataset.act, id: button.dataset.id });
 });

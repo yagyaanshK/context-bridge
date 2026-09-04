@@ -68,9 +68,20 @@ test('sessions webview has CSP, filters, and maps row actions to opaque commands
   assert.match(view.webview.html, /Search sessions/);
   assert.match(view.webview.html, /All providers/);
   assert.match(view.webview.html, /Import &amp; view/);
+  assert.match(view.webview.html, /Managed CLI/);
+  assert.match(view.webview.html, /Clipboard/);
 
-  receiver({ type: 'handoff', id: 'native:codex:abc', target: 'claude', mode: 'new' });
+  receiver({ type: 'handoff', id: 'native:codex:abc', target: 'claude', mode: 'new', delivery: 'managed' });
   assert.deepEqual(executed.at(-1), ['turntrail.handoffIndexedSession', {
-    rowId: 'native:codex:abc', all: undefined, target: 'claude', mode: 'new'
+    rowId: 'native:codex:abc',
+    all: undefined,
+    target: 'claude',
+    mode: 'new',
+    delivery: 'managed',
+    provider: undefined,
+    managedId: undefined
   }]);
+
+  receiver({ type: 'openManaged', id: 'native:codex:abc', provider: 'codex' });
+  assert.equal(executed.at(-1)[0], 'turntrail.openManagedSession');
 });

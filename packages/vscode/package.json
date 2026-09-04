@@ -45,6 +45,9 @@
     "onCommand:turntrail.importIndexedSession",
     "onCommand:turntrail.viewIndexedSession",
     "onCommand:turntrail.handoffIndexedSession",
+    "onCommand:turntrail.openManagedSession",
+    "onCommand:turntrail.focusManagedSession",
+    "onCommand:turntrail.closeManagedSession",
     "onCommand:turntrail.switchAccount",
     "onCommand:turntrail.refreshAccountQuota",
     "onCommand:turntrail.useCodexReset",
@@ -110,6 +113,9 @@
     "onCommand:contextBridge.importIndexedSession",
     "onCommand:contextBridge.viewIndexedSession",
     "onCommand:contextBridge.handoffIndexedSession",
+    "onCommand:contextBridge.openManagedSession",
+    "onCommand:contextBridge.focusManagedSession",
+    "onCommand:contextBridge.closeManagedSession",
     "onCommand:contextBridge.toggleAccountMaintenance"
   ],
   "main": "./src/extension.cjs",
@@ -290,6 +296,19 @@
       {
         "command": "turntrail.handoffIndexedSession",
         "title": "Turntrail: Handoff Selected Session"
+      },
+      {
+        "command": "turntrail.openManagedSession",
+        "title": "Turntrail: Open Managed CLI Session",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "turntrail.focusManagedSession",
+        "title": "Turntrail: Focus Managed CLI Session"
+      },
+      {
+        "command": "turntrail.closeManagedSession",
+        "title": "Turntrail: Close Managed CLI Session"
       }
     ],
     "configuration": {
@@ -502,6 +521,14 @@
         },
         {
           "command": "turntrail.handoffIndexedSession",
+          "when": "false"
+        },
+        {
+          "command": "turntrail.focusManagedSession",
+          "when": "false"
+        },
+        {
+          "command": "turntrail.closeManagedSession",
           "when": "false"
         }
       ]

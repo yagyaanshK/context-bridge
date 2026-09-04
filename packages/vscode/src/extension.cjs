@@ -6,6 +6,7 @@ const { AccountMaintenanceScheduler, shouldOfferClaudeMaintenance } = require('.
 const { readRawUsage } = require('./raw-usage.cjs');
 const { AccountsStore, AccountsWebview } = require('./accounts-view.cjs');
 const { SessionsStore, SessionsWebview } = require('./sessions-view.cjs');
+const { ManagedTerminalStore } = require('./managed-terminals.cjs');
 const { handoffForRoot } = require('./handoff-state.cjs');
 const { LoginPanel } = require('./login-view.cjs');
 const { runWithCancellation } = require('./progress.cjs');
@@ -22,6 +23,7 @@ let loginPanel;
 let accountsWebview;
 let sessionsProvider;
 let sessionsWebview;
+let managedTerminals;
 let accountMaintenance;
 let accountMaintenanceOutput;
 let accountMaintenanceOffer;
@@ -29,6 +31,7 @@ let accountMaintenanceOffer;
 async function activateExtension(context) {
   accountsProvider = new AccountsStore(core);
   accountsWebview = new AccountsWebview(accountsProvider);
+  managedTerminals = new ManagedTerminalStore();
   sessionsProvider = new SessionsStore(core, workspaceRoot);
   sessionsWebview = new SessionsWebview(sessionsProvider);
   loginPanel = new LoginPanel(context, core, accountsProvider);
@@ -41,6 +44,8 @@ async function activateExtension(context) {
   accountsProvider.onDidChange(() => accountsProvider.summary().then(renderStatus));
   accountMaintenanceOutput = vscode.window.createOutputChannel('Turntrail Accounts');
   accountMaintenance = createAccountMaintenance(context);
+  managedTerminals.start(context);
+  sessionsProvider.setManaged(managedTerminals.viewModel());
 
   context.subscriptions.push(
     accountStatus,
@@ -48,6 +53,7 @@ async function activateExtension(context) {
     accountMaintenance,
     accountsProvider.emitter,
     sessionsProvider.emitter,
+    managedTerminals.onDidChange(() => sessionsProvider.setManaged(managedTerminals.viewModel())),
     accountsProvider.onDidChange(() => queueClaudeAccountMaintenanceOffer(context)),
     vscode.window.registerWebviewViewProvider('contextBridgeAccounts', accountsWebview),
     vscode.window.registerWebviewViewProvider('contextBridgeSessions', sessionsWebview),
@@ -82,6 +88,9 @@ async function activateExtension(context) {
     ...compatibleCommands('importIndexedSession', (item) => importIndexedSession(item)),
     ...compatibleCommands('viewIndexedSession', (item) => viewIndexedSession(item)),
     ...compatibleCommands('handoffIndexedSession', (item) => handoffIndexedSession(item)),
+    ...compatibleCommands('openManagedSession', (item) => openManagedSession(item)),
+    ...compatibleCommands('focusManagedSession', (item) => focusManagedSession(item)),
+    ...compatibleCommands('closeManagedSession', (item) => closeManagedSession(item)),
     ...compatibleCommands('handoffToClaudeExisting', () => handoff('claude', 'existing')),
     ...compatibleCommands('handoffToClaudeNew', () => handoff('claude', 'new')),
     ...compatibleCommands('handoffToCodexExisting', () => handoff('codex', 'existing')),
@@ -1040,7 +1049,43 @@ async function handoffIndexedSession(item) {
   const row = indexedSession(item);
   const target = item?.target === 'codex' ? 'codex' : 'claude';
   const mode = item?.mode === 'existing' ? 'existing' : 'new';
-  return handoff(target, mode, row);
+  const delivery = item?.delivery === 'managed' ? 'managed' : 'clipboard';
+  return handoff(target, mode, row, delivery);
+}
+
+async function openManagedSession(item = {}) {
+  const row = item?.rowId ? indexedSession(item) : undefined;
+  let provider = row?.provider || item?.provider;
+  if (provider !== 'claude' && provider !== 'codex') {
+    const picked = await vscode.window.showQuickPick(
+      [
+        { label: 'Claude', provider: 'claude' },
+        { label: 'Codex', provider: 'codex' }
+      ],
+      { placeHolder: 'Open which managed CLI?' }
+    );
+    provider = picked?.provider;
+  }
+  if (!provider) return;
+  if (provider !== 'claude' && provider !== 'codex') {
+    throw new Error('Managed terminals support only Claude and Codex.');
+  }
+
+  const root = await workspaceRoot();
+  return managedTerminals.launch({
+    provider,
+    root,
+    sessionId: row?.sessionId,
+    title: row?.title || 'New session'
+  });
+}
+
+function focusManagedSession(item = {}) {
+  return managedTerminals.focus(item.managedId);
+}
+
+function closeManagedSession(item = {}) {
+  return managedTerminals.close(item.managedId);
 }
 
 // Import only ingests into the ledger (it opens nothing), so confirm it
@@ -1058,7 +1103,7 @@ function formatSessionFolder(cwd) {
   return fs.existsSync(cwd) ? cwd : `${cwd} (folder not found; it may have been renamed or moved)`;
 }
 
-async function handoff(target, mode, selected) {
+async function handoff(target, mode, selected, delivery = 'clipboard') {
   const root = await workspaceRoot();
   const source = selected?.provider || (target === 'claude' ? 'codex' : 'claude');
   // 0 is a meaningful value here ("no clipping"), so it must reach the core
@@ -1116,19 +1161,76 @@ async function handoff(target, mode, selected) {
   await publishHandoffState(root);
 
   if (openDocument) await openDocumentAt(result.path);
-  if (mode === 'new') await openTarget(target);
+  let delivered;
+  if (delivery === 'managed') {
+    try {
+      delivered = await deliverManagedHandoff({ target, mode, prompt, destination, root });
+    } catch (error) {
+      vscode.window.showWarningMessage(
+        `Turntrail: the managed CLI could not receive this handoff — ${error.message} The prompt remains on your clipboard.`
+      );
+    }
+  } else if (mode === 'new') {
+    await openTarget(target);
+  }
 
   const targetLabel = target === 'claude' ? 'Claude' : target === 'codex' ? 'Codex' : target;
   const wordCount = countWords(prompt);
   const into = chatLabel(destination) ? ` chat "${chatLabel(destination)}"` : '';
+  const outcome = delivered
+    ? `sent directly to managed ${targetLabel}${delivered.reused ? into : ''}`
+    : `copied to clipboard — paste it into ${targetLabel}${into} to continue`;
   vscode.window.showInformationMessage(
-    `Turntrail: ${wordCount}-word handoff prompt copied to clipboard — paste it into ${targetLabel}${into} to continue.`,
+    `Turntrail: ${wordCount}-word handoff prompt ${outcome}.`,
     'Copy Prompt Again',
     'Open Handoff'
   ).then((choice) => {
     if (choice === 'Open Handoff') openDocumentAt(result.path);
     else if (choice === 'Copy Prompt Again') vscode.env.clipboard.writeText(prompt);
   });
+}
+
+async function deliverManagedHandoff({ target, mode, prompt, destination, root }) {
+  const active = managedTerminals.list(target, root);
+  let chosen;
+  if (mode === 'existing') {
+    chosen = active.find((record) => destination?.sessionId && record.sessionId === destination.sessionId);
+    const unspecified = !destination?.sessionId;
+    if (!chosen && unspecified && active.length === 1) chosen = active[0];
+    if (!chosen && unspecified && active.length > 1) {
+      const picked = await vscode.window.showQuickPick(
+        active.map((record) => ({
+          label: record.title,
+          description: `${agentName(record.provider)} · managed terminal`,
+          detail: record.sessionId || 'New session',
+          record
+        })),
+        { placeHolder: `Which managed ${agentName(target)} session should receive this handoff?` }
+      );
+      chosen = picked?.record;
+      if (!chosen) return undefined;
+    }
+  }
+
+  if (chosen) {
+    managedTerminals.inject(chosen.id, prompt);
+    return { record: chosen, reused: true };
+  }
+
+  let sessionId = mode === 'existing' ? destination?.sessionId : undefined;
+  let title = chatLabel(destination) || 'Handoff';
+  if (mode === 'existing' && !sessionId) {
+    const resolved = await resolveSourceSession(target, root);
+    if (resolved.status === 'cancelled') return undefined;
+    if (resolved.status === 'none') {
+      throw new Error(`no existing ${agentName(target)} session was found`);
+    }
+    sessionId = resolved.session.sessionId;
+    title = resolved.session.title || resolved.session.latest || title;
+  }
+
+  const record = await managedTerminals.launch({ target, provider: target, root, sessionId, title, prompt });
+  return { record, reused: false };
 }
 
 function countWords(text) {

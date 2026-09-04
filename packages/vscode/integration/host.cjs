@@ -34,6 +34,9 @@ async function smokeAndSeed(hooks) {
     'turntrail.importIndexedSession',
     'turntrail.viewIndexedSession',
     'turntrail.handoffIndexedSession',
+    'turntrail.openManagedSession',
+    'turntrail.focusManagedSession',
+    'turntrail.closeManagedSession',
     'turntrail.copyLatestHandoffPrompt',
     'turntrail.openLatestHandoff',
     'turntrail.createHandoff'
@@ -57,6 +60,8 @@ async function smokeAndSeed(hooks) {
   assert.match(sessionsState.sessionsWebviewHtml, /default-src 'none'/);
   assert.match(sessionsState.sessionsWebviewHtml, /Search sessions/);
   assert.match(sessionsState.sessionsWebviewHtml, /All providers/);
+  assert.match(sessionsState.sessionsWebviewHtml, /Managed CLI/);
+  assert.match(sessionsState.sessionsWebviewHtml, /Clipboard/);
 
   const handoffPath = path.join(root, 'handoff.md');
   const prompt = 'Turntrail extension-host prompt';

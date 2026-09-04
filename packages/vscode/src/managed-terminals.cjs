@@ -30,9 +30,9 @@ class ManagedTerminalStore {
   async launch(input) {
     const provider = validateProvider(input?.provider);
     const root = validateRoot(input?.root);
-    const sessionId = optionalText(input?.sessionId, 512, 'session id');
+    const sessionId = optionalIdentifier(input?.sessionId, 512, 'session id');
     const prompt = optionalText(input?.prompt, MAX_PROMPT_CHARS, 'handoff prompt');
-    const title = optionalText(input?.title, 160, 'terminal title') || (sessionId ? `Session ${sessionId.slice(0, 8)}` : 'New session');
+    const title = displayText(input?.title, 160) || (sessionId ? `Session ${sessionId.slice(0, 8)}` : 'New session');
     const args = managedTerminalArgs(provider, { sessionId, prompt });
     const launch = await this.resolveLaunch(provider, args, { platform: this.platform });
     const id = crypto.randomUUID();
@@ -70,8 +70,8 @@ class ManagedTerminalStore {
       id,
       provider,
       root,
-      sessionId: optionalText(env.TURNTRAIL_MANAGED_SESSION_ID, 512, 'session id'),
-      title: optionalText(env.TURNTRAIL_MANAGED_TITLE, 160, 'terminal title') || 'Managed session',
+      sessionId: optionalIdentifier(env.TURNTRAIL_MANAGED_SESSION_ID, 512, 'session id'),
+      title: displayText(env.TURNTRAIL_MANAGED_TITLE, 160) || 'Managed session',
       terminal,
       createdAt: new Date().toISOString()
     };
@@ -151,7 +151,7 @@ class ManagedTerminalStore {
 
 function managedTerminalArgs(provider, options = {}) {
   const normalized = validateProvider(provider);
-  const sessionId = optionalText(options.sessionId, 512, 'session id');
+  const sessionId = optionalIdentifier(options.sessionId, 512, 'session id');
   const prompt = optionalText(options.prompt, MAX_PROMPT_CHARS, 'handoff prompt');
   const args = sessionId
     ? normalized === 'claude' ? ['--resume', sessionId] : ['resume', sessionId]
@@ -234,7 +234,7 @@ function validateRoot(value) {
 }
 
 function safeRoot(value) {
-  if (typeof value !== 'string' || !path.isAbsolute(value) || value.includes('\0')) return undefined;
+  if (typeof value !== 'string' || !path.isAbsolute(value) || /[\0\r\n]/.test(value)) return undefined;
   return path.resolve(value);
 }
 
@@ -247,6 +247,21 @@ function optionalText(value, maxLength, label) {
   if (typeof value !== 'string' || value.includes('\0')) throw new Error(`Invalid ${label}.`);
   if (value.length > maxLength) throw new Error(`${label[0].toUpperCase()}${label.slice(1)} is too long.`);
   return value;
+}
+
+function optionalIdentifier(value, maxLength, label) {
+  const text = optionalText(value, maxLength, label);
+  if (text && /[\x00-\x1f\x7f]/.test(text)) throw new Error(`Invalid ${label}.`);
+  return text;
+}
+
+function displayText(value, maxLength) {
+  if (value === undefined || value === null) return undefined;
+  const text = String(value)
+    .replace(/[\x00-\x1f\x7f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text ? text.slice(0, maxLength) : undefined;
 }
 
 function normalizedPath(value, platform = process.platform) {
