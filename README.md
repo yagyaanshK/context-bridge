@@ -99,8 +99,14 @@ Set `turntrail.alwaysUseLatestSession` to skip the question and always take the 
 
 ## Quick start (VS Code)
 
-Use the **Handoff** card at the bottom of the Turntrail panel — pick the agent, pick new or
-existing, press **Create handoff** — or the command palette:
+Open the Turntrail activity-bar icon and use **Sessions** to see Claude, Codex, Gemini, and Cursor
+conversations together. Search or filter the list, then import, preview, or hand off the exact
+session you want. The default workspace scope hides unrelated conversations; switch to
+**Everywhere** when you deliberately need another project.
+
+For a direct handoff, choose Claude or Codex and new or existing beside the session. Turntrail
+imports that session when needed, snapshots the workspace, writes the handoff, and copies its short
+prompt. The **Handoff** card and command palette remain available for the latest-session workflow:
 
 1. Run **`Turntrail: Handoff to New Claude Session`** (or Codex / “Existing”).
 2. It imports the latest session from the *other* tool, snapshots the workspace, and writes the handoff.
@@ -195,7 +201,10 @@ history, and work never falls between two handoffs aimed at the same agent.
 
 ## VS Code commands & settings
 
-The extension contributes an **Accounts** panel in the activity bar (see below) plus command-palette entries.
+The extension contributes **Sessions** and **Accounts** panels in the activity bar plus
+command-palette entries. Sessions provides one searchable index across native and imported
+Claude, Codex, Gemini, and Cursor conversations. Its previews are bounded and generated from the
+normalized local ledger; native transcript paths are not sent into the webview.
 
 **Commands** (Command Palette → “Turntrail: …”): Discover / Import Latest (Claude·Codex), Handoff to New/Existing (Claude·Codex), Open Latest Handoff, Copy Latest Handoff Prompt, Add / Import Account, Switch Account, Refresh Account Quota, Rename Account, Remove Account, Show Raw Response.
 

@@ -2,7 +2,7 @@
   "name": "context-bridge-vscode",
   "displayName": "Turntrail",
   "description": "Continue developer agent sessions across Claude, Codex, and other tools from VS Code.",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "publisher": "turntrail",
   "license": "MIT",
   "type": "commonjs",
@@ -508,7 +508,7 @@
     }
   },
   "dependencies": {
-    "@turntrail/core": "0.15.0"
+    "@turntrail/core": "0.16.0"
   },
   "devDependencies": {
     "@types/vscode": "^1.95.0"

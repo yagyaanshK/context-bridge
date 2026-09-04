@@ -8,6 +8,7 @@ Turntrail has one durable idea: the continuity layer should live in the project,
 packages/core
   schema normalization
   native transcript adapters
+  unified native + ledger session index
   context store filesystem layout
   importers
   workspace snapshots
@@ -18,7 +19,7 @@ packages/cli
   command-line interface around core
 
 packages/vscode
-  extension host: handoff commands, accounts panel, sign-in panel
+  extension host: sessions panel, handoff commands, accounts panel, sign-in panel
 ```
 
 Future wrappers should call `packages/core` instead of reimplementing ledger logic.
@@ -129,6 +130,24 @@ Adapters should:
 Project matching canonicalizes existing paths through `realpath`, compares path segments rather than
 string prefixes, and folds case only on Windows. This lets symlinked or junction-backed workspaces
 match their native transcript while preserving case-sensitive behavior on Linux and macOS.
+
+## Unified Session Index
+
+`packages/core/src/session-index.js` presents native Claude, Codex, Gemini, and Cursor discovery plus
+the current project ledger as one deterministic list. Rows are deduplicated by normalized source
+path or native session id, retain provider-specific metadata in the core process, and expose stable
+opaque ids for callers. Provider failures are isolated: a malformed transcript or unavailable store
+does not erase rows discovered from other files or providers.
+
+The VS Code Sessions webview is an untrusted presentation boundary. It receives only an opaque id
+and display fields such as provider, title, timestamp, surface, size, and import state. Absolute
+native paths and import descriptors stay in an extension-host map. Import, preview, and handoff
+messages must resolve an id through that map; arbitrary paths from the webview are never accepted.
+
+Ledger previews use `readSessionPreview` and `renderSessionPreview`. Manifest paths are validated to
+remain inside the ledger sessions directory, content is read with explicit turn and byte ceilings,
+and Markdown fences expand to contain any backtick run in transcript content. A clipped preview is
+labelled rather than silently presented as complete.
 
 ## Workspace Snapshots
 

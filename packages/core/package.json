@@ -1,6 +1,6 @@
 {
   "name": "@turntrail/core",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Core ledger, transcript, snapshot, and handoff logic for Turntrail.",
   "type": "module",
   "main": "src/index.js",

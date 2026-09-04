@@ -2,7 +2,9 @@
 
 Turntrail includes a VS Code extension package for developers who use Claude, Codex, Gemini CLI, and Cursor Agent alongside their editor.
 
-It does two separate jobs: it generates **handoffs** between the two agents, and it manages **accounts** for both of them in a sidebar panel. The two are independent — you can use either without the other.
+It does two separate jobs: it indexes sessions and generates **handoffs** between agents, and it
+manages **accounts** for Claude and Codex in a sidebar panel. The two are independent — you can use
+either without the other.
 
 ## Commands
 
@@ -40,6 +42,36 @@ Open the command palette and run:
 
 Everything in the accounts group is also reachable from the panel, which never hands you off to a
 dropdown: confirmations and renames happen inline in the card you clicked.
+
+## The Sessions Panel
+
+The **Sessions** view is the primary way to choose conversation history. It combines native Claude,
+Codex, Gemini, and Cursor transcripts with sessions already imported into the current Turntrail
+ledger, sorts them by recent activity, and marks imported rows. Duplicate native and ledger records
+are merged when their native session id or source path identifies the same conversation.
+
+The scope defaults to **Workspace**, so sessions from unrelated projects stay out of the list.
+Choose **Everywhere** to search all locally discovered conversations. A provider filter and text
+search narrow the result without rescanning the native stores.
+
+| Action | Effect |
+|--------|--------|
+| **Import** / **Reimport** | Copies the selected native transcript into the project ledger. Native files are never modified. |
+| **Import & view** / **View** | Imports if needed, then opens a readable normalized Markdown preview. |
+| **Handoff** | Imports if needed and creates a Claude or Codex handoff in new- or existing-session mode. |
+| **Refresh** | Rescans native stores and rereads the project ledger. |
+
+Previews are bounded to 1,000 turns and 2 MiB by default so opening a very large conversation cannot
+stall the extension host. The preview says when it was clipped. It renders normalized text from the
+local ledger rather than dumping raw JSONL or inline base64 image data.
+
+The webview receives opaque row ids and display metadata only. Native transcript paths and import
+descriptors remain in the trusted extension host and are resolved only after a button click. An
+unreadable or oversized individual transcript is skipped and reported without hiding healthy
+sessions from the same provider.
+
+Gemini and Cursor are currently source providers. Their sessions can be imported, viewed, and handed
+off to Claude or Codex, but Turntrail does not yet open or inject prompts into Gemini or Cursor.
 
 ## The Accounts Panel
 

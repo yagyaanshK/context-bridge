@@ -4,7 +4,9 @@
 
 Turntrail does two independent jobs:
 
-- **Handoffs.** Import the latest native session from one agent, snapshot your workspace, and write a clean, deterministic handoff you paste into the next agent. Everything stays local in `.turntrail/` — no telemetry, no network, no AI summarization.
+- **Sessions and handoffs.** Search native and imported conversations in one view, preview one,
+  snapshot your workspace, and write a clean, deterministic handoff you paste into the next agent.
+  Everything stays local in `.turntrail/` — no telemetry, no network, no AI summarization.
 - **Accounts.** Keep several Codex subscriptions and Claude accounts signed in at once, see what each has left on a usage bar, and switch the official tools between them.
 
 Use either without the other. The handoff flow never touches the network. Account actions, and
@@ -20,12 +22,21 @@ and settings use `turntrail.*`, and existing `.context-bridge/` ledgers are read
 
 ## Use it
 
-1. Run **`Turntrail: Handoff to New Claude Session`** (or Codex, or “Existing”).
-2. The extension imports the latest session from the *other* tool, snapshots the workspace, and writes a handoff markdown file.
-3. A short prompt is **copied to your clipboard** — the notification states the word count and which tool to paste into.
-4. Paste it into the target agent and keep working.
+1. Open the Turntrail icon in the activity bar and expand **Sessions**.
+2. Search or filter Claude, Codex, Gemini, and Cursor conversations. Workspace scope is the default;
+   **Everywhere** deliberately includes other projects.
+3. Choose **Import & view** to inspect a bounded normalized preview, or choose Claude/Codex and
+   new/existing beside **Handoff**.
+4. Turntrail imports when needed, snapshots the workspace, writes a handoff, and copies its short
+   prompt. Paste it into the target agent and keep working.
 
-To ingest a session without generating a handoff, use **Discover … Sessions** → pick one → **Import** (you get a confirmation with the turn count).
+The command-palette and Handoff-card workflows remain available. To ingest a session without
+generating a handoff, use **Import** in the Sessions view or **Discover … Sessions** → pick one →
+**Import**.
+
+The Sessions webview sees opaque row ids rather than native file paths. Preview content comes from
+the normalized project ledger, is limited to 1,000 turns and 2 MiB by default, and says when it was
+clipped. An unreadable individual transcript is skipped and reported without hiding other sessions.
 
 ## Commands
 
