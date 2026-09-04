@@ -30,7 +30,7 @@ producing a handoff. Neither depends on the other.
 ## Data Flow
 
 ```text
-Claude / Codex / other transcript
+Claude / Codex / Gemini / Cursor transcript
         |
         v
 import adapter
@@ -95,9 +95,31 @@ not read. Measured against a real install of 64 threads, the table named nothing
 already named and its `name` column was empty throughout, so reading it would buy a SQLite
 dependency, locked-database handling and exposure to the drift between the two stores for nothing.
 
+Gemini CLI:
+
+```text
+~/.gemini/tmp/<project-id>/chats/session-*.jsonl
+~/.gemini/tmp/<legacy-project-hash>/chats/session-*.json
+```
+
+Current JSONL recordings are append-only. The adapter applies `$set` metadata updates and
+`$rewindTo` records using Gemini's native semantics, so abandoned branches do not reappear in a
+handoff. Legacy JSON recordings remain readable during Gemini's format migration. Project matching
+uses the recording hash, the current `.project_root` marker, or Gemini's `projects.json` registry.
+
+Cursor Agent:
+
+```text
+~/.cursor/projects/<encoded-project>/agent-transcripts/<session-id>/<session-id>.jsonl
+```
+
+Turntrail reads Cursor's dedicated Agent transcript files and does not open Cursor's live
+`state.vscdb` or conversation-search databases. Main sessions are discovered by default; nested
+`subagents/` recordings are optional at the core API and excluded from normal UI/CLI discovery.
+
 Adapters should:
 
-- parse JSONL line by line
+- parse JSONL line by line (and bound legacy whole-file JSON reads)
 - preserve original content exactly where practical
 - preserve local image paths instead of embedding base64 images
 - filter by recorded `cwd` when available

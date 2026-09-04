@@ -1,10 +1,14 @@
 import { discoverClaudeSessions, importClaudeSession } from './claude-code.js';
 import { discoverCodexSessions, importCodexSession } from './codex.js';
+import { discoverCursorSessions, importCursorSession } from './cursor.js';
+import { discoverGeminiSessions, importGeminiSession } from './gemini.js';
 
 export async function discoverNativeSessions(provider, options = {}) {
   const normalized = normalizeNativeProvider(provider);
   if (normalized === 'claude') return discoverClaudeSessions(options);
   if (normalized === 'codex') return discoverCodexSessions(options);
+  if (normalized === 'gemini') return discoverGeminiSessions(options);
+  if (normalized === 'cursor') return discoverCursorSessions(options);
   throw new Error(`Unsupported native provider: ${provider}`);
 }
 
@@ -21,6 +25,8 @@ export async function importNativeSession(root, provider, options = {}) {
   }
   if (normalized === 'claude') return importClaudeSession(root, session, options);
   if (normalized === 'codex') return importCodexSession(root, session, options);
+  if (normalized === 'gemini') return importGeminiSession(root, session, options);
+  if (normalized === 'cursor') return importCursorSession(root, session, options);
   throw new Error(`Unsupported native provider: ${provider}`);
 }
 
@@ -41,5 +47,7 @@ export function normalizeNativeProvider(provider) {
   const value = String(provider || '').toLowerCase();
   if (value === 'claude' || value === 'anthropic') return 'claude';
   if (value === 'codex' || value === 'openai' || value === 'chatgpt') return 'codex';
+  if (value === 'gemini' || value === 'google') return 'gemini';
+  if (value === 'cursor' || value === 'cursor-agent' || value === 'agent') return 'cursor';
   return value;
 }

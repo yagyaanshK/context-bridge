@@ -23,6 +23,8 @@
   "keywords": [
     "claude",
     "codex",
+    "gemini",
+    "cursor",
     "handoff",
     "agent",
     "session"
@@ -43,8 +45,12 @@
     "onCommand:turntrail.useCodexReset",
     "onCommand:turntrail.discoverClaude",
     "onCommand:turntrail.discoverCodex",
+    "onCommand:turntrail.discoverGemini",
+    "onCommand:turntrail.discoverCursor",
     "onCommand:turntrail.importLatestClaude",
     "onCommand:turntrail.importLatestCodex",
+    "onCommand:turntrail.importLatestGemini",
+    "onCommand:turntrail.importLatestCursor",
     "onCommand:turntrail.handoffToClaudeExisting",
     "onCommand:turntrail.handoffToClaudeNew",
     "onCommand:turntrail.handoffToCodexExisting",
@@ -70,8 +76,12 @@
     "onCommand:contextBridge.useCodexReset",
     "onCommand:contextBridge.discoverClaude",
     "onCommand:contextBridge.discoverCodex",
+    "onCommand:contextBridge.discoverGemini",
+    "onCommand:contextBridge.discoverCursor",
     "onCommand:contextBridge.importLatestClaude",
     "onCommand:contextBridge.importLatestCodex",
+    "onCommand:contextBridge.importLatestGemini",
+    "onCommand:contextBridge.importLatestCursor",
     "onCommand:contextBridge.handoffToClaudeExisting",
     "onCommand:contextBridge.handoffToClaudeNew",
     "onCommand:contextBridge.handoffToCodexExisting",
@@ -198,12 +208,28 @@
         "title": "Turntrail: Discover Codex Sessions"
       },
       {
+        "command": "turntrail.discoverGemini",
+        "title": "Turntrail: Discover Gemini Sessions"
+      },
+      {
+        "command": "turntrail.discoverCursor",
+        "title": "Turntrail: Discover Cursor Sessions"
+      },
+      {
         "command": "turntrail.importLatestClaude",
         "title": "Turntrail: Import Latest Claude Session"
       },
       {
         "command": "turntrail.importLatestCodex",
         "title": "Turntrail: Import Latest Codex Session"
+      },
+      {
+        "command": "turntrail.importLatestGemini",
+        "title": "Turntrail: Import Latest Gemini Session"
+      },
+      {
+        "command": "turntrail.importLatestCursor",
+        "title": "Turntrail: Import Latest Cursor Session"
       },
       {
         "command": "turntrail.handoffToClaudeExisting",
@@ -414,6 +440,12 @@
         },
         {
           "command": "turntrail.discoverCodex"
+        },
+        {
+          "command": "turntrail.discoverGemini"
+        },
+        {
+          "command": "turntrail.discoverCursor"
         },
         {
           "command": "turntrail.createHandoff",

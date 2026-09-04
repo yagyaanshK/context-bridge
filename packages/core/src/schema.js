@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-export const PROVIDERS = new Set(['openai', 'anthropic', 'codex', 'claude', 'other', 'unknown']);
+export const PROVIDERS = new Set(['openai', 'anthropic', 'google', 'cursor', 'codex', 'claude', 'gemini', 'other', 'unknown']);
 export const SURFACES = new Set(['cli', 'ide', 'desktop', 'web', 'api', 'unknown']);
 export const ROLES = new Set(['user', 'assistant', 'tool', 'system', 'unknown']);
 
@@ -8,6 +8,8 @@ export function normalizeProvider(provider = 'unknown') {
   const value = String(provider || 'unknown').toLowerCase();
   if (value === 'codex' || value === 'openai' || value === 'chatgpt') return 'openai';
   if (value === 'claude' || value === 'anthropic') return 'anthropic';
+  if (value === 'gemini' || value === 'google') return 'google';
+  if (value === 'cursor-agent' || value === 'agent') return 'cursor';
   return PROVIDERS.has(value) ? value : 'unknown';
 }
 

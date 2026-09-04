@@ -62,8 +62,12 @@ async function activateExtension(context) {
     ...compatibleCommands('toggleAccountMaintenance', () => toggleAccountMaintenance()),
     ...compatibleCommands('discoverClaude', () => discover('claude')),
     ...compatibleCommands('discoverCodex', () => discover('codex')),
+    ...compatibleCommands('discoverGemini', () => discover('gemini')),
+    ...compatibleCommands('discoverCursor', () => discover('cursor')),
     ...compatibleCommands('importLatestClaude', () => importLatest('claude')),
     ...compatibleCommands('importLatestCodex', () => importLatest('codex')),
+    ...compatibleCommands('importLatestGemini', () => importLatest('gemini')),
+    ...compatibleCommands('importLatestCursor', () => importLatest('cursor')),
     ...compatibleCommands('createHandoff', (item) =>
       handoff(item?.target === 'codex' ? 'codex' : 'claude', item?.mode === 'existing' ? 'existing' : 'new')
     ),

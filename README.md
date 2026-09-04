@@ -2,7 +2,7 @@
 
 **Continue the same coding session across different AI agents — without asking one AI to summarize another.**
 
-Turntrail is a local, vendor-neutral handoff layer for developers who switch between agentic coding tools such as **Claude Code** and **Codex**. It captures an exact transcript and workspace snapshot, then generates a clean handoff you paste into the next tool.
+Turntrail is a local, vendor-neutral handoff layer for developers who switch between agentic coding tools such as **Claude Code**, **Codex**, **Gemini CLI**, and **Cursor Agent**. It captures native transcript content and a workspace snapshot, then generates a clean handoff you paste into the next tool.
 
 - 🔒 **Local handoffs** — transcripts and snapshots stay under `.turntrail/`; the handoff path has no telemetry or network calls.
 - 🧾 **Lossless** — native transcripts are imported verbatim as JSONL. No AI summary in the core flow.
@@ -70,6 +70,8 @@ No manual data migration is required. If both old and new storage directories ex
 turntrail init                                  # create the .turntrail/ ledger
 turntrail discover --provider claude            # find native Claude Code sessions
 turntrail import-native --provider claude --last # import the most recent one
+turntrail import-native --provider gemini --last # Gemini CLI also works
+turntrail import-native --provider cursor --last # as does Cursor Agent
 turntrail snapshot                              # capture git + file state
 turntrail export --to codex                     # write a handoff for Codex
 ```
@@ -131,9 +133,9 @@ JSONL sources are streamed rather than loaded as one string. Discovery, individu
 |---------|---------|
 | `init` | Create the `.turntrail/` ledger. |
 | `import --provider <name> [--surface <name>] <file>` | Import a JSON / JSONL / Markdown / text transcript. |
-| `discover --provider claude\|codex [--all]` | List native sessions for this workspace. |
-| `import-native --provider claude\|codex [--last\|--session <id>]` | Import a native Claude Code / Codex session. |
-| `run claude\|codex [-- <native args>]` | Launch the agent and import the session it changed. |
+| `discover --provider claude\|codex\|gemini\|cursor [--all]` | List native sessions for this workspace. |
+| `import-native --provider claude\|codex\|gemini\|cursor [--last\|--session <id>]` | Import a native agent session. |
+| `run claude\|codex\|gemini\|cursor [-- <native args>]` | Launch the agent and import the session it changed. |
 | `snapshot` | Capture a git + file-metadata workspace snapshot. |
 | `export --to <target> [options]` | Generate a handoff markdown file. |
 | `status` | Print ledger counts. |

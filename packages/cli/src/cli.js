@@ -30,9 +30,9 @@ const HELP = `Turntrail
 Usage:
   turntrail init [--cwd <path>]
   turntrail import --provider <name> [--surface <name>] <file> [--cwd <path>]
-  turntrail discover --provider claude|codex [--all] [--cwd <path>]
-  turntrail import-native --provider claude|codex [--last|--session <id>] [--all] [--cwd <path>]
-  turntrail run claude|codex [-- <native args>] [--cwd <path>]
+  turntrail discover --provider claude|codex|gemini|cursor [--all] [--cwd <path>]
+  turntrail import-native --provider claude|codex|gemini|cursor [--last|--session <id>] [--all] [--cwd <path>]
+  turntrail run claude|codex|gemini|cursor [-- <native args>] [--cwd <path>]
   turntrail snapshot [--cwd <path>]
   turntrail export --to <target> [--max-chars <n>] [--no-dedupe] [--since-last-export]
                         [--tool-max-chars <n>] [--system-max-chars <n>] [--cwd <path>]
@@ -73,6 +73,8 @@ Examples:
   turntrail init
   turntrail import --provider claude --surface cli ./transcript.jsonl
   turntrail discover --provider codex
+  turntrail discover --provider gemini
+  turntrail import-native --provider cursor --last
   turntrail import-native --provider claude --last
   turntrail run codex -- --approval-mode auto-edit
   turntrail snapshot
@@ -110,7 +112,7 @@ export async function runCli(argv, io = process, dependencies = {}) {
   }
 
   if (command === 'discover') {
-    if (!flags.provider) throw new Error('discover requires --provider claude|codex');
+    if (!flags.provider) throw new Error('discover requires --provider claude|codex|gemini|cursor');
     const sessions = await discoverNativeSessions(flags.provider, {
       root: cwd,
       all: Boolean(flags.all),
@@ -121,7 +123,7 @@ export async function runCli(argv, io = process, dependencies = {}) {
   }
 
   if (command === 'import-native') {
-    if (!flags.provider) throw new Error('import-native requires --provider claude|codex');
+    if (!flags.provider) throw new Error('import-native requires --provider claude|codex|gemini|cursor');
     const result = await importNativeSession(cwd, flags.provider, {
       root: cwd,
       all: Boolean(flags.all),
@@ -135,7 +137,7 @@ export async function runCli(argv, io = process, dependencies = {}) {
 
   if (command === 'run') {
     const provider = args[0];
-    if (!provider) throw new Error('run requires claude or codex');
+    if (!provider) throw new Error('run requires claude, codex, gemini, or cursor');
     const result = await runNativeCli(cwd, provider, flags._ || args.slice(1), io);
     if (result.imported) {
       io.stdout.write(`Imported native session into ${result.imported.relativePath} (${result.imported.turnCount} turns)\n`);
@@ -304,7 +306,12 @@ function setFlag(flags, key, value) {
 
 export async function runNativeCli(cwd, provider, nativeArgs = [], io = process) {
   const normalized = normalizeNativeProvider(provider);
-  const executable = normalized === 'claude' ? 'claude' : normalized === 'codex' ? 'codex' : provider;
+  const executable = {
+    claude: 'claude',
+    codex: 'codex',
+    gemini: 'gemini',
+    cursor: 'cursor-agent'
+  }[normalized] || provider;
   const startedAt = Date.now();
   const before = await discoverNativeSessions(normalized, {
     root: cwd,

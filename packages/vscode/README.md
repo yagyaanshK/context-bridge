@@ -32,7 +32,9 @@ To ingest a session without generating a handoff, use **Discover … Sessions** 
 **Handoff**
 
 - `Turntrail: Discover Claude Sessions` / `Discover Codex Sessions`
+- `Turntrail: Discover Gemini Sessions` / `Discover Cursor Sessions`
 - `Turntrail: Import Latest Claude Session` / `Import Latest Codex Session`
+- `Turntrail: Import Latest Gemini Session` / `Import Latest Cursor Session`
 - `Turntrail: Handoff to New / Existing Claude Session`
 - `Turntrail: Handoff to New / Existing Codex Session`
 - `Turntrail: Open Latest Handoff`
@@ -213,7 +215,7 @@ Turntrail is a local tool. Here is exactly what it touches and why.
 
 **Reads, never modifies:**
 
-- Your agent transcripts under `~/.claude/projects/` and `~/.codex/sessions/` (plus `~/.codex/session_index.jsonl` for chat names). These are copied into the ledger; the originals are never edited.
+- Your agent transcripts under `~/.claude/projects/`, `~/.codex/sessions/`, `~/.gemini/tmp/`, and `~/.cursor/projects/` (plus `~/.codex/session_index.jsonl` for chat names). These are copied into the ledger; the originals are never edited. Turntrail does not open Cursor's live editor databases.
 - Your current sign-in files (`~/.codex/auth.json`, `~/.claude/.credentials.json` and the matching config), so the accounts panel can show which account is active and how much quota remains.
 
 **Writes, only in these two places:**

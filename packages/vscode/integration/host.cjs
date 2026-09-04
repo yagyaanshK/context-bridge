@@ -28,6 +28,8 @@ async function smokeAndSeed(hooks) {
   for (const command of [
     'turntrail.discoverClaude',
     'turntrail.discoverCodex',
+    'turntrail.discoverGemini',
+    'turntrail.discoverCursor',
     'turntrail.copyLatestHandoffPrompt',
     'turntrail.openLatestHandoff',
     'turntrail.createHandoff'

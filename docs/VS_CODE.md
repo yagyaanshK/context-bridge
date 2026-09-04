@@ -1,6 +1,6 @@
 # VS Code Extension
 
-Turntrail includes a VS Code extension package for developers who use Claude and Codex primarily through IDE extensions.
+Turntrail includes a VS Code extension package for developers who use Claude, Codex, Gemini CLI, and Cursor Agent alongside their editor.
 
 It does two separate jobs: it generates **handoffs** between the two agents, and it manages **accounts** for both of them in a sidebar panel. The two are independent — you can use either without the other.
 
@@ -16,8 +16,12 @@ Open the command palette and run:
 - `Turntrail: Handoff to New Codex Session`
 - `Turntrail: Discover Claude Sessions`
 - `Turntrail: Discover Codex Sessions`
+- `Turntrail: Discover Gemini Sessions`
+- `Turntrail: Discover Cursor Sessions`
 - `Turntrail: Import Latest Claude Session`
 - `Turntrail: Import Latest Codex Session`
+- `Turntrail: Import Latest Gemini Session`
+- `Turntrail: Import Latest Cursor Session`
 - `Turntrail: Open Latest Handoff`
 - `Turntrail: Copy Latest Handoff Prompt`
 
@@ -169,6 +173,10 @@ Read the handoff before acting...
 ```
 
 Screenshot payloads embedded in native transcripts are not pasted into the handoff. Turntrail keeps local image paths when available and replaces inline base64 image blobs with compact omission markers.
+
+Gemini and Cursor are import sources in this release. Use their Discover or Import Latest commands,
+then create a handoff to Claude or Codex. The extension does not yet open or inject prompts into
+Gemini or Cursor panels; the generated file and copied prompt remain the integration boundary.
 
 ## Existing vs New Session
 

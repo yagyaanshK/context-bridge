@@ -38,11 +38,13 @@ The snapshot includes Git branch, status, latest commit, and top-level files whe
 
 ## `discover`
 
-Find native Claude Code or Codex sessions matching the current project.
+Find native Claude Code, Codex, Gemini CLI, or Cursor Agent sessions matching the current project.
 
 ```bash
 turntrail discover --provider claude
 turntrail discover --provider codex
+turntrail discover --provider gemini
+turntrail discover --provider cursor
 ```
 
 Use `--all` to show sessions even when the native transcript does not match the current project path:
@@ -59,30 +61,37 @@ turntrail discover --provider codex --includeArchived
 
 ## `import-native`
 
-Import a native Claude Code or Codex session into `.turntrail/sessions/`.
+Import a native Claude Code, Codex, Gemini CLI, or Cursor Agent session into `.turntrail/sessions/`.
 
 ```bash
 turntrail import-native --provider claude --last
 turntrail import-native --provider codex --last
+turntrail import-native --provider gemini --last
+turntrail import-native --provider cursor --last
 turntrail import-native --provider claude --session <session-id>
 ```
 
 By default, native import searches for sessions whose recorded working directory matches the current project. Use `--all` if you intentionally want to import across projects.
 
-Native files are read-only inputs. Turntrail does not modify `~/.claude` or `~/.codex`.
+Native files are read-only inputs. Turntrail does not modify `~/.claude`, `~/.codex`, `~/.gemini`,
+or `~/.cursor`. Gemini's legacy JSON and current JSONL recordings are both supported. Cursor's main
+Agent transcripts are imported by default; nested subagent recordings are excluded to avoid adding
+duplicate implementation noise.
 
 ## `run`
 
-Launch Claude or Codex, then import the native transcript file changed during that run.
+Launch Claude, Codex, Gemini CLI, or Cursor Agent, then import the native transcript file changed during that run.
 
 ```bash
 turntrail run claude
 turntrail run codex
+turntrail run gemini
+turntrail run cursor
 turntrail run claude -- -c
 turntrail run codex -- --approval-mode auto-edit
 ```
 
-The current implementation uses the native JSONL transcript as the source of truth after the process exits. It does not yet capture full terminal redraw output through a pseudo-terminal.
+The current implementation uses the native transcript as the source of truth after the process exits. It does not yet capture full terminal redraw output through a pseudo-terminal. `run cursor` invokes the official `cursor-agent` executable.
 
 Native arguments are passed directly to the executable without a command shell. On Windows, npm
 command shims are launched through their sibling PowerShell shim with an argument array, preserving

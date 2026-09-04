@@ -14,11 +14,16 @@ export const DEFAULT_MAX_IMPORTED_TURNS = 50000;
 export const DEFAULT_MAX_IMPORTED_CHARS = 64 * 1024 * 1024;
 
 export async function listJsonlFiles(root, options = {}) {
+  return listSessionFiles(root, { ...options, extensions: ['.jsonl'] });
+}
+
+export async function listSessionFiles(root, options = {}) {
   const files = [];
   const state = {
     entries: 0,
     maxEntries: positiveLimit(options.maxEntries, DEFAULT_MAX_DISCOVERY_ENTRIES),
     maxFiles: positiveLimit(options.maxFiles, DEFAULT_MAX_DISCOVERY_FILES),
+    extensions: new Set((options.extensions || ['.jsonl']).map((item) => String(item).toLowerCase())),
     signal: options.signal
   };
   await walk(root, files, state, 0);
@@ -26,10 +31,15 @@ export async function listJsonlFiles(root, options = {}) {
 }
 
 export async function jsonlFileInfo(filePath) {
+  return sessionFileInfo(filePath, ['.jsonl']);
+}
+
+export async function sessionFileInfo(filePath, extensions = ['.jsonl']) {
   const absolute = path.resolve(filePath);
   const stat = await fs.stat(absolute);
-  if (!stat.isFile() || path.extname(absolute).toLowerCase() !== '.jsonl') {
-    throw new Error(`Native session is not a JSONL file: ${absolute}`);
+  const allowed = new Set(extensions.map((item) => String(item).toLowerCase()));
+  if (!stat.isFile() || !allowed.has(path.extname(absolute).toLowerCase())) {
+    throw new Error(`Native session is not a supported ${[...allowed].join(' or ')} file: ${absolute}`);
   }
   return {
     path: absolute,
@@ -174,8 +184,8 @@ async function walk(root, files, state, depth) {
     const fullPath = path.join(root, entry.name);
     if (entry.isDirectory()) {
       await walk(fullPath, files, state, depth + 1);
-    } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-      files.push(await jsonlFileInfo(fullPath));
+    } else if (entry.isFile() && state.extensions.has(path.extname(entry.name).toLowerCase())) {
+      files.push(await sessionFileInfo(fullPath, [...state.extensions]));
       if (files.length > state.maxFiles) {
         files.sort((a, b) => b.mtimeMs - a.mtimeMs);
         files.length = state.maxFiles;
