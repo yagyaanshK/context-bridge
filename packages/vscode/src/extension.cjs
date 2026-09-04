@@ -1072,6 +1072,14 @@ async function openManagedSession(item = {}) {
   }
 
   const root = await workspaceRoot();
+  const existing = row?.sessionId
+    ? managedTerminals.list(provider, root).find((record) => record.sessionId === row.sessionId)
+    : undefined;
+  if (existing) {
+    managedTerminals.focus(existing.id);
+    vscode.window.setStatusBarMessage(`Turntrail: focused the existing managed ${agentName(provider)} session.`, 3000);
+    return existing;
+  }
   return managedTerminals.launch({
     provider,
     root,
@@ -1213,6 +1221,16 @@ async function deliverManagedHandoff({ target, mode, prompt, destination, root }
   }
 
   if (chosen) {
+    const confirmation = await vscode.window.showWarningMessage(
+      `Inject this handoff into the running managed ${agentName(target)} terminal?`,
+      {
+        modal: true,
+        detail:
+          'Turntrail cannot inspect the agent TUI state. Continue only when that terminal is ready for a new prompt, not while it is showing a permission or selection dialog.'
+      },
+      'Inject Handoff'
+    );
+    if (confirmation !== 'Inject Handoff') return undefined;
     managedTerminals.inject(chosen.id, prompt);
     return { record: chosen, reused: true };
   }

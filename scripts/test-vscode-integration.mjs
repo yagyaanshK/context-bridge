@@ -21,11 +21,13 @@ const userData = path.join(scratch, 'user-data');
 const extensionsDir = path.join(scratch, 'extensions');
 const workspaceA = path.join(scratch, 'workspace-a');
 const workspaceB = path.join(scratch, 'workspace-b');
-await Promise.all([home, userData, extensionsDir, workspaceA, workspaceB].map((dir) => fs.mkdir(dir, { recursive: true })));
+const fakeBin = path.join(scratch, 'fake-bin');
+await Promise.all([home, userData, extensionsDir, workspaceA, workspaceB, fakeBin].map((dir) => fs.mkdir(dir, { recursive: true })));
 await Promise.all([
   fs.writeFile(path.join(workspaceA, 'README.md'), '# Workspace A\n', 'utf8'),
   fs.writeFile(path.join(workspaceB, 'README.md'), '# Workspace B\n', 'utf8')
 ]);
+await writeFakeCodex(fakeBin);
 
 const vscodeExecutablePath = await downloadAndUnzipVSCode('1.95.3');
 const commonEnv = {
@@ -33,14 +35,37 @@ const commonEnv = {
   HOME: home,
   USERPROFILE: home,
   APPDATA: path.join(home, 'AppData', 'Roaming'),
-  LOCALAPPDATA: path.join(home, 'AppData', 'Local')
+  LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
+  PATH: integrationPath(fakeBin)
 };
 
 await trusted('smoke-and-seed', workspaceA);
 await trusted('other-workspace', workspaceB);
 await untrusted(workspaceB);
 
-console.log('VS Code extension-host scenarios passed: commands, webview, cancellation, workspace isolation, trust, and fork schemes.');
+console.log('VS Code extension-host scenarios passed: commands, webview, managed terminals, cancellation, workspace isolation, trust, and fork schemes.');
+
+async function writeFakeCodex(directory) {
+  if (process.platform === 'win32') {
+    await Promise.all([
+      fs.writeFile(path.join(directory, 'codex.cmd'), '@echo off\r\nexit /b 0\r\n', 'utf8'),
+      fs.writeFile(path.join(directory, 'codex.ps1'), 'Write-Output "managed codex fixture"\nStart-Sleep -Seconds 30\n', 'utf8')
+    ]);
+    return;
+  }
+  const executable = path.join(directory, 'codex');
+  await fs.writeFile(executable, '#!/bin/sh\necho "managed codex fixture"\nsleep 30\n', { mode: 0o755 });
+}
+
+function integrationPath(directory) {
+  if (process.platform !== 'win32') return [directory, '/usr/local/bin', '/usr/bin', '/bin'].join(path.delimiter);
+  const windows = process.env.SystemRoot || 'C:\\Windows';
+  return [
+    directory,
+    path.join(windows, 'System32'),
+    path.join(windows, 'System32', 'WindowsPowerShell', 'v1.0')
+  ].join(path.delimiter);
+}
 
 async function trusted(scenario, workspace) {
   await runTests({

@@ -63,6 +63,22 @@ async function smokeAndSeed(hooks) {
   assert.match(sessionsState.sessionsWebviewHtml, /Managed CLI/);
   assert.match(sessionsState.sessionsWebviewHtml, /Clipboard/);
 
+  await vscode.commands.executeCommand('turntrail.openManagedSession', { provider: 'codex' });
+  await waitFor(() => vscode.window.terminals.some((terminal) =>
+    terminal.creationOptions?.env?.TURNTRAIL_MANAGED_TERMINAL === '1'
+  ));
+  const managed = vscode.window.terminals.find((terminal) =>
+    terminal.creationOptions?.env?.TURNTRAIL_MANAGED_TERMINAL === '1'
+  );
+  assert.equal(managed.creationOptions.env.TURNTRAIL_MANAGED_PROVIDER, 'codex');
+  assert.equal(managed.creationOptions.cwd, root);
+  assert.equal(typeof managed.creationOptions.shellPath, 'string');
+  assert.equal(managed.creationOptions.shellPath.length > 0, true);
+  await vscode.commands.executeCommand('turntrail.closeManagedSession', {
+    managedId: managed.creationOptions.env.TURNTRAIL_MANAGED_ID
+  });
+  await waitFor(() => !vscode.window.terminals.includes(managed));
+
   const handoffPath = path.join(root, 'handoff.md');
   const prompt = 'Turntrail extension-host prompt';
   await fs.writeFile(handoffPath, '# Integration handoff\n', 'utf8');

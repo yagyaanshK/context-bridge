@@ -6,7 +6,10 @@ const vscode = require('vscode');
 
 const PROVIDERS = new Set(['claude', 'codex']);
 const MARKER = 'TURNTRAIL_MANAGED_TERMINAL';
-const MAX_PROMPT_CHARS = 64 * 1024;
+// Managed prompts are short pointers to local handoff files. Keeping the bound
+// below Windows' process command-line ceiling leaves room for executable and
+// resume arguments as well as the prompt itself.
+const MAX_PROMPT_CHARS = 16 * 1024;
 
 class ManagedTerminalStore {
   constructor(options = {}) {
@@ -65,12 +68,24 @@ class ManagedTerminalStore {
     const id = safeId(env.TURNTRAIL_MANAGED_ID);
     const provider = safeProvider(env.TURNTRAIL_MANAGED_PROVIDER);
     const root = safeRoot(env.TURNTRAIL_MANAGED_ROOT);
-    if (!id || !provider || !root || terminal.exitStatus !== undefined) return undefined;
+    if (
+      !id ||
+      !provider ||
+      !root ||
+      terminal.exitStatus !== undefined ||
+      !matchesProviderLaunch(terminal.creationOptions, provider)
+    ) return undefined;
+    let sessionId;
+    try {
+      sessionId = optionalIdentifier(env.TURNTRAIL_MANAGED_SESSION_ID, 512, 'session id');
+    } catch {
+      return undefined;
+    }
     const record = {
       id,
       provider,
       root,
-      sessionId: optionalIdentifier(env.TURNTRAIL_MANAGED_SESSION_ID, 512, 'session id'),
+      sessionId,
       title: displayText(env.TURNTRAIL_MANAGED_TITLE, 160) || 'Managed session',
       terminal,
       createdAt: new Date().toISOString()
@@ -165,17 +180,17 @@ async function resolveProviderLaunch(provider, args, options = {}) {
   const platform = options.platform || process.platform;
   if (platform === 'win32') {
     const candidates = options.candidates || await windowsCandidates(command, options);
-    const direct = candidates.find((candidate) => /\.(?:exe|com)$/i.test(candidate));
-    if (direct) return { command: direct, args: [...args] };
-
-    const shim = candidates.find((candidate) => /\.(?:cmd|bat)$/i.test(candidate));
-    const script = candidates.find((candidate) => /\.ps1$/i.test(candidate)) ||
-      (shim ? shim.replace(/\.(?:cmd|bat)$/i, '.ps1') : undefined);
-    if (script && fs.existsSync(script)) {
-      return {
-        command: options.powerShell || 'powershell.exe',
-        args: ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...args]
-      };
+    const exists = options.existsSync || fs.existsSync;
+    for (const candidate of candidates) {
+      if (/\.(?:exe|com)$/i.test(candidate)) return { command: candidate, args: [...args] };
+      if (/\.ps1$/i.test(candidate)) {
+        return powerShellLaunch(candidate, args, options);
+      }
+      if (/\.(?:cmd|bat)$/i.test(candidate)) {
+        const script = candidate.replace(/\.(?:cmd|bat)$/i, '.ps1');
+        if (exists(script)) return powerShellLaunch(script, args, options);
+        throw new Error(`Cannot safely launch Windows command shim ${candidate}: no sibling PowerShell shim was found.`);
+      }
     }
     throw new Error(`Could not safely locate the ${command} executable. Install its CLI and ensure it is on PATH.`);
   }
@@ -183,6 +198,22 @@ async function resolveProviderLaunch(provider, args, options = {}) {
   const executable = options.executable || await findOnPath(command, options);
   if (!executable) throw new Error(`Could not find ${command} on PATH.`);
   return { command: executable, args: [...args] };
+}
+
+function powerShellLaunch(script, args, options) {
+  return {
+    command: options.powerShell || 'powershell.exe',
+    args: ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...args]
+  };
+}
+
+function matchesProviderLaunch(options, provider) {
+  const executable = path.basename(String(options?.shellPath || '')).toLowerCase();
+  if (executable === `${provider}.exe` || executable === `${provider}.com`) return true;
+  if (!/^(?:powershell|powershell\.exe|pwsh|pwsh\.exe)$/.test(executable)) return false;
+  const args = Array.isArray(options?.shellArgs) ? options.shellArgs : [];
+  const file = args.findIndex((item) => String(item).toLowerCase() === '-file');
+  return file >= 0 && path.basename(String(args[file + 1] || '')).toLowerCase() === `${provider}.ps1`;
 }
 
 async function windowsCandidates(command, options = {}) {
@@ -272,6 +303,7 @@ function normalizedPath(value, platform = process.platform) {
 module.exports = {
   MARKER,
   ManagedTerminalStore,
+  matchesProviderLaunch,
   managedTerminalArgs,
   resolveProviderLaunch
 };

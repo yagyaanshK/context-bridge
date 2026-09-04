@@ -26,9 +26,10 @@ and settings use `turntrail.*`, and existing `.context-bridge/` ledgers are read
 2. Search or filter Claude, Codex, Gemini, and Cursor conversations. Workspace scope is the default;
    **Everywhere** deliberately includes other projects.
 3. Choose **Import & view** to inspect a bounded normalized preview, or choose Claude/Codex and
-   new/existing beside **Handoff**.
+   new/existing beside **Handoff**. Choose **Managed CLI** for direct delivery or **Clipboard** to
+   paste it yourself.
 4. Turntrail imports when needed, snapshots the workspace, writes a handoff, and copies its short
-   prompt. Paste it into the target agent and keep working.
+   prompt as a fallback. Managed delivery launches, resumes, or injects into the official CLI.
 
 The command-palette and Handoff-card workflows remain available. To ingest a session without
 generating a handoff, use **Import** in the Sessions view or **Discover … Sessions** → pick one →
@@ -37,6 +38,27 @@ generating a handoff, use **Import** in the Sessions view or **Discover … Sess
 The Sessions webview sees opaque row ids rather than native file paths. Preview content comes from
 the normalized project ledger, is limited to 1,000 turns and 2 MiB by default, and says when it was
 clipped. An unreadable individual transcript is skipped and reported without hiding other sessions.
+
+## Managed CLI
+
+The strip above the session list tracks Claude and Codex terminals opened by Turntrail. Use its add
+button to start one, **Open CLI** on a session row to resume it, and the focus/close controls to
+manage live terminals. `Turntrail: Open Managed CLI Session` provides the same launch from the
+palette.
+
+A managed handoff to **New** launches the provider with the handoff as its initial prompt. A handoff
+to **Existing** uses a matching live managed terminal or launches the native resume command with the
+recorded session id. Turntrail never substitutes another terminal when the ledger identifies a
+specific destination chat.
+
+The provider executable is the terminal's direct process: handoff text is an argument, not a shell
+command, and there is no shell left behind if the agent exits. Before injecting into an already-live
+TUI, Turntrail asks you to confirm it is waiting for a normal prompt because VS Code cannot inspect
+provider permission/selection state. The prompt remains on the clipboard if direct delivery fails.
+
+Editor terminal reconnection may preserve a live managed process across window reloads, and
+Turntrail reattaches through a validated marker. This is not a daemon: a process that has exited, or
+a machine/editor that fully stopped it, must be resumed again.
 
 ## Commands
 
@@ -50,6 +72,7 @@ clipped. An unreadable individual transcript is skipped and reported without hid
 - `Turntrail: Handoff to New / Existing Codex Session`
 - `Turntrail: Open Latest Handoff`
 - `Turntrail: Copy Latest Handoff Prompt`
+- `Turntrail: Open Managed CLI Session`
 
 **Accounts** — all of these are also reachable from the panel, which never sends you to a dropdown.
 

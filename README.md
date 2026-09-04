@@ -105,8 +105,10 @@ session you want. The default workspace scope hides unrelated conversations; swi
 **Everywhere** when you deliberately need another project.
 
 For a direct handoff, choose Claude or Codex and new or existing beside the session. Turntrail
-imports that session when needed, snapshots the workspace, writes the handoff, and copies its short
-prompt. The **Handoff** card and command palette remain available for the latest-session workflow:
+imports that session when needed, snapshots the workspace, and writes the handoff. Choose
+**Clipboard** to paste its short prompt yourself, or **Managed CLI** to launch/resume the official
+Claude or Codex CLI with the prompt already supplied. The **Handoff** card and command palette remain
+available for the latest-session workflow:
 
 1. Run **`Turntrail: Handoff to New Claude Session`** (or Codex / “Existing”).
 2. It imports the latest session from the *other* tool, snapshots the workspace, and writes the handoff.
@@ -407,7 +409,9 @@ The export’s ledger header lists how many turns were collapsed or truncated, s
 
 ## Roadmap
 
-Claude accounts in the CLI · PTY terminal capture · more native adapters · published Marketplace extension · MCP server exposing the ledger · cross-session conflict detection.
+Claude accounts in the CLI · optional worktrees per session · agent status hooks and notifications ·
+context/token/cost measurements · more native adapters · MCP server exposing the ledger · encrypted
+team synchronization · cross-session conflict detection.
 
 ## Contributing
 

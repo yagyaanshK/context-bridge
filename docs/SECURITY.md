@@ -55,6 +55,20 @@ handling as manual quota reads.
 
 Transcript content is intentionally passed to the receiving agent as historical conversation. Paths, branch names, session labels, media references, and other metadata are separately flattened and escaped so they cannot add Markdown sections or close a fenced block. Handoffs explicitly tell the receiving agent to treat metadata as data, never instructions.
 
+## Managed terminals
+
+Managed Claude and Codex terminals launch the provider as the direct terminal process and pass a
+handoff prompt as one argument. Turntrail does not concatenate prompt or transcript data into a
+shell command. Windows command resolution honors `PATH` order, directly launches native
+executables, and accepts only a structured PowerShell script invocation when an npm shim has a
+sibling `.ps1`; unsafe bare command shims fail.
+
+Session identifiers reject control characters, transcript-derived terminal titles are flattened and
+stripped of terminal control bytes, and prompts have a 16 KiB ceiling. Live injection resolves an
+opaque random terminal id in the extension host, verifies that the provider process has not exited,
+and asks the user to confirm that the TUI is ready for ordinary input. A closed agent cannot expose
+an underlying shell because the agent itself, rather than a shell, owns the terminal process.
+
 ## Reporting
 
 Do not include credentials, private transcripts, or a populated `.turntrail/` directory in a report. Open a GitHub security advisory for vulnerabilities that would expose data or modify files outside the documented boundaries.

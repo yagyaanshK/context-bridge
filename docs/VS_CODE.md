@@ -26,6 +26,7 @@ Open the command palette and run:
 - `Turntrail: Import Latest Cursor Session`
 - `Turntrail: Open Latest Handoff`
 - `Turntrail: Copy Latest Handoff Prompt`
+- `Turntrail: Open Managed CLI Session`
 
 **Accounts**
 
@@ -59,6 +60,7 @@ search narrow the result without rescanning the native stores.
 | **Import** / **Reimport** | Copies the selected native transcript into the project ledger. Native files are never modified. |
 | **Import & view** / **View** | Imports if needed, then opens a readable normalized Markdown preview. |
 | **Handoff** | Imports if needed and creates a Claude or Codex handoff in new- or existing-session mode. |
+| **Open CLI** | Resumes that Claude or Codex conversation in a Turntrail-managed terminal. |
 | **Refresh** | Rescans native stores and rereads the project ledger. |
 
 Previews are bounded to 1,000 turns and 2 MiB by default so opening a very large conversation cannot
@@ -72,6 +74,38 @@ sessions from the same provider.
 
 Gemini and Cursor are currently source providers. Their sessions can be imported, viewed, and handed
 off to Claude or Codex, but Turntrail does not yet open or inject prompts into Gemini or Cursor.
+
+### Managed CLI Sessions
+
+The **Managed CLI** strip above the session list shows Claude and Codex terminals opened by
+Turntrail. Use its add button for a new session, **Open CLI** on a session row to resume that native
+conversation, and the play/close controls to focus or stop a managed terminal.
+
+Inside **Handoff**, **Send to → Managed CLI** provides direct delivery:
+
+- **New** launches the official CLI with the handoff prompt as its initial prompt.
+- **Existing** injects into the matching live managed terminal. If it is not running, Turntrail
+  launches the provider's documented resume command with the native session id and prompt.
+- When several live terminals could match an unnamed destination, Turntrail asks which one.
+- When the ledger identifies a destination session, a different live terminal is never substituted.
+
+Turntrail launches the provider executable as the terminal's direct process. It does not build a
+shell command from the prompt, so spaces, newlines, backticks, and shell metacharacters remain data.
+If the agent exits, the terminal has no interactive shell behind it and injection is refused. The
+prompt is also copied to the clipboard before delivery as a recovery path.
+
+VS Code does not expose whether an interactive TUI is waiting for normal input, running a tool, or
+showing a permission dialog. Turntrail therefore asks for confirmation before injecting into an
+already-running terminal. Fresh and resumed launches do not need that confirmation because the
+prompt is passed as a process argument. Native terminal persistence and reconnection are provided by
+the editor; Turntrail reattaches only to live terminals carrying its validated marker. It is not a
+background daemon and cannot preserve a process after the editor, provider process, or machine has
+fully stopped.
+
+Claude's resume/initial-prompt syntax follows the
+[official Claude CLI reference](https://code.claude.com/docs/en/cli-usage). Codex capability is
+validated against the installed CLI's `codex --help` and `codex resume --help`; unsupported or
+missing executables fail without falling back to shell interpolation.
 
 ## The Accounts Panel
 

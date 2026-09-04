@@ -350,8 +350,7 @@ function managedSessions() {
       '<button class="icon-command" data-act="close-managed" data-managed-id="' + esc(row.id) + '" title="Close managed terminal" aria-label="Close managed terminal">&#x2715;</button></div>';
   }).join('') + '</div>' : '<div class="managed-empty">No managed CLI sessions in this workspace.</div>';
   return '<section class="managed"><div class="managed-head"><strong>Managed CLI</strong>' +
-    '<button class="icon-command" data-act="open-managed" data-provider="claude" title="Open new Claude CLI" aria-label="Open new Claude CLI">+C</button>' +
-    '<button class="icon-command" data-act="open-managed" data-provider="codex" title="Open new Codex CLI" aria-label="Open new Codex CLI">+X</button></div>' + list + '</section>';
+    '<button class="icon-command" data-act="open-managed" title="Open managed CLI" aria-label="Open managed CLI">&#x2B;</button></div>' + list + '</section>';
 }
 function card(row) {
   const meta = [ago(row.modifiedAt), row.surface, size(row.size)].filter(Boolean);

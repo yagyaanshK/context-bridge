@@ -19,7 +19,7 @@ packages/cli
   command-line interface around core
 
 packages/vscode
-  extension host: sessions panel, handoff commands, accounts panel, sign-in panel
+  extension host: sessions panel, managed CLI terminals, handoff commands, accounts panel, sign-in panel
 ```
 
 Future wrappers should call `packages/core` instead of reimplementing ledger logic.
@@ -148,6 +148,28 @@ Ledger previews use `readSessionPreview` and `renderSessionPreview`. Manifest pa
 remain inside the ledger sessions directory, content is read with explicit turn and byte ceilings,
 and Markdown fences expand to contain any backtick run in transcript content. A clipped preview is
 labelled rather than silently presented as complete.
+
+## Managed CLI Terminals
+
+`packages/vscode/src/managed-terminals.cjs` owns Claude and Codex terminals created from the
+Sessions view. A managed terminal runs the provider executable as its direct terminal process. New
+sessions receive the handoff as the initial prompt argument; resumed sessions use the provider's
+native resume arguments plus that prompt. On Windows, executable discovery honors `PATH` order,
+launches `.exe`/`.com` directly, and permits a sibling PowerShell npm shim only as a structured
+argument vector. A bare `.cmd`/`.bat` shim is rejected rather than interpolating transcript-derived
+text into a shell command.
+
+Each terminal carries a random id, provider, workspace, native session id, and sanitized title in
+its process environment. Those markers let a reactivated extension reattach to a terminal preserved
+by VS Code. Only validated markers are accepted, and the Sessions webview receives only the random
+id and display metadata. Terminal objects, executable paths, and workspace roots remain in the
+extension host.
+
+Live delivery checks that the direct agent process has not exited and requires user confirmation
+because VS Code exposes no provider-neutral ready/busy/permission state for terminal TUIs. A known
+destination native session id must match exactly; Turntrail will not inject into another active
+session merely because it is the only terminal. After the provider exits there is no child shell to
+interpret delayed text, and further injection is rejected.
 
 ## Workspace Snapshots
 

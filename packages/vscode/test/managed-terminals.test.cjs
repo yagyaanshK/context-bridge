@@ -23,6 +23,7 @@ Module._load = function load(request, parent, isMain) {
 const {
   MARKER,
   ManagedTerminalStore,
+  matchesProviderLaunch,
   managedTerminalArgs,
   resolveProviderLaunch
 } = require('../src/managed-terminals.cjs');
@@ -66,14 +67,15 @@ test('provider resume commands keep the complete handoff prompt in one argument'
   assert.deepEqual(managedTerminalArgs('codex', { prompt }), [prompt]);
 });
 
-test('Windows launch prefers a native executable and never constructs a shell command', async () => {
+test('Windows launch respects PATH order and never constructs a shell command', async () => {
   const prompt = '$(unsafe) & still one argument';
   const launch = await resolveProviderLaunch('codex', [prompt], {
     platform: 'win32',
-    candidates: ['C:\\npm\\codex.cmd', 'C:\\extension\\codex.exe']
+    candidates: ['C:\\npm\\codex.cmd', 'C:\\extension\\codex.exe'],
+    existsSync: (candidate) => candidate === 'C:\\npm\\codex.ps1'
   });
-  assert.equal(launch.command, 'C:\\extension\\codex.exe');
-  assert.deepEqual(launch.args, [prompt]);
+  assert.equal(launch.command, 'powershell.exe');
+  assert.deepEqual(launch.args.slice(-2), ['C:\\npm\\codex.ps1', prompt]);
 });
 
 test('managed terminals launch direct agent processes and inject only while live', async () => {
@@ -109,7 +111,7 @@ test('only valid live Turntrail terminal markers are reattached', () => {
   const id = '12345678-1234-1234-1234-123456789abc';
   const valid = {
     exitStatus: undefined,
-    creationOptions: { env: {
+    creationOptions: { shellPath: 'C:\\bin\\codex.exe', shellArgs: [], env: {
       [MARKER]: '1',
       TURNTRAIL_MANAGED_ID: id,
       TURNTRAIL_MANAGED_PROVIDER: 'codex',
@@ -119,7 +121,20 @@ test('only valid live Turntrail terminal markers are reattached', () => {
     } }
   };
   const foreign = { exitStatus: undefined, creationOptions: { env: { [MARKER]: '0' } } };
-  window.terminals.push(valid, foreign);
+  const spoofed = { exitStatus: undefined, creationOptions: { shellPath: 'powershell.exe', shellArgs: [], env: {
+    ...valid.creationOptions.env,
+    TURNTRAIL_MANAGED_ID: '32345678-1234-1234-1234-123456789abc'
+  } } };
+  const malformed = { exitStatus: undefined, creationOptions: {
+    shellPath: 'C:\\bin\\codex.exe',
+    shellArgs: [],
+    env: {
+      ...valid.creationOptions.env,
+      TURNTRAIL_MANAGED_ID: '22345678-1234-1234-1234-123456789abc',
+      TURNTRAIL_MANAGED_SESSION_ID: 'bad\nsession'
+    }
+  } };
+  window.terminals.push(valid, foreign, malformed, spoofed);
   const store = new ManagedTerminalStore({ window, platform: 'win32' });
   store.start({ subscriptions: [] });
   assert.equal(store.get(id).title, 'Restored');
@@ -128,8 +143,18 @@ test('only valid live Turntrail terminal markers are reattached', () => {
 
 test('managed terminal input is bounded and provider-limited', async () => {
   assert.throws(() => managedTerminalArgs('cursor'), /only Claude and Codex/i);
-  assert.throws(() => managedTerminalArgs('claude', { prompt: 'x'.repeat(64 * 1024 + 1) }), /too long/i);
+  assert.throws(() => managedTerminalArgs('claude', { prompt: 'x'.repeat(16 * 1024 + 1) }), /too long/i);
   assert.throws(() => managedTerminalArgs('claude', { sessionId: 'id\n--dangerously-skip-permissions' }), /Invalid session id/i);
+});
+
+test('restored terminals must still have the expected direct provider launch', () => {
+  assert.equal(matchesProviderLaunch({ shellPath: 'C:\\bin\\claude.exe', shellArgs: [] }, 'claude'), true);
+  assert.equal(matchesProviderLaunch({
+    shellPath: 'powershell.exe',
+    shellArgs: ['-NoProfile', '-File', 'C:\\npm\\codex.ps1']
+  }, 'codex'), true);
+  assert.equal(matchesProviderLaunch({ shellPath: 'powershell.exe', shellArgs: [] }, 'codex'), false);
+  assert.equal(matchesProviderLaunch({ shellPath: 'C:\\bin\\codex.exe', shellArgs: [] }, 'claude'), false);
 });
 
 test('untrusted transcript titles cannot inject terminal control characters', async () => {
