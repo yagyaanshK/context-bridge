@@ -9,7 +9,8 @@ import {
   pathsOverlap,
   readFirstJsonlObjects,
   readJsonlObjects,
-  readLastJsonlObjects
+  readLastJsonlObjects,
+  reportDiscoveryError
 } from './common.js';
 import { describeRequests, readLatestRequest } from './preview.js';
 
@@ -29,31 +30,35 @@ export async function discoverClaudeSessions(options = {}) {
 
   for (const file of files.slice(0, options.limit || 200)) {
     options.signal?.throwIfAborted();
-    const meta = await inspectClaudeFile(file.path, options);
-    const matchesProject = meta.cwd ? await pathsOverlap(meta.cwd, root) : false;
-    if (!options.all && !matchesProject) continue;
+    try {
+      const meta = await inspectClaudeFile(file.path, options);
+      const matchesProject = meta.cwd ? await pathsOverlap(meta.cwd, root) : false;
+      if (!options.all && !matchesProject) continue;
 
-    // Only sessions that could be offered as a choice get the extra tail read.
-    const latest = matchesProject ? (await latestClaudeRequest(file.path, options)) || meta.last : undefined;
-    const title = meta.title || meta.first;
+      // Only sessions that could be offered as a choice get the extra tail read.
+      const latest = matchesProject ? (await latestClaudeRequest(file.path, options)) || meta.last : undefined;
+      const title = meta.title || meta.first;
 
-    sessions.push({
-      provider: CLAUDE_PROVIDER,
-      surface: 'cli',
-      path: file.path,
-      sessionId: meta.sessionId || path.basename(file.path, '.jsonl'),
-      cwd: meta.cwd,
-      title,
-      // Claude names most sessions itself, so say whether this is that name or
-      // a stand-in derived from the opening request.
-      named: Boolean(meta.title),
-      opening: meta.title && meta.first !== meta.title ? meta.first : undefined,
-      latest: latest && latest !== title ? latest : undefined,
-      modifiedAt: file.modifiedAt,
-      mtimeMs: file.mtimeMs,
-      size: file.size,
-      matchesProject
-    });
+      sessions.push({
+        provider: CLAUDE_PROVIDER,
+        surface: 'cli',
+        path: file.path,
+        sessionId: meta.sessionId || path.basename(file.path, '.jsonl'),
+        cwd: meta.cwd,
+        title,
+        // Claude names most sessions itself, so say whether this is that name or
+        // a stand-in derived from the opening request.
+        named: Boolean(meta.title),
+        opening: meta.title && meta.first !== meta.title ? meta.first : undefined,
+        latest: latest && latest !== title ? latest : undefined,
+        modifiedAt: file.modifiedAt,
+        mtimeMs: file.mtimeMs,
+        size: file.size,
+        matchesProject
+      });
+    } catch (error) {
+      reportDiscoveryError(options, file.path, error);
+    }
   }
 
   return sessions;

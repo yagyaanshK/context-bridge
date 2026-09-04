@@ -9,7 +9,8 @@ import {
   pathsOverlap,
   readFirstJsonlObjects,
   readJsonlObjects,
-  readLastJsonlObjects
+  readLastJsonlObjects,
+  reportDiscoveryError
 } from './common.js';
 import { readCodexThreadNames } from './codex-index.js';
 import { describeRequests, readLatestRequest } from './preview.js';
@@ -58,39 +59,43 @@ export async function discoverCodexSessions(options = {}) {
 
   for (const file of files.slice(0, options.limit || 300)) {
     options.signal?.throwIfAborted();
-    const meta = await inspectCodexFile(file.path, options);
-    const matchesProject = meta.cwd ? await pathsOverlap(meta.cwd, root) : false;
-    if (!options.all && !matchesProject) continue;
-    // Only sessions that could actually be offered as a choice get the extra
-    // tail read. Scanning every transcript on the machine for this would cost
-    // hundreds of reads to decorate rows nobody is choosing between.
-    // The tail is authoritative, but a transcript whose last megabytes are one
-    // enormous line yields nothing parseable. The head already holds several
-    // messages, so fall back to the latest of those before giving up.
-    const latest = matchesProject ? (await latestCodexRequest(file.path, options)) || meta.last : undefined;
-    const sessionId = meta.sessionId || sessionIdFromCodexPath(file.path);
-    // Codex's own name for the thread when it has one - the same text the app
-    // sidebar shows. Sessions it never named, such as forks and subagent runs,
-    // fall back to being described by their requests.
-    const name = names.get(sessionId);
-    const title = name || meta.first;
+    try {
+      const meta = await inspectCodexFile(file.path, options);
+      const matchesProject = meta.cwd ? await pathsOverlap(meta.cwd, root) : false;
+      if (!options.all && !matchesProject) continue;
+      // Only sessions that could actually be offered as a choice get the extra
+      // tail read. Scanning every transcript on the machine for this would cost
+      // hundreds of reads to decorate rows nobody is choosing between.
+      // The tail is authoritative, but a transcript whose last megabytes are one
+      // enormous line yields nothing parseable. The head already holds several
+      // messages, so fall back to the latest of those before giving up.
+      const latest = matchesProject ? (await latestCodexRequest(file.path, options)) || meta.last : undefined;
+      const sessionId = meta.sessionId || sessionIdFromCodexPath(file.path);
+      // Codex's own name for the thread when it has one - the same text the app
+      // sidebar shows. Sessions it never named, such as forks and subagent runs,
+      // fall back to being described by their requests.
+      const name = names.get(sessionId);
+      const title = name || meta.first;
 
-    sessions.push({
-      provider: CODEX_PROVIDER,
-      surface: meta.source || 'cli',
-      path: file.path,
-      sessionId,
-      cwd: meta.cwd,
-      title,
-      named: Boolean(name),
-      opening: name && meta.first !== name ? meta.first : undefined,
-      latest: latest && latest !== meta.preview && latest !== title ? latest : undefined,
-      forkedFrom: meta.forkedFrom,
-      modifiedAt: file.modifiedAt,
-      mtimeMs: file.mtimeMs,
-      size: file.size,
-      matchesProject
-    });
+      sessions.push({
+        provider: CODEX_PROVIDER,
+        surface: meta.source || 'cli',
+        path: file.path,
+        sessionId,
+        cwd: meta.cwd,
+        title,
+        named: Boolean(name),
+        opening: name && meta.first !== name ? meta.first : undefined,
+        latest: latest && latest !== meta.preview && latest !== title ? latest : undefined,
+        forkedFrom: meta.forkedFrom,
+        modifiedAt: file.modifiedAt,
+        mtimeMs: file.mtimeMs,
+        size: file.size,
+        matchesProject
+      });
+    } catch (error) {
+      reportDiscoveryError(options, file.path, error);
+    }
   }
 
   return sessions;

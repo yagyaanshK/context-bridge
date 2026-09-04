@@ -39,6 +39,7 @@ Module._load = function (request, ...rest) {
 // parentheses, which arrive percent-encoded from a URL.
 const src = fileURLToPath(new URL('../packages/vscode/src/', import.meta.url));
 const { AccountsStore, AccountsWebview } = require(src + 'accounts-view.cjs');
+const { SessionsStore, SessionsWebview } = require(src + 'sessions-view.cjs');
 const { LoginPanel } = require(src + 'login-view.cjs');
 
 function capture(assign) {
@@ -64,6 +65,11 @@ const pages = {
     const store = new AccountsStore(async () => ({}));
     store.viewModel = async () => ({ sections: [] });
     new AccountsWebview(store).resolveWebviewView({ webview, onDidChangeVisibility() {}, visible: false });
+  }),
+  sessions: capture((webview) => {
+    const store = new SessionsStore(async () => ({}), async () => '/workspace');
+    store.refresh = async () => store.viewModel();
+    new SessionsWebview(store).resolveWebviewView({ webview, onDidChangeVisibility() {}, visible: false });
   })
 };
 

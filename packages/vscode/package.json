@@ -40,6 +40,11 @@
   "activationEvents": [
     "onStartupFinished",
     "onView:contextBridgeAccounts",
+    "onView:contextBridgeSessions",
+    "onCommand:turntrail.refreshSessions",
+    "onCommand:turntrail.importIndexedSession",
+    "onCommand:turntrail.viewIndexedSession",
+    "onCommand:turntrail.handoffIndexedSession",
     "onCommand:turntrail.switchAccount",
     "onCommand:turntrail.refreshAccountQuota",
     "onCommand:turntrail.useCodexReset",
@@ -101,6 +106,10 @@
     "onCommand:contextBridge.renameAccount",
     "onCommand:contextBridge.forgetAccount",
     "onCommand:contextBridge.createHandoff",
+    "onCommand:contextBridge.refreshSessions",
+    "onCommand:contextBridge.importIndexedSession",
+    "onCommand:contextBridge.viewIndexedSession",
+    "onCommand:contextBridge.handoffIndexedSession",
     "onCommand:contextBridge.toggleAccountMaintenance"
   ],
   "main": "./src/extension.cjs",
@@ -116,6 +125,12 @@
     },
     "views": {
       "contextBridge": [
+        {
+          "id": "contextBridgeSessions",
+          "name": "Sessions",
+          "contextualTitle": "Turntrail",
+          "type": "webview"
+        },
         {
           "id": "contextBridgeAccounts",
           "name": "Accounts",
@@ -258,6 +273,23 @@
       {
         "command": "turntrail.createHandoff",
         "title": "Turntrail: Create Handoff"
+      },
+      {
+        "command": "turntrail.refreshSessions",
+        "title": "Turntrail: Refresh Sessions",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "turntrail.importIndexedSession",
+        "title": "Turntrail: Import Selected Session"
+      },
+      {
+        "command": "turntrail.viewIndexedSession",
+        "title": "Turntrail: View Selected Session"
+      },
+      {
+        "command": "turntrail.handoffIndexedSession",
+        "title": "Turntrail: Handoff Selected Session"
       }
     ],
     "configuration": {
@@ -420,6 +452,11 @@
           "command": "turntrail.importAccount",
           "when": "view == contextBridgeAccounts",
           "group": "1_add"
+        },
+        {
+          "command": "turntrail.refreshSessions",
+          "when": "view == contextBridgeSessions",
+          "group": "navigation@1"
         }
       ],
       "commandPalette": [
@@ -453,6 +490,18 @@
         },
         {
           "command": "turntrail.useCodexReset",
+          "when": "false"
+        },
+        {
+          "command": "turntrail.importIndexedSession",
+          "when": "false"
+        },
+        {
+          "command": "turntrail.viewIndexedSession",
+          "when": "false"
+        },
+        {
+          "command": "turntrail.handoffIndexedSession",
           "when": "false"
         }
       ]

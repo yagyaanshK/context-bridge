@@ -5,6 +5,7 @@ const { safeAgentCommand, safeClaudeUri } = require('./security.cjs');
 const { AccountMaintenanceScheduler, shouldOfferClaudeMaintenance } = require('./account-maintenance.cjs');
 const { readRawUsage } = require('./raw-usage.cjs');
 const { AccountsStore, AccountsWebview } = require('./accounts-view.cjs');
+const { SessionsStore, SessionsWebview } = require('./sessions-view.cjs');
 const { handoffForRoot } = require('./handoff-state.cjs');
 const { LoginPanel } = require('./login-view.cjs');
 const { runWithCancellation } = require('./progress.cjs');
@@ -19,6 +20,8 @@ let accountsProvider;
 let accountStatus;
 let loginPanel;
 let accountsWebview;
+let sessionsProvider;
+let sessionsWebview;
 let accountMaintenance;
 let accountMaintenanceOutput;
 let accountMaintenanceOffer;
@@ -26,6 +29,8 @@ let accountMaintenanceOffer;
 async function activateExtension(context) {
   accountsProvider = new AccountsStore(core);
   accountsWebview = new AccountsWebview(accountsProvider);
+  sessionsProvider = new SessionsStore(core, workspaceRoot);
+  sessionsWebview = new SessionsWebview(sessionsProvider);
   loginPanel = new LoginPanel(context, core, accountsProvider);
 
   // The panel is only visible when its view is open, so the account in use also
@@ -42,8 +47,10 @@ async function activateExtension(context) {
     accountMaintenanceOutput,
     accountMaintenance,
     accountsProvider.emitter,
+    sessionsProvider.emitter,
     accountsProvider.onDidChange(() => queueClaudeAccountMaintenanceOffer(context)),
     vscode.window.registerWebviewViewProvider('contextBridgeAccounts', accountsWebview),
+    vscode.window.registerWebviewViewProvider('contextBridgeSessions', sessionsWebview),
     ...compatibleCommands('switchAccount', (item) => switchAccount(item)),
     ...compatibleCommands('showRawUsage', (item) => showRawUsage(item)),
     ...compatibleCommands('undoAccountSwitch', () => undoAccountSwitch()),
@@ -71,6 +78,10 @@ async function activateExtension(context) {
     ...compatibleCommands('createHandoff', (item) =>
       handoff(item?.target === 'codex' ? 'codex' : 'claude', item?.mode === 'existing' ? 'existing' : 'new')
     ),
+    ...compatibleCommands('refreshSessions', (item) => refreshSessions(item)),
+    ...compatibleCommands('importIndexedSession', (item) => importIndexedSession(item)),
+    ...compatibleCommands('viewIndexedSession', (item) => viewIndexedSession(item)),
+    ...compatibleCommands('handoffIndexedSession', (item) => handoffIndexedSession(item)),
     ...compatibleCommands('handoffToClaudeExisting', () => handoff('claude', 'existing')),
     ...compatibleCommands('handoffToClaudeNew', () => handoff('claude', 'new')),
     ...compatibleCommands('handoffToCodexExisting', () => handoff('codex', 'existing')),
@@ -976,6 +987,62 @@ async function importSession(provider, session) {
   await reportImport(provider, result);
 }
 
+async function refreshSessions(item = {}) {
+  return withProgress('Discovering sessions', ({ signal }) =>
+    sessionsProvider.refresh({ all: item.all, signal })
+  );
+}
+
+function indexedSession(item) {
+  const row = sessionsProvider.resolve(item?.rowId);
+  if (!row) throw new Error('That session is no longer in the dashboard. Refresh Sessions and try again.');
+  return row;
+}
+
+async function importIndexedSession(item) {
+  const row = indexedSession(item);
+  if (row.kind !== 'native') {
+    vscode.window.showInformationMessage('Turntrail: this session is already stored in the workspace ledger.');
+    return row;
+  }
+  const root = await workspaceRoot();
+  const { initStore, importNativeSession } = await core();
+  const result = await withProgress(`Importing ${row.provider} session`, async ({ signal }) => {
+    await initStore(root);
+    return importNativeSession(root, row.provider, { path: row.path, includeArchived: true, signal });
+  });
+  sessionsProvider.markImported(row.id, result);
+  vscode.window.showInformationMessage(`Turntrail: imported ${result.turnCount} turns from ${row.provider}.`);
+  return { row, result };
+}
+
+async function viewIndexedSession(item) {
+  let row = indexedSession(item);
+  let ledgerSessionId = row.ledgerSessionId;
+  if (!ledgerSessionId) {
+    const imported = await importIndexedSession(item);
+    if (!imported?.result) return;
+    ledgerSessionId = imported.result.id;
+    row = imported.row;
+  }
+
+  const root = await workspaceRoot();
+  const { readSessionPreview, renderSessionPreview } = await core();
+  const markdown = await withProgress(`Reading ${row.provider} transcript`, async ({ signal }) => {
+    const preview = await readSessionPreview(root, ledgerSessionId, { signal });
+    return renderSessionPreview(preview);
+  });
+  const document = await vscode.workspace.openTextDocument({ language: 'markdown', content: markdown });
+  await vscode.window.showTextDocument(document, { preview: true });
+}
+
+async function handoffIndexedSession(item) {
+  const row = indexedSession(item);
+  const target = item?.target === 'codex' ? 'codex' : 'claude';
+  const mode = item?.mode === 'existing' ? 'existing' : 'new';
+  return handoff(target, mode, row);
+}
+
 // Import only ingests into the ledger (it opens nothing), so confirm it
 // modally — a transient toast was easy to miss and felt like "nothing happened".
 async function reportImport(provider, result) {
@@ -991,9 +1058,9 @@ function formatSessionFolder(cwd) {
   return fs.existsSync(cwd) ? cwd : `${cwd} (folder not found; it may have been renamed or moved)`;
 }
 
-async function handoff(target, mode) {
+async function handoff(target, mode, selected) {
   const root = await workspaceRoot();
-  const source = target === 'claude' ? 'codex' : 'claude';
+  const source = selected?.provider || (target === 'claude' ? 'codex' : 'claude');
   // 0 is a meaningful value here ("no clipping"), so it must reach the core
   // instead of collapsing to undefined and picking up the default budget.
   const maxChars = numberSetting(setting('maxExportChars'));
@@ -1006,7 +1073,9 @@ async function handoff(target, mode) {
   const openDocument = Boolean(setting('openHandoffDocument'));
   const { initStore, importNativeSession, captureSnapshot, exportHandoff } = await core();
 
-  const resolved = await resolveSourceSession(source, root);
+  const resolved = selected
+    ? { status: selected.kind === 'native' ? 'matched' : 'ledger', session: selected.native }
+    : await resolveSourceSession(source, root);
   if (resolved.status === 'cancelled') return;
   if (resolved.status === 'none') {
     const choice = await vscode.window.showWarningMessage(
@@ -1020,7 +1089,8 @@ async function handoff(target, mode) {
   const result = await withProgress(`Creating handoff to ${target}`, async ({ signal }) => {
     await initStore(root);
     if (resolved.session) {
-      await importNativeSession(root, source, { path: resolved.session.path, includeArchived: true, signal });
+      const imported = await importNativeSession(root, source, { path: resolved.session.path, includeArchived: true, signal });
+      if (selected?.id) sessionsProvider.markImported(selected.id, imported);
     }
     await captureSnapshot(root, { signal });
     return exportHandoff(root, {
@@ -1231,7 +1301,10 @@ if (extensionTestsEnabled()) {
         uriScheme: vscode.env.uriScheme,
         webviewResolved: Boolean(accountsWebview?.view),
         webviewScripts: accountsWebview?.view?.webview?.options?.enableScripts === true,
-        webviewHtml: accountsWebview?.view?.webview?.html || ''
+        webviewHtml: accountsWebview?.view?.webview?.html || '',
+        sessionsWebviewResolved: Boolean(sessionsWebview?.view),
+        sessionsWebviewScripts: sessionsWebview?.view?.webview?.options?.enableScripts === true,
+        sessionsWebviewHtml: sessionsWebview?.view?.webview?.html || ''
       };
     },
     latestState,

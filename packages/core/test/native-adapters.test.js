@@ -141,3 +141,31 @@ test('Cursor discovery does not claim similarly prefixed project folders', async
   assert.equal(all.length, 1);
   assert.equal(all[0].matchesProject, false);
 });
+
+test('one unreadable Claude transcript does not hide healthy sessions', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'turntrail-claude-skip-'));
+  const projectsDir = path.join(root, 'claude-projects');
+  await fs.mkdir(projectsDir, { recursive: true });
+  const valid = path.join(projectsDir, 'valid.jsonl');
+  const invalid = path.join(projectsDir, 'invalid.jsonl');
+  await fs.writeFile(valid, JSON.stringify({
+    type: 'user',
+    sessionId: 'healthy',
+    cwd: root,
+    timestamp: '2026-09-04T00:00:00.000Z',
+    message: { role: 'user', content: 'Healthy request' }
+  }) + '\n', 'utf8');
+  await fs.writeFile(invalid, `${JSON.stringify({ type: 'user', message: { content: 'x'.repeat(512) } })}\n`, 'utf8');
+  const skipped = [];
+
+  const sessions = await discoverNativeSessions('claude', {
+    root,
+    projectsDir,
+    maxLineChars: 256,
+    onDiscoveryError: (details) => skipped.push(details)
+  });
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].sessionId, 'healthy');
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].path, invalid);
+});

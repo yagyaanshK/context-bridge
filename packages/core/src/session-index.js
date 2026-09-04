@@ -13,13 +13,22 @@ export async function listSessionIndex(root, options = {}) {
 
   await Promise.all(providers.map(async (provider) => {
     try {
+      const discoveryOptions = options.discoveryOptions?.[provider] || {};
+      let providerErrors = 0;
       nativeByProvider[provider] = await discoverNativeSessions(provider, {
         root,
         all: Boolean(options.all),
         includeArchived: true,
         limit: options.perProviderLimit || DEFAULT_SESSION_INDEX_LIMIT,
         signal: options.signal,
-        ...(options.discoveryOptions?.[provider] || {})
+        ...discoveryOptions,
+        onDiscoveryError(details) {
+          discoveryOptions.onDiscoveryError?.(details);
+          if (providerErrors++ < 3) {
+            const message = details.error instanceof Error ? details.error.message : String(details.error);
+            errors.push({ provider, message: `Skipped one unreadable transcript: ${message}` });
+          }
+        }
       });
     } catch (error) {
       if (options.signal?.aborted) throw error;

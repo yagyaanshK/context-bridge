@@ -71,6 +71,11 @@ export function createBoundedTurnCollector(options = {}) {
   };
 }
 
+export function reportDiscoveryError(options, filePath, error) {
+  if (options.signal?.aborted || options.path) throw error;
+  options.onDiscoveryError?.({ path: filePath, error });
+}
+
 export async function readJsonlObjects(filePath, onObject, options = {}) {
   const maxLineChars = positiveLimit(options.maxLineChars, DEFAULT_MAX_JSONL_LINE_CHARS);
   const stream = createReadStream(filePath, { encoding: 'utf8', signal: options.signal });

@@ -10,7 +10,8 @@ import {
   jsonlFileInfo,
   readFirstJsonlObjects,
   readJsonlObjects,
-  readLastJsonlObjects
+  readLastJsonlObjects,
+  reportDiscoveryError
 } from './common.js';
 import { previewOf } from './preview.js';
 
@@ -27,34 +28,38 @@ export async function discoverCursorSessions(options = {}) {
 
   for (const file of files.slice(0, options.limit || 300)) {
     options.signal?.throwIfAborted();
-    const relative = path.relative(projectsDir, file.path);
-    const parts = relative.split(path.sep);
-    const projectKey = parts[0];
-    const isSubagent = parts.includes('subagents');
-    if (isSubagent && !options.includeSubagents) continue;
-    if (!parts.includes('agent-transcripts')) continue;
-    const head = await readFirstJsonlObjects(file.path, 80, options);
-    const tail = await readLastJsonlObjects(file.path, 40, undefined, options);
-    const requests = [...head, ...tail].filter((record) => cursorRole(record) === 'user').map(cursorRecordText).filter(Boolean);
-    if (head.length === 0 && tail.length === 0) continue;
-    const matchesProject = projectKeyMatches(projectKey, expectedKey);
-    if (!options.all && !matchesProject) continue;
-    const sessionId = cursorSessionId(file.path);
+    try {
+      const relative = path.relative(projectsDir, file.path);
+      const parts = relative.split(path.sep);
+      const projectKey = parts[0];
+      const isSubagent = parts.includes('subagents');
+      if (isSubagent && !options.includeSubagents) continue;
+      if (!parts.includes('agent-transcripts')) continue;
+      const head = await readFirstJsonlObjects(file.path, 80, options);
+      const tail = await readLastJsonlObjects(file.path, 40, undefined, options);
+      const requests = [...head, ...tail].filter((record) => cursorRole(record) === 'user').map(cursorRecordText).filter(Boolean);
+      if (head.length === 0 && tail.length === 0) continue;
+      const matchesProject = projectKeyMatches(projectKey, expectedKey);
+      if (!options.all && !matchesProject) continue;
+      const sessionId = cursorSessionId(file.path);
 
-    sessions.push({
-      provider: CURSOR_PROVIDER,
-      surface: 'ide',
-      path: file.path,
-      sessionId,
-      cwd: matchesProject ? path.resolve(root) : undefined,
-      title: previewOf(requests[0] || ''),
-      latest: previewOf(requests.at(-1) || ''),
-      modifiedAt: file.modifiedAt,
-      mtimeMs: file.mtimeMs,
-      size: file.size,
-      matchesProject,
-      subagent: isSubagent || undefined
-    });
+      sessions.push({
+        provider: CURSOR_PROVIDER,
+        surface: 'ide',
+        path: file.path,
+        sessionId,
+        cwd: matchesProject ? path.resolve(root) : undefined,
+        title: previewOf(requests[0] || ''),
+        latest: previewOf(requests.at(-1) || ''),
+        modifiedAt: file.modifiedAt,
+        mtimeMs: file.mtimeMs,
+        size: file.size,
+        matchesProject,
+        subagent: isSubagent || undefined
+      });
+    } catch (error) {
+      reportDiscoveryError(options, file.path, error);
+    }
   }
   return sessions.sort((a, b) => b.mtimeMs - a.mtimeMs);
 }

@@ -11,6 +11,7 @@ import {
   listSessionFiles,
   pathsOverlap,
   readJsonlObjects,
+  reportDiscoveryError,
   sessionFileInfo
 } from './common.js';
 import { previewOf } from './preview.js';
@@ -33,31 +34,35 @@ export async function discoverGeminiSessions(options = {}) {
 
   for (const file of files.slice(0, options.limit || 300)) {
     options.signal?.throwIfAborted();
-    const relative = path.relative(tempDir, file.path);
-    if (!relative.split(path.sep).includes('chats')) continue;
-    const data = await readGeminiConversation(file.path, { ...options, metadataOnly: true });
-    if (!data || data.kind === 'subagent' || data.messages.length === 0) continue;
-    const projectRoot = await geminiProjectRoot(file.path, tempDir, options);
-    const hashMatches = data.projectHash && projectHashes(root).has(data.projectHash);
-    const directoryMatches = await anyPathOverlaps(data.directories, root, options);
-    const markerMatches = projectRoot ? await pathsOverlap(projectRoot, root, options) : false;
-    const matchesProject = Boolean(hashMatches || directoryMatches || markerMatches);
-    if (!options.all && !matchesProject) continue;
-    const requests = data.messages.filter((message) => message.type === 'user').map((message) => messageText(message));
+    try {
+      const relative = path.relative(tempDir, file.path);
+      if (!relative.split(path.sep).includes('chats')) continue;
+      const data = await readGeminiConversation(file.path, { ...options, metadataOnly: true });
+      if (!data || data.kind === 'subagent' || data.messages.length === 0) continue;
+      const projectRoot = await geminiProjectRoot(file.path, tempDir, options);
+      const hashMatches = data.projectHash && projectHashes(root).has(data.projectHash);
+      const directoryMatches = await anyPathOverlaps(data.directories, root, options);
+      const markerMatches = projectRoot ? await pathsOverlap(projectRoot, root, options) : false;
+      const matchesProject = Boolean(hashMatches || directoryMatches || markerMatches);
+      if (!options.all && !matchesProject) continue;
+      const requests = data.messages.filter((message) => message.type === 'user').map((message) => messageText(message));
 
-    sessions.push({
-      provider: GEMINI_PROVIDER,
-      surface: 'cli',
-      path: file.path,
-      sessionId: data.sessionId || sessionIdFromPath(file.path),
-      cwd: projectRoot || data.directories?.[0],
-      title: previewOf(requests[0] || data.summary || ''),
-      latest: previewOf(requests.at(-1) || ''),
-      modifiedAt: data.lastUpdated || file.modifiedAt,
-      mtimeMs: file.mtimeMs,
-      size: file.size,
-      matchesProject
-    });
+      sessions.push({
+        provider: GEMINI_PROVIDER,
+        surface: 'cli',
+        path: file.path,
+        sessionId: data.sessionId || sessionIdFromPath(file.path),
+        cwd: projectRoot || data.directories?.[0],
+        title: previewOf(requests[0] || data.summary || ''),
+        latest: previewOf(requests.at(-1) || ''),
+        modifiedAt: data.lastUpdated || file.modifiedAt,
+        mtimeMs: file.mtimeMs,
+        size: file.size,
+        matchesProject
+      });
+    } catch (error) {
+      reportDiscoveryError(options, file.path, error);
+    }
   }
 
   return sessions.sort((a, b) => b.mtimeMs - a.mtimeMs);

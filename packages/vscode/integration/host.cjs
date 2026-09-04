@@ -30,6 +30,10 @@ async function smokeAndSeed(hooks) {
     'turntrail.discoverCodex',
     'turntrail.discoverGemini',
     'turntrail.discoverCursor',
+    'turntrail.refreshSessions',
+    'turntrail.importIndexedSession',
+    'turntrail.viewIndexedSession',
+    'turntrail.handoffIndexedSession',
     'turntrail.copyLatestHandoffPrompt',
     'turntrail.openLatestHandoff',
     'turntrail.createHandoff'
@@ -45,6 +49,14 @@ async function smokeAndSeed(hooks) {
   assert.match(state.webviewHtml, /default-src 'none'/);
   assert.match(state.webviewHtml, /<div id="root">/);
   assert.match(state.webviewHtml, /acquireVsCodeApi\(\)/);
+
+  await vscode.commands.executeCommand('contextBridgeSessions.focus');
+  await waitFor(() => hooks.integrationState().sessionsWebviewResolved);
+  const sessionsState = hooks.integrationState();
+  assert.equal(sessionsState.sessionsWebviewScripts, true);
+  assert.match(sessionsState.sessionsWebviewHtml, /default-src 'none'/);
+  assert.match(sessionsState.sessionsWebviewHtml, /Search sessions/);
+  assert.match(sessionsState.sessionsWebviewHtml, /All providers/);
 
   const handoffPath = path.join(root, 'handoff.md');
   const prompt = 'Turntrail extension-host prompt';
