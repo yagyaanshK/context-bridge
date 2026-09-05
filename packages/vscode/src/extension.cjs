@@ -2,7 +2,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const vscode = require('vscode');
 const { safeAgentCommand, safeClaudeUri } = require('./security.cjs');
-const { AccountMaintenanceScheduler, shouldOfferClaudeMaintenance } = require('./account-maintenance.cjs');
+const { AccountMaintenanceScheduler, shouldOfferAccountMaintenance } = require('./account-maintenance.cjs');
 const { readRawUsage } = require('./raw-usage.cjs');
 const { AccountsStore, AccountsWebview } = require('./accounts-view.cjs');
 const { SessionsStore, SessionsWebview } = require('./sessions-view.cjs');
@@ -54,7 +54,7 @@ async function activateExtension(context) {
     accountsProvider.emitter,
     sessionsProvider.emitter,
     managedTerminals.onDidChange(() => sessionsProvider.setManaged(managedTerminals.viewModel())),
-    accountsProvider.onDidChange(() => queueClaudeAccountMaintenanceOffer(context)),
+    accountsProvider.onDidChange(() => queueAccountMaintenanceOffer(context)),
     vscode.window.registerWebviewViewProvider('contextBridgeAccounts', accountsWebview),
     vscode.window.registerWebviewViewProvider('contextBridgeSessions', sessionsWebview),
     ...compatibleCommands('switchAccount', (item) => switchAccount(item)),
@@ -73,6 +73,7 @@ async function activateExtension(context) {
     ...compatibleCommands('renameAccount', (item) => renameAccount(item)),
     ...compatibleCommands('forgetAccount', (item) => forgetAccount(item)),
     ...compatibleCommands('toggleAccountMaintenance', () => toggleAccountMaintenance()),
+    ...compatibleCommands('runAccountMaintenance', () => runAccountMaintenance()),
     ...compatibleCommands('discoverClaude', () => discover('claude')),
     ...compatibleCommands('discoverCodex', () => discover('codex')),
     ...compatibleCommands('discoverGemini', () => discover('gemini')),
@@ -113,7 +114,7 @@ async function activateExtension(context) {
   publishHandoffState().catch(() => {});
   startSwitchResultMonitor(context);
   accountMaintenance.start();
-  queueClaudeAccountMaintenanceOffer(context);
+  queueAccountMaintenanceOffer(context);
 }
 
 function deactivate() {}
@@ -149,19 +150,22 @@ async function switchAccount(item) {
   if (!processes) return;
   const blockers = api.classifyAgentProcesses(account.provider, processes);
   if (blockers.length > 0) {
-    await queueSwitchAfterEditorsClose(account, blockers);
-    return;
+    const proceed = await handleRunningProviderProcesses(account, blockers, api);
+    if (!proceed) return;
   }
 
   const activate = account.provider === 'claude' ? api.activateClaudeAccount : api.activateCodexAccount;
-  const result = await activate(account.id).catch((error) => ({ error: error.message }));
+  let result = await activate(account.id).catch((error) => ({ error: error.message }));
   if (result?.error) {
     const raced = await api.listAgentProcesses().catch(() => []);
     const racedBlockers = api.classifyAgentProcesses(account.provider, raced);
     if (racedBlockers.length > 0) {
-      await queueSwitchAfterEditorsClose(account, racedBlockers);
-      return;
+      const proceed = await handleRunningProviderProcesses(account, racedBlockers, api);
+      if (!proceed) return;
+      result = await activate(account.id).catch((error) => ({ error: error.message }));
     }
+  }
+  if (result?.error) {
     vscode.window.showErrorMessage(`Turntrail: could not switch to "${account.label}" — ${result.error}`);
     return;
   }
@@ -184,21 +188,61 @@ async function switchAccount(item) {
     });
 }
 
-async function queueSwitchAfterEditorsClose(account, blockers) {
+async function handleRunningProviderProcesses(account, blockers, api) {
   const agent = agentName(account.provider);
   const editors = [...new Set(blockers.map((item) => item.editor).filter(Boolean))];
   const interactive = blockers.filter((item) => item.kind === 'interactive');
-  const locations = editors.length > 0 ? editors.join(', ') : 'an editor';
-  const detail = interactive.length > 0
-    ? `${interactive.length} interactive ${agent} process${interactive.length === 1 ? '' : 'es'} must also finish.`
-    : `Its background service is running in ${locations}.`;
+  const processNames = [...new Set(blockers.map((item) => item.name).filter(Boolean))].slice(0, 4).join(', ');
+  const locations = editors.length > 0 ? ` Editor services: ${editors.join(', ')}.` : '';
+  const sessions = interactive.length > 0
+    ? ` ${interactive.length} other ${agent} process${interactive.length === 1 ? ' is' : 'es are'} also running.`
+    : '';
   const choice = await vscode.window.showWarningMessage(
-    `${agent} must stop before Turntrail can safely switch to "${account.label}". ${detail} ` +
-      'Turntrail can wait in the background, switch after every process exits, and reopen this workspace.',
-    { modal: true },
-    'Switch After Closing Editors'
+    `${agent} must stop before Turntrail can safely switch to "${account.label}".`,
+    {
+      modal: true,
+      detail:
+        `Running provider processes${processNames ? `: ${processNames}` : ''}.${locations}${sessions}\n\n` +
+        `Every ${agent} client that owns the shared login must stop, including CLI sessions, desktop clients, ` +
+        `and IDE extension services. Unrelated editor windows can stay open.\n\n` +
+        `Stopping these processes can interrupt active agent runs. Turntrail can stop them now, or wait while ` +
+        `you close the relevant clients yourself.`
+    },
+    'Stop Processes & Switch',
+    'Wait for Me to Stop Them'
   );
-  if (choice !== 'Switch After Closing Editors') return;
+  if (choice === 'Wait for Me to Stop Them') {
+    await queueSwitchAfterProviderStops(account, blockers);
+    return false;
+  }
+  if (choice !== 'Stop Processes & Switch') return false;
+
+  const stopped = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `Stopping ${agent} processes`,
+      cancellable: false
+    },
+    () => api.terminateAgentProcesses(account.provider)
+  ).catch((error) => ({ error: error.message }));
+
+  if (stopped?.error) {
+    vscode.window.showErrorMessage(`Turntrail: could not stop ${agent} processes - ${stopped.error}`);
+    return false;
+  }
+  if (stopped.remaining.length > 0) {
+    await queueSwitchAfterProviderStops(account, stopped.remaining);
+    vscode.window.showWarningMessage(
+      `Turntrail: ${agent} restarted before the switch. The switch is queued; close or disable the client that keeps restarting it.`
+    );
+    return false;
+  }
+  return true;
+}
+
+async function queueSwitchAfterProviderStops(account, blockers) {
+  const agent = agentName(account.provider);
+  const editors = [...new Set(blockers.map((item) => item.editor).filter(Boolean))];
 
   const directory = switchResultsDirectory();
   let queued;
@@ -230,7 +274,9 @@ async function queueSwitchAfterEditorsClose(account, blockers) {
     return;
   }
 
-  const affected = editors.length > 0 ? ` Close all ${editors.join(' and ')} windows using Codex.` : ` Close ${agent}.`;
+  const affected = editors.length > 0
+    ? ` Stop ${agent} in ${editors.join(' and ')}; close those editor windows only if their extension service will not stop.`
+    : ` Close every running ${agent} CLI or desktop client.`;
   vscode.window.showInformationMessage(
     `Turntrail is waiting to switch to "${account.label}".${affected} The initiating editor will reopen if it was closed.`
   );
@@ -738,18 +784,64 @@ async function toggleAccountMaintenance() {
   vscode.window.showInformationMessage(`Turntrail: ${message}`);
 }
 
-async function offerClaudeAccountMaintenance(context) {
-  const promptKey = 'accountMaintenance.claudeOptInPrompted';
-  const claudeAccounts = await accountsProvider.accounts('claude');
-  if (!shouldOfferClaudeMaintenance({
+async function runAccountMaintenance() {
+  if (!accountMaintenanceConfig().enabled) {
+    const choice = await vscode.window.showInformationMessage(
+      'Background account maintenance is disabled.',
+      {
+        modal: true,
+        detail:
+          'Enabling it lets Turntrail periodically renew due inactive OAuth credentials and verify account usage ' +
+          'while an editor is open. It makes requests only to the providers and cannot prevent provider-side revocation.'
+      },
+      'Enable & Run'
+    );
+    if (choice !== 'Enable & Run') return;
+    await vscode.workspace
+      .getConfiguration('turntrail')
+      .update('accountMaintenance.enabled', true, vscode.ConfigurationTarget.Global);
+    accountMaintenance.reschedule();
+  }
+
+  const maintenance = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'Maintaining Turntrail accounts',
+      cancellable: false
+    },
+    () => accountMaintenance.runNow()
+  );
+  if (!maintenance) {
+    vscode.window.showInformationMessage('Turntrail: account maintenance is already running.');
+    return;
+  }
+  const summary = maintenanceSummary(maintenance);
+  vscode.window.showInformationMessage(`Turntrail: account maintenance completed - ${summary}.`);
+}
+
+function maintenanceSummary(maintenance) {
+  if (maintenance.locked) return 'another editor is handling it';
+  const counts = maintenance.results.reduce((all, item) => {
+    all[item.status] = (all[item.status] || 0) + 1;
+    return all;
+  }, {});
+  return Object.entries(counts).map(([status, count]) => `${count} ${status}`).join(', ') || 'no accounts';
+}
+
+async function offerAccountMaintenance(context) {
+  const promptKey = 'accountMaintenance.optInPrompted';
+  const accounts = await accountsProvider.accounts();
+  const previouslyPrompted = context.globalState.get(promptKey) === true ||
+    context.globalState.get('accountMaintenance.claudeOptInPrompted') === true;
+  if (!shouldOfferAccountMaintenance({
     enabled: accountMaintenanceConfig().enabled,
-    prompted: context.globalState.get(promptKey) === true,
-    claudeAccounts: claudeAccounts.length
+    prompted: previouslyPrompted,
+    accounts: accounts.length
   })) return;
 
   await context.globalState.update(promptKey, true);
   const choice = await vscode.window.showInformationMessage(
-    'Turntrail can maintain Claude OAuth credentials while Claude is stopped, reducing daily sign-outs caused by expired or rotated tokens.',
+    'Turntrail can periodically renew inactive Codex and Claude OAuth credentials while their clients are stopped.',
     'Enable maintenance',
     'Not now'
   );
@@ -761,16 +853,16 @@ async function offerClaudeAccountMaintenance(context) {
   accountMaintenance.reschedule();
   const maintenance = await accountMaintenance.runNow();
   const message = maintenance
-    ? 'Claude account maintenance is enabled and the first check completed.'
-    : 'Claude account maintenance is enabled. The first check will retry automatically.';
+    ? `Account maintenance is enabled and the first check completed - ${maintenanceSummary(maintenance)}.`
+    : 'Account maintenance is enabled. The first check will retry automatically.';
   vscode.window.showInformationMessage(`Turntrail: ${message}`);
 }
 
-function queueClaudeAccountMaintenanceOffer(context) {
+function queueAccountMaintenanceOffer(context) {
   if (accountMaintenanceOffer) return;
-  accountMaintenanceOffer = offerClaudeAccountMaintenance(context)
+  accountMaintenanceOffer = offerAccountMaintenance(context)
     .catch((error) => {
-      accountMaintenanceOutput.appendLine(`[${new Date().toISOString()}] Could not offer Claude maintenance: ${error.message}`);
+      accountMaintenanceOutput.appendLine(`[${new Date().toISOString()}] Could not offer account maintenance: ${error.message}`);
     })
     .finally(() => {
       accountMaintenanceOffer = undefined;

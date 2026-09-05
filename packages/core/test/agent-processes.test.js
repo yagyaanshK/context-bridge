@@ -4,7 +4,8 @@ import {
   assertAgentStopped,
   classifyAgentProcesses,
   listAgentProcesses,
-  matchingAgentProcesses
+  matchingAgentProcesses,
+  terminateAgentProcesses
 } from '../src/index.js';
 
 const processes = [
@@ -78,6 +79,73 @@ test('Claude processes remain interactive blockers until the provider exposes a 
   ]);
   assert.equal(classified[0]?.kind, 'interactive');
   assert.equal(classified[0]?.editor, undefined);
+});
+
+test('Claude extension services and Kiro Codex services identify their editor owner', () => {
+  const running = [
+    { pid: 1, name: 'Kiro.exe' },
+    { pid: 2, parentPid: 1, name: 'Kiro.exe' },
+    {
+      pid: 3,
+      parentPid: 2,
+      name: 'codex.exe',
+      executablePath: 'C:\\Users\\dev\\.kiro\\extensions\\openai.chatgpt-build\\bin\\codex.exe',
+      commandLine: 'codex.exe app-server'
+    },
+    {
+      pid: 4,
+      parentPid: 2,
+      name: 'claude.exe',
+      executablePath: 'C:\\Users\\dev\\.kiro\\extensions\\anthropic.claude-code-2.1.0\\resources\\claude.exe',
+      commandLine: 'claude.exe --output-format stream-json'
+    }
+  ];
+
+  assert.equal(classifyAgentProcesses('codex', running)[0]?.editor, 'Kiro');
+  assert.equal(classifyAgentProcesses('claude', running)[0]?.editor, 'Kiro');
+});
+
+test('confirmed process termination re-enumerates and stops matching provider processes only', async () => {
+  const samples = [
+    [
+      { pid: 10, name: 'codex.exe', commandLine: 'codex.exe app-server' },
+      { pid: 11, name: 'claude.exe', commandLine: 'claude.exe' }
+    ],
+    []
+  ];
+  const killed = [];
+  const result = await terminateAgentProcesses('codex', {
+    platform: 'win32',
+    listAgentProcesses: async () => samples.shift() || [],
+    killProcess: (pid, signal) => killed.push({ pid, signal }),
+    sleep: async () => {},
+    now: (() => { let value = 0; return () => ++value; })()
+  });
+
+  assert.deepEqual(killed, [{ pid: 10, signal: 'SIGKILL' }]);
+  assert.deepEqual(result.terminated.map((item) => item.pid), [10]);
+  assert.deepEqual(result.remaining, []);
+});
+
+test('process termination reports provider processes that keep restarting', async () => {
+  let now = 0;
+  const killed = [];
+  const result = await terminateAgentProcesses('codex', {
+    platform: 'linux',
+    listAgentProcesses: async () => [{ pid: 10, name: 'codex', commandLine: 'codex app-server' }],
+    killProcess: (pid, signal) => killed.push({ pid, signal }),
+    sleep: async () => { now += 100; },
+    now: () => now,
+    gracefulMs: 100,
+    timeoutMs: 250,
+    pollMs: 100
+  });
+
+  assert.deepEqual(killed.slice(0, 2), [
+    { pid: 10, signal: 'SIGTERM' },
+    { pid: 10, signal: 'SIGKILL' }
+  ]);
+  assert.deepEqual(result.remaining.map((item) => item.pid), [10]);
 });
 
 test('the switch preflight names the process and confirms no credential was changed', async () => {

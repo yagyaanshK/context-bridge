@@ -38,7 +38,7 @@ export function classifyAgentProcesses(provider, processes) {
   const all = (processes || []).map(normalizeProcess);
   const matches = matchingAgentProcesses(provider, all);
   return matches.map((item) => {
-    const editor = provider === 'codex' ? codexEditorOwner(item, all) : undefined;
+    const editor = agentEditorOwner(provider, item, all);
     return {
       ...item,
       kind: editor ? 'ide-background' : 'interactive',
@@ -62,6 +62,49 @@ export async function assertAgentStopped(provider, options = {}) {
       `Close its CLI processes and close or reload IDE windows hosting the ${label} extension, then retry. ` +
       'Turntrail did not change the live credential.'
   );
+}
+
+// Stop only processes that still match the provider at execution time. The
+// caller must obtain explicit user confirmation before invoking this: an
+// interactive agent may have work in progress. A short graceful interval lets
+// POSIX clients flush state; Windows maps these signals to process termination.
+export async function terminateAgentProcesses(provider, options = {}) {
+  const terminate = options.killProcess || process.kill.bind(process);
+  const sleep = options.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const now = options.now || Date.now;
+  const gracefulMs = boundedDuration(options.gracefulMs, 750, 0, 10_000);
+  const timeoutMs = boundedDuration(options.timeoutMs, 5_000, 250, 30_000);
+  const pollMs = boundedDuration(options.pollMs, 100, 1, 1_000);
+  const platform = options.platform || process.platform;
+  const deadline = now() + timeoutMs;
+  const firstSeenAt = new Map();
+  const terminated = new Map();
+  let remaining = [];
+
+  while (now() < deadline) {
+    remaining = matchingAgentProcesses(provider, await listAgentProcesses(options));
+    if (remaining.length === 0) return { terminated: [...terminated.values()], remaining: [] };
+
+    for (const item of remaining) {
+      if (!item.pid) continue;
+      const seenAt = firstSeenAt.get(item.pid);
+      const force = platform === 'win32' ||
+        (seenAt !== undefined && now() - seenAt >= gracefulMs);
+      if (seenAt === undefined) firstSeenAt.set(item.pid, now());
+      try {
+        terminate(item.pid, force ? 'SIGKILL' : 'SIGTERM');
+        terminated.set(item.pid, item);
+      } catch (error) {
+        // ESRCH means it exited between enumeration and termination, which is
+        // the outcome we wanted. Permission failures must remain visible.
+        if (error?.code !== 'ESRCH') throw new Error(`Could not stop ${item.name || `PID ${item.pid}`}: ${error.message}`);
+      }
+    }
+    await sleep(pollMs);
+  }
+
+  remaining = matchingAgentProcesses(provider, await listAgentProcesses(options));
+  return { terminated: [...terminated.values()], remaining };
 }
 
 async function listWindowsProcesses(run) {
@@ -114,6 +157,12 @@ function processMatches(provider, item) {
   return /(?:^|\s|["'])[^\s"']*@anthropic-ai\/claude-code(?:\/|\s|["']|$)/.test(command);
 }
 
+function agentEditorOwner(provider, item, processes) {
+  if (provider === 'codex') return codexEditorOwner(item, processes);
+  if (provider === 'claude') return claudeEditorOwner(item, processes);
+  return undefined;
+}
+
 function codexEditorOwner(item, processes) {
   const name = processName(item);
   if (name === 'codex-code-mode-host') {
@@ -135,6 +184,24 @@ function codexEditorOwner(item, processes) {
   return undefined;
 }
 
+function claudeEditorOwner(item, processes) {
+  if (processName(item) !== 'claude') return undefined;
+  const executable = String(item.executablePath || '').toLowerCase().replaceAll('\\', '/');
+  if (!/\/extensions\/anthropic\.claude-code-[^/]+\//.test(executable)) return undefined;
+  return ancestorEditorOwner(item, processes);
+}
+
+function ancestorEditorOwner(item, processes) {
+  const byPid = new Map(processes.filter((candidate) => candidate.pid).map((candidate) => [candidate.pid, candidate]));
+  let ancestor = byPid.get(item.parentPid);
+  for (let depth = 0; ancestor && depth < 8; depth++) {
+    const editor = editorLabel(ancestor);
+    if (editor) return editor;
+    ancestor = byPid.get(ancestor.parentPid);
+  }
+  return undefined;
+}
+
 function editorLabel(item) {
   switch (processName(item)) {
     case 'code':
@@ -145,6 +212,8 @@ function editorLabel(item) {
       return 'Windsurf';
     case 'antigravity':
       return 'Google Antigravity';
+    case 'kiro':
+      return 'Kiro';
     case 'codium':
     case 'vscodium':
       return 'VSCodium';
@@ -170,4 +239,10 @@ function normalizeProcess(item = {}) {
 function numberOrUndefined(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function boundedDuration(value, fallback, minimum, maximum) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(maximum, Math.max(minimum, parsed));
 }

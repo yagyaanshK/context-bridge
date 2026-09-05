@@ -136,14 +136,19 @@ or retries the redemption POST.
 | **Remove** | Forget the account, or delete its managed credentials and active default login. Confirmed inline. |
 
 Background account maintenance is disabled by default. Turntrail offers a one-time opt-in after a
-managed Claude account is detected, and the toggle command remains available. Maintenance runs
-about every five hours while the editor is open. It fetches quota, renews inactive OAuth accounts,
+managed Codex or Claude account is detected. The toggle and **Run Account Maintenance Now** commands
+remain available. Maintenance runs about every five hours while the editor is open. It fetches
+quota, renews inactive OAuth accounts,
 and synchronizes provider-owned credentials back into Turntrail's snapshot. When no Claude process
 is running, it also proactively renews the active Claude credential and updates the official live
 store first; missing or blank live credentials are repaired only when their account is
 unambiguous. If Claude is running when renewal becomes due, Turntrail makes no provider request and
 retries after 15 minutes. A machine-wide lock prevents duplicate refreshes across VS Code forks and CLI
 schedulers. The interval can be changed with `turntrail.accountMaintenance.intervalHours` (1-24).
+This reduces stale-login failures but cannot guarantee persistence: providers may revoke sessions
+before their local expiry, and extension maintenance cannot run while every editor is closed.
+Turntrail never spends quota on a synthetic inference request merely to keep a login warm. API-key
+accounts do not use OAuth refresh tokens and are skipped.
 
 ### Signing in
 
@@ -182,10 +187,12 @@ confirmation toast offers **Undo**.
 
 Turntrail checks for native `codex` and `claude` processes immediately before replacing a login. If
 the provider is stopped, **Use this** switches immediately. If an interactive session or IDE
-background service is running, choose **Switch After Closing Editors**. A detached helper waits for
-every process to exit, requires three consecutive quiet polls, runs the same guarded switch, and
-reopens the initiating workspace. Save work and close every window hosting that provider, including
-windows in other VS Code-compatible editors, because the default credential is machine-wide.
+background service is running, choose **Stop Processes & Switch** to terminate matching provider
+processes after an explicit interruption warning, or **Wait for Me to Stop Them** to queue the
+switch. The detached helper waits for every process to exit, requires three consecutive quiet polls,
+runs the same guarded switch, and reopens the initiating workspace. Unrelated editor windows can
+stay open. Close a relevant editor window only when its provider extension service keeps restarting;
+the default credential is machine-wide across editors, CLIs, and desktop clients.
 
 Ignoring an idle-looking `codex.exe app-server` is unsafe: Codex can retain the old account in memory
 and refresh its persisted token later. Queuing keeps the strict process check while making it usable

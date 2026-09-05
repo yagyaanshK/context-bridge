@@ -315,14 +315,21 @@ credential first. It can also restore a missing or blank live credential when on
 or the retained Claude profile, identifies the account unambiguously. API-key accounts have no
 OAuth token to maintain and are skipped.
 
-Background maintenance is **off by default**. When a managed Claude account is first detected,
-Turntrail offers a one-time opt-in; you can also run **Turntrail: Toggle Background Account
-Maintenance**. Enabled maintenance runs about every five hours while the editor is open, with
-timing jitter. Each run updates quota caches and renews due OAuth accounts only when credential
-ownership is safe. A machine-wide lock prevents several VS Code-compatible editors or CLI jobs from
-refreshing the same token concurrently. If Claude is still running when renewal becomes due,
-Turntrail makes no provider request and retries locally after 15 minutes. There is no inference request, generated prompt,
-telemetry, or Turntrail server involved.
+Background maintenance is **off by default**. When a managed Codex or Claude account is first
+detected, Turntrail offers a one-time opt-in; you can also run **Turntrail: Toggle Background Account
+Maintenance** or **Turntrail: Run Account Maintenance Now**. Enabled maintenance runs about every
+five hours while an editor is open, with timing jitter. Each run updates quota caches and renews due
+inactive OAuth accounts only when credential ownership is safe. A machine-wide lock prevents several
+VS Code-compatible editors or CLI jobs from refreshing the same token concurrently. If Claude is
+still running when renewal becomes due, Turntrail makes no provider request and retries locally
+after 15 minutes. There is no inference request, generated prompt, telemetry, or Turntrail server
+involved.
+
+This is recovery hardening, not a login-lifetime guarantee. Neither provider documents a fixed
+inactivity lifetime that a third-party tool can promise to defeat, and a provider can revoke a
+session independently of its local expiry. Maintenance also cannot run while every editor is closed;
+use `turntrail account maintain --json` from an OS scheduler for that case. API-key accounts have no
+OAuth refresh token and are skipped.
 
 ```bash
 turntrail account add "Primary" --import   # Codex: adopt the login you already have
@@ -341,10 +348,13 @@ caches — is left byte-identical, and both files are backed up first.
 
 Turntrail checks the operating-system process list immediately before replacing the credential. If
 the provider is stopped, the switch is immediate. If `codex`, `claude`, or an IDE background service
-is running, the extension offers **Switch After Closing Editors** instead of weakening that check. A
-detached helper waits until every provider process has exited for three consecutive polls, performs
-the same guarded switch, and reopens the initiating workspace. Save your work and close every editor
-window hosting that provider; its account path is machine-wide across VS Code and compatible forks.
+is running, the extension offers **Stop Processes & Switch** or **Wait for Me to Stop Them**. The
+first action explicitly terminates only matching provider processes after warning that active runs
+can be interrupted. The second starts a detached helper that waits until every provider process has
+exited for three consecutive polls, performs the same guarded switch, and reopens the initiating
+workspace. Unrelated editor windows can remain open, but a window whose Codex or Claude extension
+keeps restarting its provider service may need to be closed or have that extension disabled. The
+credential path is machine-wide across compatible editors, CLI sessions, and desktop clients.
 
 Before installing a Codex OAuth account, Turntrail renews its saved refresh token even when the
 access-token JWT still claims to be unexpired. This verifies the login with OpenAI and catches

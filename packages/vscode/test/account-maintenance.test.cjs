@@ -5,14 +5,14 @@ const {
   DEFAULT_RETRY_DELAY_MS,
   initialDelay,
   jitter,
-  shouldOfferClaudeMaintenance
+  shouldOfferAccountMaintenance
 } = require('../src/account-maintenance.cjs');
 
-test('Claude maintenance opt-in is offered once only when it can help', () => {
-  assert.equal(shouldOfferClaudeMaintenance({ enabled: false, prompted: false, claudeAccounts: 1 }), true);
-  assert.equal(shouldOfferClaudeMaintenance({ enabled: true, prompted: false, claudeAccounts: 1 }), false);
-  assert.equal(shouldOfferClaudeMaintenance({ enabled: false, prompted: true, claudeAccounts: 1 }), false);
-  assert.equal(shouldOfferClaudeMaintenance({ enabled: false, prompted: false, claudeAccounts: 0 }), false);
+test('account maintenance opt-in is offered once only when it can help', () => {
+  assert.equal(shouldOfferAccountMaintenance({ enabled: false, prompted: false, accounts: 1 }), true);
+  assert.equal(shouldOfferAccountMaintenance({ enabled: true, prompted: false, accounts: 1 }), false);
+  assert.equal(shouldOfferAccountMaintenance({ enabled: false, prompted: true, accounts: 1 }), false);
+  assert.equal(shouldOfferAccountMaintenance({ enabled: false, prompted: false, accounts: 0 }), false);
 });
 
 test('maintenance delay is jittered and overdue work starts shortly after activation', () => {

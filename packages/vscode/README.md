@@ -205,11 +205,13 @@ verification leaves the current live credential untouched instead of reporting a
 successful account switch.
 
 If the provider is already stopped, **Use this** switches immediately. If an IDE background service
-or interactive process is running, Turntrail offers **Switch After Closing Editors**. A detached
-helper waits until all provider processes have exited, performs the guarded switch, and reopens the
-initiating workspace. Close every editor window hosting that provider, including other VS Code
-forks, because they share the same machine-wide default credential. The request expires after 15
-minutes and contains no tokens; failures leave the live credential unchanged.
+or interactive process is running, Turntrail offers **Stop Processes & Switch** or **Wait for Me to
+Stop Them**. The first action terminates only matching provider processes after warning that active
+runs can be interrupted. The second uses a detached helper to wait until all provider processes have
+exited, perform the guarded switch, and reopen the initiating workspace. Unrelated editor windows do
+not need to close, but a window that keeps restarting its provider extension service may need to be
+closed or have that extension disabled. A queued request expires after 15 minutes and never contains
+credentials.
 
 | Action | Effect |
 |--------|--------|
@@ -234,12 +236,18 @@ official client owns its rotating token. A deliberate switch or repair waits for
 may then verify that account safely. Turntrail otherwise synchronizes the live credential back into
 the managed snapshot so a later switch does not reinstall an older refresh token.
 
-Background maintenance is **off by default**. Run **Turntrail: Toggle Background Account
-Maintenance** to opt in. While the editor is open, Turntrail then performs a jittered maintenance
-run about every five hours: refresh due inactive OAuth credentials, read quota, and update the local
-cache. A machine-wide lock prevents simultaneous refreshes from multiple VS Code-compatible editors
-or a CLI scheduler. API-key accounts are skipped, and no model/inference request is used as a
-keep-alive. An account whose provider login has fully expired still requires a fresh sign-in.
+Background maintenance is **off by default**. Turntrail offers one opt-in after the first managed
+Codex or Claude account appears. You can also run **Turntrail: Toggle Background Account
+Maintenance** or **Turntrail: Run Account Maintenance Now**. While an editor is open, Turntrail then
+performs a jittered maintenance run about every five hours: refresh due inactive OAuth credentials,
+read quota, and update the local cache. A machine-wide lock prevents simultaneous refreshes from
+multiple VS Code-compatible editors or a CLI scheduler. API-key accounts are skipped, and no
+model/inference request is used as a keep-alive.
+
+Maintenance reduces stale-login failures; it does not guarantee that a provider session will remain
+authorized. Providers can revoke a login before its local expiry, a fully expired login still needs
+a fresh sign-in, and editor maintenance cannot run while every editor is closed. Use
+`turntrail account maintain --json` from an OS scheduler for unattended maintenance.
 
 API-key Codex accounts can be activated and launched normally. They do not have subscription quota,
 so the panel reports quota as unavailable instead of treating the account as signed out.

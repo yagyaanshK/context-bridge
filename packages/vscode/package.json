@@ -79,6 +79,7 @@
     "onCommand:turntrail.forgetAccount",
     "onCommand:turntrail.createHandoff",
     "onCommand:turntrail.toggleAccountMaintenance",
+    "onCommand:turntrail.runAccountMaintenance",
     "onCommand:contextBridge.switchAccount",
     "onCommand:contextBridge.refreshAccountQuota",
     "onCommand:contextBridge.useCodexReset",
@@ -116,7 +117,8 @@
     "onCommand:contextBridge.openManagedSession",
     "onCommand:contextBridge.focusManagedSession",
     "onCommand:contextBridge.closeManagedSession",
-    "onCommand:contextBridge.toggleAccountMaintenance"
+    "onCommand:contextBridge.toggleAccountMaintenance",
+    "onCommand:contextBridge.runAccountMaintenance"
   ],
   "main": "./src/extension.cjs",
   "contributes": {
@@ -219,6 +221,11 @@
         "command": "turntrail.toggleAccountMaintenance",
         "title": "Turntrail: Toggle Background Account Maintenance",
         "icon": "$(history)"
+      },
+      {
+        "command": "turntrail.runAccountMaintenance",
+        "title": "Turntrail: Run Account Maintenance Now",
+        "icon": "$(sync)"
       },
       {
         "command": "turntrail.discoverClaude",

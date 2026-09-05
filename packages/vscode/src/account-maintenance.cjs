@@ -3,8 +3,8 @@ const DEFAULT_INITIAL_DELAY_MAX_MS = 2 * 60 * 1000;
 const DEFAULT_RETRY_DELAY_MS = 15 * 60 * 1000;
 const DEFAULT_JITTER_RATIO = 0.1;
 
-function shouldOfferClaudeMaintenance({ enabled, prompted, claudeAccounts }) {
-  return !enabled && !prompted && Number(claudeAccounts) > 0;
+function shouldOfferAccountMaintenance({ enabled, prompted, accounts }) {
+  return !enabled && !prompted && Number(accounts) > 0;
 }
 
 class AccountMaintenanceScheduler {
@@ -113,5 +113,5 @@ module.exports = {
   initialDelay,
   jitter,
   DEFAULT_RETRY_DELAY_MS,
-  shouldOfferClaudeMaintenance
+  shouldOfferAccountMaintenance
 };

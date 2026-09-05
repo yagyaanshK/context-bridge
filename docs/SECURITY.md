@@ -27,6 +27,12 @@ When the extension queues a switch, a detached local helper waits for three cons
 polls and then calls the same fail-closed switch routine used by the CLI. The routine checks the
 process list again before its final atomic credential copy.
 
+The extension can terminate matching provider processes only after a modal confirmation that active
+runs may be interrupted. It re-enumerates immediately before termination rather than trusting PIDs
+captured by the earlier prompt, targets only processes that still match the selected provider, and
+reports any process that remains or restarts. Credential activation still performs its own process
+checks afterward, so termination does not weaken the fail-closed switch boundary.
+
 Queued request files live in the extension's global storage, are written `0600` where supported, and
 contain an account id, a bounded blocker description, a deadline, and editor relaunch metadata. They
 never contain access tokens, refresh tokens, API keys, or credential contents. Requests expire after
@@ -50,6 +56,11 @@ cannot provide a cross-vendor lock: starting Claude during the short refresh req
 inherent race, so malformed credentials and unknown or ambiguous identities fail closed. Provider
 calls retain the same bounded timeout, cancellation, payload validation, and redacted error
 handling as manual quota reads.
+
+Maintenance is not represented as a guaranteed keep-alive. It makes no synthetic inference request,
+cannot prevent provider-side revocation, and runs from the extension only while an editor is open.
+API-key accounts have no rotating OAuth credential and are skipped. The CLI maintenance command is
+available for users who deliberately configure an operating-system scheduler.
 
 A Codex OAuth account is verified with a refresh-token rotation before activation, including when
 its access-token JWT still appears locally valid. Verification runs only after the process guard
