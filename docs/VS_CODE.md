@@ -145,6 +145,9 @@ store first; missing or blank live credentials are repaired only when their acco
 unambiguous. If Claude is running when renewal becomes due, Turntrail makes no provider request and
 retries after 15 minutes. A machine-wide lock prevents duplicate refreshes across VS Code forks and CLI
 schedulers. The interval can be changed with `turntrail.accountMaintenance.intervalHours` (1-24).
+When a provider rejects a locally unexpired access token, maintenance attempts one refresh and
+retries the usage request. It repairs a selected machine-default credential only when that provider
+has no running process; otherwise the repair is deferred.
 This reduces stale-login failures but cannot guarantee persistence: providers may revoke sessions
 before their local expiry, and extension maintenance cannot run while every editor is closed.
 Turntrail never spends quota on a synthetic inference request merely to keep a login warm. API-key

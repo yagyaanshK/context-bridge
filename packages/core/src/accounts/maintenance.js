@@ -1,7 +1,9 @@
 import path from 'node:path';
 import { withFileLock } from '../fs-utils.js';
 import {
+  activateCodexAccount,
   codexHome,
+  ensureCodexAccessToken,
   isActiveCodexAccount,
   readCodexAuth,
   syncActiveCodexAccount
@@ -10,6 +12,7 @@ import {
   CLAUDE_PROACTIVE_REFRESH_MS,
   claudeMaintenanceAccountId,
   claudeHome,
+  ensureClaudeAccessToken,
   isActiveClaudeAccount,
   maintainIdleClaudeLogin,
   readClaudeAuth,
@@ -40,11 +43,13 @@ export async function maintainAccounts(options = {}) {
         const claudeAccounts = accounts.filter((account) => account.provider === 'claude');
         let observedAgentProcesses = options.agentProcesses;
         let claudeRunning = false;
+        let codexRunning = false;
         let maintainedClaudeAccountId;
-        if (claudeAccounts.length > 0) {
+        if (accounts.length > 0) {
           observedAgentProcesses = await listAgentProcesses(options);
           claudeRunning = matchingAgentProcesses('claude', observedAgentProcesses).length > 0;
-          if (!claudeRunning) {
+          codexRunning = matchingAgentProcesses('codex', observedAgentProcesses).length > 0;
+          if (claudeAccounts.length > 0 && !claudeRunning) {
             maintainedClaudeAccountId = await claudeMaintenanceAccountId(claudeAccounts, options);
           }
         }
@@ -54,8 +59,9 @@ export async function maintainAccounts(options = {}) {
           options.signal?.throwIfAborted();
           results.push(await maintainAccount(account, {
             ...options,
-            agentProcesses: observedAgentProcesses,
+            observedAgentProcesses,
             claudeRunning,
+            codexRunning,
             maintainedClaudeAccountId
           }));
         }
@@ -103,12 +109,31 @@ async function maintainCodexAccount(account, options) {
   const active = await isActiveCodexAccount(account.id, options);
   const synchronizedActive = active ? await syncActiveCodexAccount(account.id, options) : false;
   const synchronized = await readCodexAuth(codexHome(account.id, options));
-  const usage = await getCodexUsage(account.id, maintenanceUsageOptions(options));
+  let usage = await getCodexUsage(account.id, maintenanceUsageOptions(options));
+  let revalidated = false;
+  if (usage?.requiresRevalidation) {
+    if (active && options.codexRunning) {
+      return result(account, 'deferred', {
+        active: true,
+        refreshed: false,
+        synchronized: synchronizedActive && credentialChanged(before, synchronized),
+        reason: 'codex-running'
+      });
+    }
+    if (active) {
+      await activateCodexAccount(account.id, options);
+    } else {
+      await ensureCodexAccessToken(account.id, { ...options, forceRefresh: true });
+    }
+    usage = await getCodexUsage(account.id, maintenanceUsageOptions(options));
+    revalidated = true;
+  }
   const after = await readCodexAuth(codexHome(account.id, options));
   return usageResult(account, usage, {
     active,
     refreshed: credentialChanged(synchronized, after),
-    synchronized: synchronizedActive && credentialChanged(before, synchronized)
+    synchronized: synchronizedActive && credentialChanged(before, synchronized),
+    revalidated
   });
 }
 
@@ -118,8 +143,15 @@ async function maintainClaudeAccount(account, options) {
 
   if (!options.claudeRunning && options.maintainedClaudeAccountId === account.id) {
     const maintained = await maintainIdleClaudeLogin(account.id, options);
-    const usage = await getClaudeUsage(account.id, maintenanceUsageOptions(options));
-    return usageResult(account, usage, maintained);
+    let usage = await getClaudeUsage(account.id, maintenanceUsageOptions(options));
+    let revalidated = false;
+    let details = maintained;
+    if (usage?.requiresRevalidation) {
+      details = await maintainIdleClaudeLogin(account.id, { ...options, forceRefresh: true });
+      usage = await getClaudeUsage(account.id, maintenanceUsageOptions(options));
+      revalidated = true;
+    }
+    return usageResult(account, usage, { ...details, revalidated });
   }
 
   const active = await isActiveClaudeAccount(account.id, options);
@@ -139,12 +171,27 @@ async function maintainClaudeAccount(account, options) {
       reason: 'claude-running'
     });
   }
-  const usage = await getClaudeUsage(account.id, maintenanceUsageOptions(options));
+  let usage = await getClaudeUsage(account.id, maintenanceUsageOptions(options));
+  let revalidated = false;
+  if (usage?.requiresRevalidation) {
+    if (active && options.claudeRunning) {
+      return result(account, 'deferred', {
+        active: true,
+        refreshed: false,
+        synchronized: synchronizedActive && credentialChanged(before, synchronized),
+        reason: 'claude-running'
+      });
+    }
+    await ensureClaudeAccessToken(account.id, { ...options, forceRefresh: true });
+    usage = await getClaudeUsage(account.id, maintenanceUsageOptions(options));
+    revalidated = true;
+  }
   const after = await readClaudeAuth(claudeHome(account.id, options), options);
   return usageResult(account, usage, {
     active,
     refreshed: credentialChanged(synchronized, after),
-    synchronized: synchronizedActive && credentialChanged(before, synchronized)
+    synchronized: synchronizedActive && credentialChanged(before, synchronized),
+    revalidated
   });
 }
 

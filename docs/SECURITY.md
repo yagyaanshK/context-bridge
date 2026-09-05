@@ -57,6 +57,11 @@ inherent race, so malformed credentials and unknown or ambiguous identities fail
 calls retain the same bounded timeout, cancellation, payload validation, and redacted error
 handling as manual quota reads.
 
+An unexpected provider `401` can trigger one refresh-and-retry. Turntrail performs that repair only
+for an inactive account, or for the selected account after confirming that no provider process is
+running. A selected credential owned by a live provider process is deferred, never refreshed in
+parallel.
+
 Maintenance is not represented as a guaranteed keep-alive. It makes no synthetic inference request,
 cannot prevent provider-side revocation, and runs from the extension only while an editor is open.
 API-key accounts have no rotating OAuth credential and are skipped. The CLI maintenance command is

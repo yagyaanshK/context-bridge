@@ -325,6 +325,10 @@ still running when renewal becomes due, Turntrail makes no provider request and 
 after 15 minutes. There is no inference request, generated prompt, telemetry, or Turntrail server
 involved.
 
+If a provider rejects a locally unexpired access token during maintenance, Turntrail attempts one
+refresh and retries the usage check. It repairs the selected machine-default credential only when no
+process for that provider is running; otherwise it defers instead of racing the official client.
+
 This is recovery hardening, not a login-lifetime guarantee. Neither provider documents a fixed
 inactivity lifetime that a third-party tool can promise to defeat, and a provider can revoke a
 session independently of its local expiry. Maintenance also cannot run while every editor is closed;
@@ -358,7 +362,7 @@ credential path is machine-wide across compatible editors, CLI sessions, and des
 
 Before installing a Codex OAuth account, Turntrail renews its saved refresh token even when the
 access-token JWT still claims to be unexpired. This verifies the login with OpenAI and catches
-server-side revocation or inactivity logout before the live `auth.json` is replaced. A rejected or
+server-side revocation before the live `auth.json` is replaced. A rejected or
 unreachable verification leaves the current Codex login unchanged and does not report success.
 
 The queued request expires after 15 minutes and contains only an account id, bounded process

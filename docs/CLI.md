@@ -173,6 +173,8 @@ and Claude account. It skips API-key and unsigned accounts, refreshes an inactiv
 only when due, synchronizes provider-owned active credentials without refreshing them, and updates
 quota caches. A machine-wide lock makes it safe to invoke from several editor windows or an OS
 scheduler; a contended invocation exits successfully and reports that another run is active.
+If a quota request rejects a locally unexpired token, maintenance attempts one refresh and retries.
+It repairs the selected machine-default credential only when that provider has no running process.
 
 Use the machine-readable form as the target of Task Scheduler, cron, launchd, or systemd when you
 want maintenance to continue while no editor is open:
@@ -183,3 +185,6 @@ turntrail account maintain --json
 
 Schedule it about every five hours. Running it more frequently does not force token rotation, but it
 does force provider quota requests and provides no benefit.
+No schedule can guarantee login persistence: providers can revoke OAuth sessions independently.
+Turntrail does not send model prompts as keep-alive traffic, and API-key accounts have no OAuth
+refresh token to rotate.

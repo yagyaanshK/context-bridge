@@ -359,7 +359,7 @@ export async function maintainIdleClaudeLogin(accountId, options = {}) {
     ? Math.max(0, options.claudeRefreshSkewMs)
     : CLAUDE_PROACTIVE_REFRESH_MS;
   const expiresAt = Number(source.expiresAt);
-  const due = Number.isFinite(expiresAt) && expiresAt - refreshSkewMs <= Date.now();
+  const due = options.forceRefresh || (Number.isFinite(expiresAt) && expiresAt - refreshSkewMs <= Date.now());
   let credential = sourceState.raw;
   let refreshed = false;
 
@@ -636,7 +636,7 @@ export async function ensureClaudeAccessToken(accountId, options = {}) {
 
   const expiresAt = Number(auth.expiresAt);
   const fresh = !Number.isFinite(expiresAt) || expiresAt - EXPIRY_SKEW_MS > Date.now();
-  if (fresh || options.offline) return auth;
+  if ((fresh && !options.forceRefresh) || options.offline) return auth;
   if (!auth.refreshToken) return auth;
 
   const tokens = await refreshClaudeToken(auth.refreshToken, options);

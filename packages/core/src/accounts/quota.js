@@ -130,12 +130,10 @@ async function getUsage(accountId, read, fetchUsage, options = {}) {
 }
 
 export async function getCodexUsage(accountId, options = {}) {
-  // Renew before reading, exactly as the Claude path does. Checking a
-  // subscription's quota is also what keeps its token from going stale: an idle
-  // account is renewed before its access token expires. The active account is
-  // left for Codex to refresh.
-  // Renew inside the proactive window so checking quota also keeps the token
-  // alive; a caller can still override refreshSkewMs.
+  // Renew before reading, exactly as the Claude path does. An idle account is
+  // renewed inside the proactive window before its access token expires. The
+  // active account is left for Codex to refresh. A caller can still override
+  // refreshSkewMs.
   const read = (id, opts) => ensureCodexAccessToken(id, { refreshSkewMs: CODEX_PROACTIVE_REFRESH_MS, ...opts });
   return getUsage(accountId, read, fetchCodexUsage, options);
 }
@@ -149,7 +147,11 @@ export async function fetchClaudeUsage(auth, options = {}) {
     headers: claudeApiHeaders(auth.accessToken, options)
   }, options);
   if (!response.ok) {
-    if (response.status === 401) throw new Error('This Claude login has expired. Sign in again.');
+    if (response.status === 401) {
+      const error = new Error('Claude rejected this access token. Turntrail will try its saved refresh token; sign in again if renewal fails.');
+      error.code = 'AUTH_REJECTED';
+      throw error;
+    }
     throw new Error(`Usage request failed: ${response.status} ${response.statusText || ''}`.trim());
   }
 

@@ -725,6 +725,22 @@ test('a failed read keeps the previous number rather than showing nothing', asyn
   assert.match(stale.staleReason, /503/);
 });
 
+test('a Claude 401 marks the login as requiring revalidation', async () => {
+  const { options } = await sandbox();
+  const account = await createAccount({ label: 'Personal', provider: 'claude' }, options);
+  await signIn(account.id, options);
+
+  const rejected = await getClaudeUsage(account.id, {
+    ...options,
+    force: true,
+    fetch: async () => ({ ok: false, status: 401, statusText: 'Unauthorized' })
+  });
+
+  assert.equal(rejected.requiresSignIn, false);
+  assert.equal(rejected.requiresRevalidation, true);
+  assert.match(rejected.error, /saved refresh token/i);
+});
+
 // --- the loopback callback --------------------------------------------------
 
 async function freeLoopbackPort() {

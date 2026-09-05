@@ -244,6 +244,10 @@ read quota, and update the local cache. A machine-wide lock prevents simultaneou
 multiple VS Code-compatible editors or a CLI scheduler. API-key accounts are skipped, and no
 model/inference request is used as a keep-alive.
 
+A provider `401` triggers one refresh-and-retry when the account is inactive, or when it is selected
+but no provider process is running. A selected account owned by a running provider process is
+deferred rather than raced.
+
 Maintenance reduces stale-login failures; it does not guarantee that a provider session will remain
 authorized. Providers can revoke a login before its local expiry, a fully expired login still needs
 a fresh sign-in, and editor maintenance cannot run while every editor is closed. Use

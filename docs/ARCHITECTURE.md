@@ -381,6 +381,9 @@ writes the live copy before the managed copy. A missing or blank live credential
 when a single account or retained live profile identifies its owner; ambiguity leaves it untouched.
 Due maintenance is deferred without a provider request while Claude is running and retried after
 15 minutes.
+If a quota request returns `401` before the recorded access-token expiry, maintenance performs one
+refresh-and-retry for an inactive account. It may also repair the selected machine-default account
+when no provider process is running; a live owner causes the repair to be deferred.
 The VS Code scheduler is application-scoped, disabled by default, and jittered around a five-hour
 interval; `turntrail account maintain` exposes the same operation to OS schedulers.
 

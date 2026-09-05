@@ -50,6 +50,16 @@ function response(payload) {
   };
 }
 
+function unauthorized() {
+  return {
+    ok: false,
+    status: 401,
+    statusText: 'Unauthorized',
+    text: async () => '',
+    json: async () => ({})
+  };
+}
+
 function codexUsage() {
   return {
     rate_limit: {
@@ -177,6 +187,59 @@ test('maintenance synchronizes a live Codex rotation without refreshing it', asy
   assert.equal(requested.length, 1);
 });
 
+test('maintenance repairs an early Codex 401 while the selected account is idle', async () => {
+  const options = await sandbox();
+  const account = await createAccount({ label: 'Active', provider: 'codex' }, options);
+  const future = Math.floor(Date.now() / 1000) + 10 * 24 * 3600;
+  const old = codexCredential('acct_active', codexAccess(future, 'old'), 'rt.old');
+  await writeJson(path.join(codexHome(account.id, options), 'auth.json'), old);
+  await writeJson(path.join(options.defaultCodexHome, 'auth.json'), old);
+
+  let usageCalls = 0;
+  const maintenance = await maintainAccounts({
+    ...options,
+    fetch: async (url) => {
+      if (url.includes('/oauth/token')) {
+        return response({
+          access_token: codexAccess(future, 'new'),
+          refresh_token: 'rt.new',
+          id_token: jwt({ sub: 'acct_active', email: 'active@example.com' })
+        });
+      }
+      usageCalls++;
+      return usageCalls === 1 ? unauthorized() : response(codexUsage());
+    }
+  });
+
+  assert.equal(maintenance.results[0].status, 'refreshed');
+  assert.equal(maintenance.results[0].revalidated, true);
+  assert.equal((await readCodexAuth(codexHome(account.id, options))).refreshToken, 'rt.new');
+  assert.equal((await readCodexAuth(options.defaultCodexHome)).refreshToken, 'rt.new');
+  assert.equal(usageCalls, 2, 'the rejected usage read is retried once after refresh');
+});
+
+test('maintenance defers early Codex 401 repair while a Codex process owns the login', async () => {
+  const options = await sandbox();
+  const account = await createAccount({ label: 'Active', provider: 'codex' }, options);
+  const future = Math.floor(Date.now() / 1000) + 10 * 24 * 3600;
+  const current = codexCredential('acct_active', codexAccess(future, 'current'), 'rt.current');
+  await writeJson(path.join(codexHome(account.id, options), 'auth.json'), current);
+  await writeJson(path.join(options.defaultCodexHome, 'auth.json'), current);
+
+  const maintenance = await maintainAccounts({
+    ...options,
+    agentProcesses: [{ pid: 42, name: 'codex.exe' }],
+    fetch: async (url) => {
+      assert.equal(url.includes('/oauth/token'), false, 'maintenance must not race the live Codex refresh token');
+      return unauthorized();
+    }
+  });
+
+  assert.equal(maintenance.results[0].status, 'deferred');
+  assert.equal(maintenance.results[0].reason, 'codex-running');
+  assert.equal((await readCodexAuth(options.defaultCodexHome)).refreshToken, 'rt.current');
+});
+
 test('maintenance synchronizes a live Claude rotation without refreshing it', async () => {
   const options = await sandbox();
   const account = await createAccount({ label: 'Claude active', provider: 'claude' }, options);
@@ -249,6 +312,64 @@ test('maintenance proactively refreshes an idle active Claude login in both stor
   const liveRaw = JSON.parse(await fs.readFile(claudeCredentialsPath(options.defaultClaudeHome), 'utf8'));
   assert.equal(liveRaw.claudeAiOauth.refreshTokenExpiresAt, 1_900_000_000_000, 'unknown provider fields survive');
   assert.equal(requested.length, 2, 'one token refresh and one quota request');
+});
+
+test('maintenance repairs an early Claude 401 while the selected account is idle', async () => {
+  const options = await sandbox();
+  const account = await createAccount({ label: 'Claude active', provider: 'claude' }, options);
+  const profile = { oauthAccount: { emailAddress: 'claude@example.com', organizationUuid: 'org_1' } };
+  const old = claudeCredential('access.old', 'refresh.old', Date.now() + 8 * 3600 * 1000);
+  await writeJson(claudeCredentialsPath(claudeHome(account.id, options)), old);
+  await writeJson(claudeConfigPath(claudeHome(account.id, options), options), profile);
+  await writeJson(claudeCredentialsPath(options.defaultClaudeHome), old);
+  await writeJson(claudeConfigPath(options.defaultClaudeHome, options), profile);
+
+  let usageCalls = 0;
+  const maintenance = await maintainAccounts({
+    ...options,
+    fetch: async (url) => {
+      if (url.includes('/oauth/token')) {
+        return response({
+          access_token: 'access.new',
+          refresh_token: 'refresh.new',
+          expires_in: 28_800,
+          scope: 'user:inference'
+        });
+      }
+      usageCalls++;
+      return usageCalls === 1 ? unauthorized() : response(claudeUsage());
+    }
+  });
+
+  assert.equal(maintenance.results[0].status, 'refreshed');
+  assert.equal(maintenance.results[0].revalidated, true);
+  assert.equal((await readClaudeAuth(options.defaultClaudeHome, options)).refreshToken, 'refresh.new');
+  assert.equal((await readClaudeAuth(claudeHome(account.id, options), options)).refreshToken, 'refresh.new');
+  assert.equal(usageCalls, 2, 'the rejected usage read is retried once after refresh');
+});
+
+test('maintenance defers early Claude 401 repair while a Claude process owns the login', async () => {
+  const options = await sandbox();
+  const account = await createAccount({ label: 'Claude active', provider: 'claude' }, options);
+  const profile = { oauthAccount: { emailAddress: 'claude@example.com', organizationUuid: 'org_1' } };
+  const current = claudeCredential('access.current', 'refresh.current', Date.now() + 8 * 3600 * 1000);
+  await writeJson(claudeCredentialsPath(claudeHome(account.id, options)), current);
+  await writeJson(claudeConfigPath(claudeHome(account.id, options), options), profile);
+  await writeJson(claudeCredentialsPath(options.defaultClaudeHome), current);
+  await writeJson(claudeConfigPath(options.defaultClaudeHome, options), profile);
+
+  const maintenance = await maintainAccounts({
+    ...options,
+    agentProcesses: [{ pid: 42, name: 'claude.exe' }],
+    fetch: async (url) => {
+      assert.equal(url.includes('/oauth/token'), false, 'maintenance must not race the live Claude refresh token');
+      return unauthorized();
+    }
+  });
+
+  assert.equal(maintenance.results[0].status, 'deferred');
+  assert.equal(maintenance.results[0].reason, 'claude-running');
+  assert.equal((await readClaudeAuth(options.defaultClaudeHome, options)).refreshToken, 'refresh.current');
 });
 
 test('maintenance repairs a blank live Claude credential from one managed account', async () => {
