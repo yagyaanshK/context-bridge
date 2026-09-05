@@ -39,10 +39,12 @@ export function classifyAgentProcesses(provider, processes) {
   const matches = matchingAgentProcesses(provider, all);
   return matches.map((item) => {
     const editor = agentEditorOwner(provider, item, all);
+    const client = agentDesktopClient(provider, item, all);
     return {
       ...item,
-      kind: editor ? 'ide-background' : 'interactive',
-      editor
+      kind: editor ? 'ide-background' : client ? 'desktop' : 'interactive',
+      editor,
+      client
     };
   });
 }
@@ -59,7 +61,7 @@ export async function assertAgentStopped(provider, options = {}) {
   const extra = matches.length > 3 ? ` and ${matches.length - 3} more` : '';
   throw new Error(
     `${label} is still running: ${details}${extra}. ` +
-      `Close its CLI processes and close or reload IDE windows hosting the ${label} extension, then retry. ` +
+      `Close its CLI sessions and desktop app, and close or reload IDE windows hosting the ${label} extension, then retry. ` +
       'Turntrail did not change the live credential.'
   );
 }
@@ -148,6 +150,7 @@ async function listPosixProcesses(run) {
 function processMatches(provider, item) {
   const name = path.basename(String(item.name || item.executablePath || '')).toLowerCase();
   if (provider === 'codex' && /^codex(?:-code-mode-host)?(?:\.exe)?$/.test(name)) return true;
+  if (provider === 'codex' && isCodexDesktopHost(item)) return true;
   if (provider === 'claude' && /^claude(?:\.exe)?$/.test(name)) return true;
 
   const command = String(item.commandLine || '').toLowerCase().replaceAll('\\', '/');
@@ -155,6 +158,26 @@ function processMatches(provider, item) {
     return /(?:^|\s|["'])[^\s"']*@openai\/codex(?:\/|\s|["']|$)/.test(command);
   }
   return /(?:^|\s|["'])[^\s"']*@anthropic-ai\/claude-code(?:\/|\s|["']|$)/.test(command);
+}
+
+function agentDesktopClient(provider, item, processes) {
+  if (provider !== 'codex') return undefined;
+
+  const byPid = new Map(processes.filter((candidate) => candidate.pid).map((candidate) => [candidate.pid, candidate]));
+  let current = item;
+  for (let depth = 0; current && depth < 8; depth++) {
+    if (isCodexDesktopHost(current)) return 'Codex desktop app';
+    current = byPid.get(current.parentPid);
+  }
+  return undefined;
+}
+
+// The packaged Codex app currently uses ChatGPT.exe as its Windows host. Match
+// the package-qualified path so a separate ChatGPT installation is untouched.
+function isCodexDesktopHost(item) {
+  if (processName(item) !== 'chatgpt') return false;
+  const executable = String(item.executablePath || '').toLowerCase().replaceAll('\\', '/');
+  return /\/openai\.codex_[^/]+\/app\/chatgpt\.exe$/.test(executable);
 }
 
 function agentEditorOwner(provider, item, processes) {

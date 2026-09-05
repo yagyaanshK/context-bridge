@@ -22,6 +22,36 @@ test('agent process matching ignores editors and test names but finds native and
   assert.deepEqual(matchingAgentProcesses('claude', processes).map((item) => item.pid), [12, 14]);
 });
 
+test('Codex Windows app host is matched without treating unrelated ChatGPT apps as Codex', () => {
+  const running = [
+    {
+      pid: 20,
+      name: 'ChatGPT.exe',
+      executablePath: 'C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.901.5280.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe'
+    },
+    {
+      pid: 21,
+      name: 'ChatGPT.exe',
+      executablePath: 'C:\\Program Files\\WindowsApps\\OpenAI.ChatGPT_1.0.0_x64__example\\app\\ChatGPT.exe'
+    },
+    {
+      pid: 22,
+      parentPid: 20,
+      name: 'codex.exe',
+      executablePath: 'C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.901.5280.0_x64__2p2nqsd0c76g0\\app\\resources\\codex.exe'
+    }
+  ];
+
+  assert.deepEqual(matchingAgentProcesses('codex', running).map((item) => item.pid), [20, 22]);
+  assert.deepEqual(
+    classifyAgentProcesses('codex', running).map(({ pid, kind, client }) => ({ pid, kind, client })),
+    [
+      { pid: 20, kind: 'desktop', client: 'Codex desktop app' },
+      { pid: 22, kind: 'desktop', client: 'Codex desktop app' }
+    ]
+  );
+});
+
 test('Codex extension services are distinguished from interactive Codex processes', () => {
   const running = [
     { pid: 100, name: 'Code.exe', commandLine: 'Code.exe' },
@@ -124,6 +154,33 @@ test('confirmed process termination re-enumerates and stops matching provider pr
 
   assert.deepEqual(killed, [{ pid: 10, signal: 'SIGKILL' }]);
   assert.deepEqual(result.terminated.map((item) => item.pid), [10]);
+  assert.deepEqual(result.remaining, []);
+});
+
+test('confirmed Codex termination stops its ChatGPT-named desktop host only', async () => {
+  const codexHost = {
+    pid: 20,
+    name: 'ChatGPT.exe',
+    executablePath: 'C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.901.5280.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe'
+  };
+  const standaloneChatGPT = {
+    pid: 21,
+    name: 'ChatGPT.exe',
+    executablePath: 'C:\\Program Files\\WindowsApps\\OpenAI.ChatGPT_1.0.0_x64__example\\app\\ChatGPT.exe'
+  };
+  const samples = [[codexHost, standaloneChatGPT], [standaloneChatGPT]];
+  const killed = [];
+
+  const result = await terminateAgentProcesses('codex', {
+    platform: 'win32',
+    listAgentProcesses: async () => samples.shift() || [standaloneChatGPT],
+    killProcess: (pid, signal) => killed.push({ pid, signal }),
+    sleep: async () => {},
+    now: (() => { let value = 0; return () => ++value; })()
+  });
+
+  assert.deepEqual(killed, [{ pid: 20, signal: 'SIGKILL' }]);
+  assert.deepEqual(result.terminated.map((item) => item.pid), [20]);
   assert.deepEqual(result.remaining, []);
 });
 

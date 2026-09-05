@@ -191,9 +191,11 @@ async function switchAccount(item) {
 async function handleRunningProviderProcesses(account, blockers, api) {
   const agent = agentName(account.provider);
   const editors = [...new Set(blockers.map((item) => item.editor).filter(Boolean))];
+  const desktopClients = [...new Set(blockers.map((item) => item.client).filter(Boolean))];
   const interactive = blockers.filter((item) => item.kind === 'interactive');
   const processNames = [...new Set(blockers.map((item) => item.name).filter(Boolean))].slice(0, 4).join(', ');
   const locations = editors.length > 0 ? ` Editor services: ${editors.join(', ')}.` : '';
+  const desktops = desktopClients.length > 0 ? ` Desktop clients: ${desktopClients.join(', ')}.` : '';
   const sessions = interactive.length > 0
     ? ` ${interactive.length} other ${agent} process${interactive.length === 1 ? ' is' : 'es are'} also running.`
     : '';
@@ -202,7 +204,7 @@ async function handleRunningProviderProcesses(account, blockers, api) {
     {
       modal: true,
       detail:
-        `Running provider processes${processNames ? `: ${processNames}` : ''}.${locations}${sessions}\n\n` +
+        `Running provider processes${processNames ? `: ${processNames}` : ''}.${locations}${desktops}${sessions}\n\n` +
         `Every ${agent} client that owns the shared login must stop, including CLI sessions, desktop clients, ` +
         `and IDE extension services. Unrelated editor windows can stay open.\n\n` +
         `Stopping these processes can interrupt active agent runs. Turntrail can stop them now, or wait while ` +

@@ -289,7 +289,10 @@ serving the previous account and kept working *past that account's on-disk token
 token was the in-memory copy, refreshed in-process — and only moved to the file's account after a
 restart. There is no second on-disk credential store for it: no plaintext token, OS
 credential-manager entry, or browser session store could be found. `auth.json` is the single source,
-read once per launch.
+  read once per launch.
+  On Windows the installed `OpenAI.Codex` package declares `app/ChatGPT.exe` as its desktop host.
+  Process guards identify that host using the package-qualified executable path rather than the
+  ambiguous filename, and classify its matched Codex descendants as part of the same desktop client.
 
 The practical consequence is the "a live process holds its own token" rule stated under Switching,
 seen from the outside: rewriting `auth.json` moves the CLI and IDE extension at once, but any Codex

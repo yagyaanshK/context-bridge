@@ -23,6 +23,9 @@ the contract inventory, failure behavior, and maintenance procedure.
 
 Turntrail never replaces a live provider credential while that provider has a running process. IDE
 background services count because they retain authentication state and can refresh persisted tokens.
+The Windows Codex app is hosted by `ChatGPT.exe`; Turntrail classifies that executable as Codex only
+when its resolved path is inside an `OpenAI.Codex` application package. A separately installed
+ChatGPT client is neither blocked nor terminated based on its process name alone.
 When the extension queues a switch, a detached local helper waits for three consecutive process-free
 polls and then calls the same fail-closed switch routine used by the CLI. The routine checks the
 process list again before its final atomic credential copy.

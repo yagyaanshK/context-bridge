@@ -351,8 +351,11 @@ that is where the displayed email actually lives. Everything else in that file â
 caches â€” is left byte-identical, and both files are backed up first.
 
 Turntrail checks the operating-system process list immediately before replacing the credential. If
-the provider is stopped, the switch is immediate. If `codex`, `claude`, or an IDE background service
-is running, the extension offers **Stop Processes & Switch** or **Wait for Me to Stop Them**. The
+the provider is stopped, the switch is immediate. If `codex`, `claude`, the Codex Windows desktop
+app, or an IDE background service is running, the extension offers **Stop Processes & Switch** or
+**Wait for Me to Stop Them**. The Codex Windows package currently hosts its desktop UI in
+`ChatGPT.exe`; Turntrail recognizes it only from the package-qualified `OpenAI.Codex` path, so a
+separate ChatGPT installation is not treated as Codex. The
 first action explicitly terminates only matching provider processes after warning that active runs
 can be interrupted. The second starts a detached helper that waits until every provider process has
 exited for three consecutive polls, performs the same guarded switch, and reopens the initiating

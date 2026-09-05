@@ -188,9 +188,11 @@ official UI start using your choice. For Claude that is two files — the creden
 project history and caches and is left byte-identical. Both files are backed up first, and the
 confirmation toast offers **Undo**.
 
-Turntrail checks for native `codex` and `claude` processes immediately before replacing a login. If
-the provider is stopped, **Use this** switches immediately. If an interactive session or IDE
-background service is running, choose **Stop Processes & Switch** to terminate matching provider
+Turntrail checks for native `codex` and `claude` processes immediately before replacing a login. On
+Windows it also detects the Codex desktop app's `ChatGPT.exe` host by its package-qualified
+`OpenAI.Codex` executable path; it does not match an unrelated ChatGPT installation by name alone.
+If the provider is stopped, **Use this** switches immediately. If an interactive session, Codex
+desktop client, or IDE background service is running, choose **Stop Processes & Switch** to terminate matching provider
 processes after an explicit interruption warning, or **Wait for Me to Stop Them** to queue the
 switch. The detached helper waits for every process to exit, requires three consecutive quiet polls,
 runs the same guarded switch, and reopens the initiating workspace. Unrelated editor windows can
