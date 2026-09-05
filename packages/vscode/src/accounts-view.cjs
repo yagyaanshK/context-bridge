@@ -124,7 +124,14 @@ class AccountsStore {
 
   row(account, provider, signedIn, resumesAt) {
     const usage = this.usage.get(account.id);
-    const windows = usage?.windows || [];
+    const requiresSignIn = usage?.requiresSignIn === true;
+    const requiresRevalidation = usage?.requiresRevalidation === true;
+    const hasAuthenticationIssue = requiresSignIn || requiresRevalidation;
+    const windows = hasAuthenticationIssue ? [] : (usage?.windows || []);
+    const signedInAt = Date.parse(account.signedInAt || '');
+    const lastUsedAt = Date.parse(account.lastUsedAt || '');
+    const needsActivation = !hasAuthenticationIssue && account.id === this.activeIds[provider.id] &&
+      Number.isFinite(signedInAt) && (!Number.isFinite(lastUsedAt) || signedInAt > lastUsedAt);
     return {
       id: account.id,
       provider: provider.id,
@@ -132,12 +139,15 @@ class AccountsStore {
       plan: account.plan ? planLabel(account.plan) : undefined,
       email: usage?.email || account.email,
       active: account.id === this.activeIds[provider.id],
-      signedIn: signedIn.get(account.id) === true,
+      needsActivation,
+      signedIn: signedIn.get(account.id) === true && !hasAuthenticationIssue,
+      requiresSignIn,
+      requiresRevalidation,
       error: usage?.error === 'not-signed-in' ? undefined : usage?.error,
-      limitReached: Boolean(usage?.limitReached),
-      credits: usage?.credits,
-      resetCredits: provider.id === 'codex' ? usage?.resetCredits : undefined,
-      remaining: remainingOf(usage),
+      limitReached: !hasAuthenticationIssue && Boolean(usage?.limitReached),
+      credits: hasAuthenticationIssue ? undefined : usage?.credits,
+      resetCredits: provider.id === 'codex' && !hasAuthenticationIssue ? usage?.resetCredits : undefined,
+      remaining: hasAuthenticationIssue ? undefined : remainingOf(usage),
       resetsAt: nextReset(windows),
       // When a blocked account starts working again, which is not the same as
       // its next reset - see resumesAt() in core.
@@ -150,7 +160,7 @@ class AccountsStore {
         remaining: window.remainingPercent,
         resetsAt: window.resetsAt
       })),
-      additionalLimits: (usage?.additionalLimits || []).map((limit) => ({
+      additionalLimits: (hasAuthenticationIssue ? [] : (usage?.additionalLimits || [])).map((limit) => ({
         id: limit.id,
         label: limit.label,
         limitReached: Boolean(limit.limitReached),
@@ -654,7 +664,9 @@ function renderRow(row) {
   const provider = esc(row.provider);
 
   let status;
-  if (!row.signedIn) status = 'Not signed in';
+  if (row.needsActivation) status = 'Sign-in ready to apply';
+  else if (row.requiresRevalidation) status = row.active ? 'Selected login needs repair' : 'Login needs verification';
+  else if (!row.signedIn) status = row.active ? 'Selected login needs sign-in' : 'Not signed in';
   else if (row.error) status = esc(row.error);
   // "Limit reached" on its own leaves the one question that matters
   // unanswered. The resume time is the whole reason to look at the card.
@@ -710,11 +722,17 @@ function renderRow(row) {
     additionalLimits +
     resetCredits +
     '<div class="meta"><span>' + status + esc(credits) + '</span>' +
-      (row.active ? '<span class="badge' + (state === 'crit' ? ' crit' : '') + '">In use</span>' : '') +
+      (row.active ? '<span class="badge' + (state === 'crit' ? ' crit' : '') + '">' +
+        (row.signedIn && !row.needsActivation ? 'In use' : 'Selected') + '</span>' : '') +
     '</div>' +
     '<div class="actions">' +
-      (row.active || !row.signedIn ? '' : act('switch', 'Use this', 'primary')) +
-      (row.signedIn ? '' : act('signin', 'Sign in', 'primary')) +
+      (row.needsActivation
+        ? act('switch', 'Apply login', 'primary')
+        : (row.requiresRevalidation
+            ? act('switch', row.active ? 'Repair login' : 'Verify & use', 'primary')
+            : (row.active || !row.signedIn ? '' : act('switch', 'Use this', 'primary')))) +
+      (row.signedIn || row.requiresRevalidation ? '' : act('signin', 'Sign in', 'primary')) +
+      (row.requiresRevalidation ? act('signin', 'Sign in') : '') +
       (row.signedIn ? act('terminal', 'Terminal') : '') +
       (row.signedIn ? act('raw', 'Raw Response') : '') +
       '<button data-ask="' + id + '">Remove</button>' +

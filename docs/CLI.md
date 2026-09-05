@@ -143,8 +143,10 @@ signed in. Without `--import` it prints the `codex login` command to run with th
 `CODEX_HOME` already set.
 
 `account use` makes an account the machine default by writing the credential the official Codex CLI
-and VS Code extension read. It backs up what it replaces first. To use an account *without* changing
-the default, set the variable yourself for that one session:
+and VS Code extension read. For OAuth accounts it first rotates the saved refresh token with OpenAI,
+so a server-revoked but locally unexpired credential fails before the live login is touched. It
+backs up what it replaces first. To use an account *without* changing the default, set the variable
+yourself for that one session:
 
 ```bash
 CODEX_HOME="$HOME/.turntrail/accounts/<id>/codex-home" codex

@@ -82,8 +82,19 @@ async function getUsage(accountId, read, fetchUsage, options = {}) {
     auth = await read(accountId, options);
   } catch (error) {
     // Renewing an expired login is part of reading it, and can fail on its own.
-    if (cached) return { ...cached, fromCache: true, staleReason: error.message };
-    return { accountId, error: error.message, fetchedAt: new Date().toISOString(), windows: [] };
+    const requiresSignIn = error?.code === 'AUTH_EXPIRED';
+    const requiresRevalidation = error?.code === 'AUTH_REJECTED';
+    if (cached) {
+      return { ...cached, fromCache: true, staleReason: error.message, requiresSignIn, requiresRevalidation };
+    }
+    return {
+      accountId,
+      error: error.message,
+      requiresSignIn,
+      requiresRevalidation,
+      fetchedAt: new Date().toISOString(),
+      windows: []
+    };
   }
 
   if (!auth?.accessToken) {
@@ -102,8 +113,19 @@ async function getUsage(accountId, read, fetchUsage, options = {}) {
   } catch (error) {
     // A failed refresh must not discard a good previous reading - the panel is
     // more useful showing a stale number with its age than showing nothing.
-    if (cached) return { ...cached, fromCache: true, staleReason: error.message };
-    return { accountId, error: error.message, fetchedAt: new Date().toISOString(), windows: [] };
+    const requiresSignIn = error?.code === 'AUTH_EXPIRED';
+    const requiresRevalidation = error?.code === 'AUTH_REJECTED';
+    if (cached) {
+      return { ...cached, fromCache: true, staleReason: error.message, requiresSignIn, requiresRevalidation };
+    }
+    return {
+      accountId,
+      error: error.message,
+      requiresSignIn,
+      requiresRevalidation,
+      fetchedAt: new Date().toISOString(),
+      windows: []
+    };
   }
 }
 
@@ -228,6 +250,11 @@ export async function fetchCodexUsage(auth, options = {}) {
 
   const response = await providerFetch(options.usageUrl || CODEX_USAGE_URL, { headers }, options);
   if (!response.ok) {
+    if (response.status === 401) {
+      const error = new Error('OpenAI rejected this Codex access token. Verify the login or sign in again.');
+      error.code = 'AUTH_REJECTED';
+      throw error;
+    }
     throw new Error(`Usage request failed: ${response.status} ${response.statusText || ''}`.trim());
   }
 

@@ -346,10 +346,16 @@ detached helper waits until every provider process has exited for three consecut
 the same guarded switch, and reopens the initiating workspace. Save your work and close every editor
 window hosting that provider; its account path is machine-wide across VS Code and compatible forks.
 
+Before installing a Codex OAuth account, Turntrail renews its saved refresh token even when the
+access-token JWT still claims to be unexpired. This verifies the login with OpenAI and catches
+server-side revocation or inactivity logout before the live `auth.json` is replaced. A rejected or
+unreachable verification leaves the current Codex login unchanged and does not report success.
+
 The queued request expires after 15 minutes and contains only an account id, bounded process
 metadata, and the editor path needed for relaunch — never credentials. If the provider restarts
-before the quiet period or the request expires, the live credential is left unchanged. Selecting the
-account that is already active does not rewrite the credential.
+before the quiet period or the request expires, the live credential is left unchanged. After signing
+in again to an account that is already selected, **Apply login** runs the same guarded verification
+and replacement so the repaired managed credential reaches the official Codex clients.
 
 The account in use is marked in the panel and shown in the status bar with its remaining quota.
 Every account stays signed in, so this is cheap and reversible; the toast offers **Undo**. To use an

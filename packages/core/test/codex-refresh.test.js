@@ -97,7 +97,7 @@ test('a reused or revoked refresh token asks for a fresh sign-in, not a retry', 
     refreshCodexToken('rt.used', {
       fetch: errFetch(400, { error: 'invalid_grant', error_description: 'refresh token reused' })
     }),
-    /sign in again/i
+    (error) => error.code === 'AUTH_EXPIRED' && /sign in again/i.test(error.message)
   );
 });
 
@@ -197,24 +197,48 @@ test('switching syncs the outgoing login and renews the incoming one', async () 
   assert.equal(installed.refreshToken, 'rt.in-new');
 });
 
-test('switching to an unrecoverable login leaves the live credential unchanged', async () => {
+test('switching rejects a server-revoked login even while its access token looks fresh', async () => {
   const options = await sandbox();
   const active = await createAccount({ label: 'Active', provider: 'codex' }, options);
   const incoming = await createAccount({ label: 'Dead', provider: 'codex' }, options);
   await signIn(active.id, options, { access: accessToken(future()), refresh: 'rt.active' });
-  await signIn(incoming.id, options, { access: accessToken(past()), refresh: 'rt.dead' });
-  await activateCodexAccount(active.id, options);
+  await signIn(incoming.id, options, { access: accessToken(future()), refresh: 'rt.dead' });
+  await activateCodexAccount(active.id, {
+    ...options,
+    fetch: okFetch({ access_token: accessToken(future(), 'active-verified'), refresh_token: 'rt.active' })
+  });
 
   await assert.rejects(
     activateCodexAccount(incoming.id, {
       ...options,
       fetch: errFetch(400, { error: 'invalid_grant', error_description: 'refresh token reused' })
     }),
-    /sign in again/i
+    (error) => error.code === 'AUTH_EXPIRED' && /sign in again/i.test(error.message)
   );
   const installed = await readCodexAuth(options.defaultCodexHome);
   assert.equal(installed.refreshToken, 'rt.active');
   assert.equal((await readCodexAuth(codexHome(incoming.id, options))).refreshToken, 'rt.dead');
+});
+
+test('reapplying an active account installs credentials created by a fresh sign-in', async () => {
+  const options = await sandbox();
+  const account = await createAccount({ label: 'Recovered', provider: 'codex' }, options);
+  await signIn(account.id, options, { access: accessToken(future(), 'old'), refresh: 'rt.old' });
+  await activateCodexAccount(account.id, {
+    ...options,
+    fetch: okFetch({ access_token: accessToken(future(), 'first'), refresh_token: 'rt.first' })
+  });
+
+  // The managed home receives a new browser login while the live default home
+  // still contains the rejected credential from the previous session.
+  await signIn(account.id, options, { access: accessToken(future(), 'reauth'), refresh: 'rt.reauth' });
+  const reapplied = await activateCodexAccount(account.id, {
+    ...options,
+    fetch: okFetch({ access_token: accessToken(future(), 'verified'), refresh_token: 'rt.verified' })
+  });
+
+  assert.equal(reapplied.alreadyActive, true);
+  assert.equal((await readCodexAuth(options.defaultCodexHome)).refreshToken, 'rt.verified');
 });
 
 test('the proactive window renews a token that has not expired yet', async () => {

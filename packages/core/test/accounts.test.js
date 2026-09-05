@@ -855,6 +855,31 @@ test('a failed refresh keeps the last good reading instead of blanking the panel
   assert.equal(degraded.fromCache, true);
 });
 
+test('a Codex 401 marks a cached credential as requiring revalidation', async () => {
+  const { options } = await sandbox();
+  const account = await createAccount({ label: 'Revoked', provider: 'codex' }, options);
+  await signIn(account.id, options);
+
+  await getCodexUsage(account.id, {
+    ...options,
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({ rate_limits: { primary: { used_percent: 20, limit_window_seconds: 18000 } } })
+    })
+  });
+
+  const rejected = await getCodexUsage(account.id, {
+    ...options,
+    force: true,
+    fetch: async () => ({ ok: false, status: 401, statusText: 'Unauthorized' })
+  });
+
+  assert.equal(rejected.fromCache, true, 'the last quota reading remains available for diagnostics');
+  assert.equal(rejected.requiresSignIn, false);
+  assert.equal(rejected.requiresRevalidation, true);
+  assert.match(rejected.staleReason, /verify the login/i);
+});
+
 test('quota for an account with no login reports that rather than erroring', async () => {
   const { options } = await sandbox();
   const account = await createAccount({ label: 'Anon', provider: 'codex' }, options);

@@ -127,6 +127,7 @@ or retries the redemption POST.
 | Action | Effect |
 |--------|--------|
 | **Use this** | Points that agent's official CLI and extension at this account (machine-wide). |
+| **Repair login / Apply login** | Validates a rejected Codex login, or applies a newly completed sign-in to the selected account. |
 | **Terminal** | Starts the agent as that account without changing the machine default. |
 | **Sign in** | Opens the sign-in panel for that agent. |
 | **Refresh now** | Forces a usage read; otherwise readings are cached for five minutes. |
@@ -189,8 +190,13 @@ windows in other VS Code-compatible editors, because the default credential is m
 Ignoring an idle-looking `codex.exe app-server` is unsafe: Codex can retain the old account in memory
 and refresh its persisted token later. Queuing keeps the strict process check while making it usable
 from the extension. Requests expire after 15 minutes and contain no tokens. A timeout, a restarted
-provider, or a failed account validation leaves the live credential unchanged. Reselecting the
-already-active account remains a no-op.
+provider, or a failed account validation leaves the live credential unchanged.
+
+Codex activation validates an OAuth account by rotating its refresh token before installing it,
+even if the access-token JWT has not reached its local expiry. This catches credentials revoked by
+OpenAI or renewed elsewhere. A usage-endpoint `401` is shown as a repairable verification state;
+Turntrail offers both **Repair login** and a fresh **Sign in**. If a fresh sign-in belongs to the
+account already selected in `~/.codex/auth.json`, **Apply login** performs the guarded replacement.
 
 ## The Handoff Card
 

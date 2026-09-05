@@ -47,7 +47,9 @@ export async function refreshCodexToken(refreshToken, options = {}) {
   }
 
   if (!response.ok) {
-    throw new Error(codexOauthError(payload, response.status, text));
+    const error = new Error(codexOauthError(payload, response.status, text));
+    if (isExpiredLogin(payload, text)) error.code = 'AUTH_EXPIRED';
+    throw error;
   }
   validateTokenPayload('codex', payload);
 
@@ -67,11 +69,17 @@ export async function refreshCodexToken(refreshToken, options = {}) {
 function codexOauthError(payload, status, text) {
   const code = payload?.error || payload?.code;
   const detail = payload?.error_description || payload?.message || '';
-  if (code === 'invalid_grant' || /reuse|already been used|revoked|expired/i.test(`${code} ${detail} ${text}`)) {
+  if (isExpiredLogin(payload, text)) {
     return 'This login has expired or was renewed elsewhere and cannot be refreshed. Sign in again.';
   }
   if (code) return `Token refresh failed: ${safeErrorCode(code)}.`;
   return `Token refresh failed with HTTP ${status}.`;
+}
+
+function isExpiredLogin(payload, text) {
+  const code = payload?.error || payload?.code;
+  const detail = payload?.error_description || payload?.message || '';
+  return code === 'invalid_grant' || /reuse|already been used|revoked|expired/i.test(`${code} ${detail} ${text}`);
 }
 
 function safeErrorCode(value) {

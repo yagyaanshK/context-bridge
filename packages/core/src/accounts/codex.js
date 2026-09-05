@@ -217,7 +217,7 @@ export async function ensureCodexAccessToken(accountId, options = {}) {
   const expiresAt = codexAccessTokenExpiry(auth.accessToken);
   const skew = Number.isFinite(options.refreshSkewMs) ? options.refreshSkewMs : EXPIRY_SKEW_MS;
   const fresh = !Number.isFinite(expiresAt) || expiresAt - skew > Date.now();
-  if (fresh || options.offline) return auth;
+  if ((fresh && !options.forceRefresh) || options.offline) return auth;
   if (!auth.refreshToken) return auth;
 
   // Refreshing the live account would race Codex for its rotating token.
@@ -245,10 +245,7 @@ export async function activateCodexAccount(accountId, options = {}) {
 
   const accounts = await listAccounts({ ...options, provider: CODEX_PROVIDER });
   const outgoing = await activeCodexAccountId(accounts, options);
-  if (outgoing === accountId) {
-    await updateAccount(accountId, { lastUsedAt: new Date().toISOString() }, options);
-    return { target: targetAuth, alreadyActive: true };
-  }
+  const alreadyActive = outgoing === accountId;
   await assertAgentStopped(CODEX_PROVIDER, options);
 
   // Capture whatever the live Codex has been refreshing back into its own
@@ -267,7 +264,21 @@ export async function activateCodexAccount(accountId, options = {}) {
   // nothing else is rotating its refresh token. If renewal is impossible - the
   // saved login has lapsed past recovery - report it rather than silently
   // installing a dead credential.
-  const incoming = await ensureCodexAccessToken(accountId, options);
+  let incoming = await readCodexAuth(codexHome(accountId, options));
+  const incomingExpiry = codexAccessTokenExpiry(incoming?.accessToken);
+  const canVerifyOauth = Boolean(
+    incoming?.accessToken && incoming?.refreshToken && Number.isFinite(incomingExpiry)
+  );
+  incoming = await ensureCodexAccessToken(accountId, {
+    ...options,
+    // A JWT can remain locally unexpired after OpenAI has revoked its login.
+    // Rotating an inactive account's refresh token proves the saved session is
+    // still accepted before it replaces the live Codex credential.
+    forceRefresh: canVerifyOauth,
+    // Reapplying an account after signing in again is safe only after the
+    // process guard above confirms Codex has stopped owning this token.
+    allowActiveRefresh: alreadyActive
+  });
   if (!incoming?.accessToken && !incoming?.apiKey) throw new Error(`Account "${accountId}" is not signed in yet.`);
   const expiresAt = codexAccessTokenExpiry(incoming.accessToken);
   if (incoming.accessToken && Number.isFinite(expiresAt) && expiresAt - EXPIRY_SKEW_MS <= Date.now()) {
@@ -283,7 +294,7 @@ export async function activateCodexAccount(accountId, options = {}) {
   await assertAgentStopped(CODEX_PROVIDER, options);
   await copyCredential(codexAuthPath(codexHome(accountId, options)), targetAuth);
   await updateAccount(accountId, { lastUsedAt: new Date().toISOString() }, options);
-  return { target: targetAuth, backup };
+  return { target: targetAuth, backup, alreadyActive };
 }
 
 export async function purgeActiveCodexAccount(accountId, options = {}) {

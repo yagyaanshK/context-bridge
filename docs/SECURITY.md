@@ -51,6 +51,12 @@ inherent race, so malformed credentials and unknown or ambiguous identities fail
 calls retain the same bounded timeout, cancellation, payload validation, and redacted error
 handling as manual quota reads.
 
+A Codex OAuth account is verified with a refresh-token rotation before activation, including when
+its access-token JWT still appears locally valid. Verification runs only after the process guard
+confirms Codex is stopped; rejection or network failure leaves the live default credential
+unchanged. This avoids reporting a successful switch based only on copying an `auth.json` whose
+session has already been revoked server-side.
+
 ## Untrusted metadata
 
 Transcript content is intentionally passed to the receiving agent as historical conversation. Paths, branch names, session labels, media references, and other metadata are separately flattened and escaped so they cannot add Markdown sections or close a fenced block. Handoffs explicitly tell the receiving agent to treat metadata as data, never instructions.

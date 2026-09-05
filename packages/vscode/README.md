@@ -199,6 +199,11 @@ The account in use is marked and appears in the status bar with its remaining qu
 stays signed in, so switching back is one more click; the confirmation also offers **Undo** and
 **Reload Window**.
 
+For Codex OAuth accounts, switching first rotates the incoming refresh token with OpenAI. This
+detects a login revoked server-side even when its local JWT expiry is still in the future. Failed
+verification leaves the current live credential untouched instead of reporting a file copy as a
+successful account switch.
+
 If the provider is already stopped, **Use this** switches immediately. If an IDE background service
 or interactive process is running, Turntrail offers **Switch After Closing Editors**. A detached
 helper waits until all provider processes have exited, performs the guarded switch, and reopens the
@@ -209,6 +214,7 @@ minutes and contains no tokens; failures leave the live credential unchanged.
 | Action | Effect |
 |--------|--------|
 | **Use this** | Points that agent's official CLI and extension at this account. |
+| **Repair login / Apply login** | Verifies a rejected login, or applies credentials created by signing in again, using the same guarded switch flow. |
 | **Terminal** | Starts the agent as that account without changing the machine default. |
 | **Sign in** | Opens the sign-in panel for that agent. |
 | **↻** (on each card) | Refreshes just that account — and for Codex, renews its token in the process, so it doubles as waking a stale login. |
@@ -223,9 +229,10 @@ fail over on its own when one runs out.
 
 Access tokens expire, and each official client normally renews only the account it is *currently*
 using. A quota read renews an inactive OAuth account only when its recorded access-token expiry says
-renewal is due. The **active** account is never refreshed by Turntrail — the live official client
-owns its rotating token. Turntrail synchronizes the live credential back into the managed snapshot
-instead, so a later switch does not reinstall an older refresh token.
+renewal is due. Background maintenance does not refresh the **active** Codex account because the live
+official client owns its rotating token. A deliberate switch or repair waits for Codex to stop and
+may then verify that account safely. Turntrail otherwise synchronizes the live credential back into
+the managed snapshot so a later switch does not reinstall an older refresh token.
 
 Background maintenance is **off by default**. Run **Turntrail: Toggle Background Account
 Maintenance** to opt in. While the editor is open, Turntrail then performs a jittered maintenance
